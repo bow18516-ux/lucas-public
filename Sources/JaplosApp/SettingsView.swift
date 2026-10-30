@@ -7,8 +7,12 @@ enum SettingsMetrics {
     /// Page chrome title in the detail pane (e.g. 「Skill 列表」).
     static let pageTitleSize: CGFloat = 26
     static let pageSubtitleSize: CGFloat = 14
+    /// Top-level sidebar group label (e.g. 「设置」).
     static let navSize: CGFloat = 15
     static let navIconSize: CGFloat = 16
+    /// Nested sidebar items under a top-level group (one point below former flat nav = 15).
+    static let navItemSize: CGFloat = 14
+    static let navItemIconSize: CGFloat = 14
     /// Section / card titles — one point above `bodySize`.
     static let cardTitleSize: CGFloat = 15
     /// Secondary lines under titles / helper copy.
@@ -60,6 +64,8 @@ struct SettingsScreen: View {
     @ObservedObject var model: AppModel
     @ObservedObject var voice: SpeechOutput
     @State private var section: SettingsSection
+    /// Top-level 「设置」 group — default expanded so the eight panes stay one click away.
+    @State private var settingsGroupExpanded = true
     @ObservedObject private var updateService = UpdateService.shared
 
     init(model: AppModel, voice: SpeechOutput) {
@@ -101,51 +107,80 @@ struct SettingsScreen: View {
             .padding(.top, 54)
             .padding(.bottom, 22)
 
-            Text("设置")
-                .font(.system(size: SettingsMetrics.pageTitleSize, weight: .semibold))
-                .foregroundStyle(Theme.textPrimary)
-                .padding(.horizontal, 18)
-                .padding(.bottom, 16)
-
-            VStack(spacing: 4) {
-                ForEach(SettingsSection.allCases) { item in
-                    Button {
-                        section = item
-                    } label: {
-                        HStack(spacing: 9) {
-                            Image(systemName: item.icon)
-                                .font(.system(size: SettingsMetrics.cardTitleSize))
-                                .frame(width: 22)
-                            Text(item.rawValue)
-                                .font(.system(size: SettingsMetrics.cardTitleSize))
-                            Spacer()
-                            if section == item {
-                                Circle()
-                                    .fill(Theme.accent)
-                                    .frame(width: 4, height: 4)
-                            } else if item == .updates && updateService.updateAvailable {
-                                Circle()
-                                    .fill(Theme.accent)
-                                    .frame(width: 6, height: 6)
-                            }
-                        }
-                        .foregroundStyle(section == item ? Theme.textPrimary : Theme.textSecondary)
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 11)
-                        .background(
-                            section == item ? Theme.accent.opacity(0.10) : Color.clear,
-                            in: RoundedRectangle(cornerRadius: 7)
-                        )
-                        .overlay(alignment: .leading) {
-                            if section == item {
-                                Rectangle()
-                                    .fill(Theme.accent)
-                                    .frame(width: 2)
-                                    .padding(.vertical, 6)
-                            }
+            VStack(alignment: .leading, spacing: 2) {
+                // Top-level group: 「设置」 — room for more top-level groups later.
+                Button {
+                    withAnimation(.easeInOut(duration: 0.18)) {
+                        settingsGroupExpanded.toggle()
+                    }
+                } label: {
+                    HStack(spacing: 8) {
+                        Image(systemName: settingsGroupExpanded ? "chevron.down" : "chevron.right")
+                            .font(.system(size: 11, weight: .semibold))
+                            .frame(width: 12)
+                        Image(systemName: "gearshape")
+                            .font(.system(size: SettingsMetrics.navIconSize))
+                            .frame(width: 22)
+                        Text("设置")
+                            .font(.system(size: SettingsMetrics.navSize, weight: .semibold))
+                        Spacer()
+                        if !settingsGroupExpanded && updateService.updateAvailable {
+                            Circle()
+                                .fill(Theme.accent)
+                                .frame(width: 6, height: 6)
                         }
                     }
-                    .buttonStyle(.pressable)
+                    .foregroundStyle(Theme.textPrimary)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 10)
+                    .background(Color.clear, in: RoundedRectangle(cornerRadius: 7))
+                }
+                .buttonStyle(.pressable)
+
+                if settingsGroupExpanded {
+                    VStack(spacing: 2) {
+                        ForEach(SettingsSection.allCases) { item in
+                            Button {
+                                section = item
+                            } label: {
+                                HStack(spacing: 9) {
+                                    Image(systemName: item.icon)
+                                        .font(.system(size: SettingsMetrics.navItemIconSize))
+                                        .frame(width: 20)
+                                    Text(item.rawValue)
+                                        .font(.system(size: SettingsMetrics.navItemSize))
+                                    Spacer()
+                                    if section == item {
+                                        Circle()
+                                            .fill(Theme.accent)
+                                            .frame(width: 4, height: 4)
+                                    } else if item == .updates && updateService.updateAvailable {
+                                        Circle()
+                                            .fill(Theme.accent)
+                                            .frame(width: 6, height: 6)
+                                    }
+                                }
+                                .foregroundStyle(section == item ? Theme.textPrimary : Theme.textSecondary)
+                                .padding(.leading, 28)
+                                .padding(.trailing, 12)
+                                .padding(.vertical, 9)
+                                .background(
+                                    section == item ? Theme.accent.opacity(0.10) : Color.clear,
+                                    in: RoundedRectangle(cornerRadius: 7)
+                                )
+                                .overlay(alignment: .leading) {
+                                    if section == item {
+                                        Rectangle()
+                                            .fill(Theme.accent)
+                                            .frame(width: 2)
+                                            .padding(.vertical, 6)
+                                            .padding(.leading, 16)
+                                    }
+                                }
+                            }
+                            .buttonStyle(.pressable)
+                        }
+                    }
                 }
             }
             .padding(.horizontal, 10)
