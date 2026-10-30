@@ -3,7 +3,7 @@
 #
 # Required once:
 #   Config/sparkle_public_key.txt   (committed)
-#   .secrets/sparkle_ed_key         (private, never commit)
+#   ~/.config/lucas-release/sparkle_ed_key   (private, outside the checkout)
 #   Developer ID Application certificate in the login keychain
 #   xcrun notarytool store-credentials japlos-notary ...
 #
@@ -45,7 +45,8 @@ fi
 BUILD_NUMBER="${LUCAS_BUILD:-$(date +%Y%m%d%H%M)}"
 DOWNLOAD_PREFIX="${LUCAS_DOWNLOAD_PREFIX:-${FEED_URL%appcast.xml}}"
 UPDATES="$ROOT/updates"
-KEY="$ROOT/.secrets/sparkle_ed_key"
+SECRETS_DIR="${LUCAS_RELEASE_SECRETS:-$HOME/.config/lucas-release}"
+KEY="$SECRETS_DIR/sparkle_ed_key"
 APP="$ROOT/build/Lucas.app"
 
 # The seed manifest tells SeededOverride which prompt files an older release
