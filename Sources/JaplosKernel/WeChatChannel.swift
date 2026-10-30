@@ -340,11 +340,114 @@ public final class WeChatChannel: @unchecked Sendable {
         try status()
     }
 
+
+    // MARK: - Inbound (approval replies)
+
+    /// Poll ClawBot `getupdates` for inbound text. Without a live iLink token
+    /// returns an empty list — never crashes, never fabricates messages.
+    public func pollInboundTextMessages() -> [String] {
+        lock.lock()
+        let token = loadILinkSessionTokenUnlocked()
+        lock.unlock()
+        guard let token, !token.isEmpty else {
+            return []
+        }
+        return fetchUpdatesTextMessages(token: token)
+    }
+
+    /// Whether the ledger claims connected (may still lack a live token).
+    public func appearsConnected() -> Bool {
+        let connections = (try? store.listWeChatConnections(limit: 50)) ?? []
+        return connections.contains { ($0["state"]?.stringValue ?? "") == State.connected.rawValue }
+    }
+
     // MARK: - iLink HTTP (scaffold)
 
     private struct QRFetchResult {
         var imagePath: String?
         var error: String?
+    }
+
+    private func loadILinkSessionTokenUnlocked() -> String? {
+        // Credential files under credentialsDir; look for a token-ish file without logging secrets.
+        let fm = FileManager.default
+        guard let files = try? fm.contentsOfDirectory(at: credentialsDir, includingPropertiesForKeys: nil) else {
+            return nil
+        }
+        for file in files {
+            let name = file.lastPathComponent.lowercased()
+            guard name.contains("token") || name.hasSuffix(".json") || name.hasSuffix(".session") else { continue }
+            guard let data = try? Data(contentsOf: file),
+                  let raw = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines),
+                  !raw.isEmpty
+            else { continue }
+            // Prefer JSON {"token":"..."} / {"access_token":"..."} shapes.
+            if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+                for key in ["token", "access_token", "session_token", "ilink_token"] {
+                    if let value = json[key] as? String, !value.isEmpty {
+                        return value
+                    }
+                }
+            }
+            // Opaque single-line token file.
+            if !raw.contains("{"), raw.count >= 8, raw.count < 4096 {
+                return raw
+            }
+        }
+        return nil
+    }
+
+    private func fetchUpdatesTextMessages(token: String) -> [String] {
+        let base = store.secrets.secret(for: KernelStore.wechatILinkBaseURLAccount)?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let root = (base?.isEmpty == false) ? base! : Self.ilinkBaseURL
+        let urlString = root.hasSuffix("/") ? "\(root)\(ILinkPath.getUpdates)" : "\(root)/\(ILinkPath.getUpdates)"
+        guard let url = URL(string: urlString) else { return [] }
+
+        var request = URLRequest(url: url, timeoutInterval: 8)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        // Body shape is best-effort until live capture; empty object is a safe probe.
+        request.httpBody = Data("{}".utf8)
+
+        let semaphore = DispatchSemaphore(value: 0)
+        var texts: [String] = []
+        let task = URLSession.shared.dataTask(with: request) { data, response, error in
+            defer { semaphore.signal() }
+            guard error == nil,
+                  let data,
+                  let http = response as? HTTPURLResponse,
+                  (200..<300).contains(http.statusCode)
+            else { return }
+            texts = Self.extractInboundTexts(from: data)
+        }
+        task.resume()
+        _ = semaphore.wait(timeout: .now() + 10)
+        return texts
+    }
+
+    /// Best-effort extract plain text bodies from getupdates JSON (shape TBD live).
+    static func extractInboundTexts(from data: Data) -> [String] {
+        guard let root = try? JSONSerialization.jsonObject(with: data) else { return [] }
+        var out: [String] = []
+        func walk(_ node: Any) {
+            if let dict = node as? [String: Any] {
+                for key in ["text", "content", "msg", "message", "body"] {
+                    if let s = dict[key] as? String {
+                        let t = s.trimmingCharacters(in: .whitespacesAndNewlines)
+                        if !t.isEmpty { out.append(t) }
+                    }
+                }
+                for value in dict.values { walk(value) }
+            } else if let arr = node as? [Any] {
+                for value in arr { walk(value) }
+            }
+        }
+        walk(root)
+        // Deduplicate while preserving order.
+        var seen = Set<String>()
+        return out.filter { seen.insert($0).inserted }
     }
 
     private func fetchBotQRCode(loginSessionID: String) async -> QRFetchResult {

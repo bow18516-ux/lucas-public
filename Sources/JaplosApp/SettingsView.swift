@@ -1389,7 +1389,36 @@ struct ChannelsSettingsPane: View {
                 .buttonStyle(.pressable)
             }
 
-            Text("官方 ClawBot / iLink（ilinkai.weixin.qq.com）。不需要 AppID。真实扫码连通需老板现场扫码验证。")
+            Toggle(isOn: Binding(
+                get: { model.wechatApprovalPushEnabled },
+                set: { enabled in
+                    Task {
+                        busy = true
+                        defer { busy = false }
+                        banner = await model.setWechatApprovalPushEnabled(enabled)
+                    }
+                }
+            )) {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("审批推送到微信")
+                        .font(.system(size: SettingsMetrics.bodySize))
+                        .foregroundStyle(Theme.textPrimary)
+                    Text("工具需审批时发微信文案；回复「同意」或「拒绝」（多笔用「同意 AB12」）。未连接时仍仅桌面卡片；默认开启。")
+                        .font(.system(size: SettingsMetrics.captionSize))
+                        .foregroundStyle(Theme.textSecondary)
+                }
+            }
+            .toggleStyle(.switch)
+            .disabled(busy)
+
+            if let note = model.wechatStatus["approvalPushLastNote"]?.stringValue, !note.isEmpty {
+                Text(note)
+                    .font(.system(size: SettingsMetrics.captionSize))
+                    .foregroundStyle(Theme.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            Text("官方 ClawBot / iLink（ilinkai.weixin.qq.com）。不需要 AppID。真实扫码连通需老板现场扫码验证。硬阻塞：无 live iLink 令牌时审批推送不会伪造送达，桌面审批卡仍可用。超时：桌面约 120s；尝试微信推送时约 300s，超时默认拒绝。")
                 .font(.system(size: SettingsMetrics.captionSize))
                 .foregroundStyle(Theme.textSecondary.opacity(0.85))
         }

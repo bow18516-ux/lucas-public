@@ -130,6 +130,7 @@ do {
         streamHandler: { request, emit, approval in
             await core.handleStreaming(request, emit: emit, approval: approval)
         },
+        approvalBridge: core.wechatApprovalBridge,
         handler: { request in await core.handle(request) }
     )
     core.recordBootSelfHealing(supportDirectory: support)

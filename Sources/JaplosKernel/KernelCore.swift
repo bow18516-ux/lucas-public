@@ -11,6 +11,8 @@ public final class KernelCore: @unchecked Sendable {
     public let wechat: WeChatChannel
     public let feishu: FeishuChannel
     public let mail: MailChannel
+    /// WeChat side-channel for tool approvals (desktop card remains primary).
+    public let wechatApprovalBridge: WeChatApprovalBridge
     public let startedAt = Date()
     public let version = "1.0.0"
     public let workspace: URL
@@ -30,6 +32,7 @@ public final class KernelCore: @unchecked Sendable {
         self.wechat = WeChatChannel(store: store, supportDirectory: support)
         self.feishu = FeishuChannel(store: store, supportDirectory: support)
         self.mail = MailChannel(store: store, supportDirectory: support)
+        self.wechatApprovalBridge = WeChatApprovalBridge(store: store, wechat: wechat)
         self.workspace = workspace ?? FileManager.default.homeDirectoryForCurrentUser
         try policy.bootstrap()
         tools.register(contentsOf: BuiltinTools.all())
@@ -795,7 +798,7 @@ public final class KernelCore: @unchecked Sendable {
 
             // MARK: WeChat
             case .runtimeWeChatStatus, .wechatLoginStatus, .wechatConnectionRead, .wechatConnections:
-                return .success(try wechat.status(), requestID: requestID)
+                return .success(enrichedWeChatStatus(), requestID: requestID)
 
             case .runtimeWeChatConnect, .wechatLoginStart:
                 return .success(try await wechat.connect(), requestID: requestID)
@@ -832,7 +835,7 @@ public final class KernelCore: @unchecked Sendable {
 
             case .wechatConnectionManage, .wechatLoginEvents:
                 // Manage/events: status + connections summary (credential-free).
-                let status = try wechat.status()
+                let status = enrichedWeChatStatus()
                 let list = try wechat.listConnections()
                 return .success(.object([
                     "status": status,
@@ -1086,6 +1089,15 @@ public final class KernelCore: @unchecked Sendable {
         let sessionID = request.arguments["sessionID"]?.stringValue
         let execution = await executeTool(call, sessionID: sessionID, principal: request.principal)
         return .success(Self.encode(execution: execution), requestID: requestID)
+    }
+
+    public func enrichedWeChatStatus() -> JSONValue {
+        let base = (try? wechat.status()) ?? .object([:])
+        var object = base.objectValue ?? [:]
+        for (key, value) in wechatApprovalBridge.statusExtras() {
+            object[key] = value
+        }
+        return .object(object)
     }
 
     // MARK: - Encoding helpers

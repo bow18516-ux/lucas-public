@@ -34,6 +34,7 @@ public final class UnixSocketServer: @unchecked Sendable {
     private let path: String
     private let handler: (KernelRequest) async -> KernelResponse
     private let streamHandler: StreamingKernelHandler?
+    private let approvalBridge: WeChatApprovalBridge?
     private let keepAlive: () -> Bool
     private let lock = NSLock()
     private var listenFD: Int32 = -1
@@ -45,11 +46,13 @@ public final class UnixSocketServer: @unchecked Sendable {
         path: String,
         keepAlive: @escaping () -> Bool = { true },
         streamHandler: StreamingKernelHandler? = nil,
+        approvalBridge: WeChatApprovalBridge? = nil,
         handler: @escaping (KernelRequest) async -> KernelResponse
     ) {
         self.path = path
         self.keepAlive = keepAlive
         self.streamHandler = streamHandler
+        self.approvalBridge = approvalBridge
         self.handler = handler
     }
 
@@ -192,7 +195,7 @@ public final class UnixSocketServer: @unchecked Sendable {
                 && request.arguments["stream"]?.boolValue == true
             if wantsStream, let streamHandler {
                 let writer = FrameWriter(client: client)
-                let broker = ApprovalBroker()
+                let broker = ApprovalBroker(bridge: self.approvalBridge)
                 awaitStream(request, handler: streamHandler, writer: writer, client: client, broker: broker)
                 writer.finish()
             } else {
@@ -230,8 +233,14 @@ public final class UnixSocketServer: @unchecked Sendable {
         cancellation.store(task)
 
         // The connection doubles as the approval channel while the turn runs.
+        // Also poll WeChat inbound for 同意/拒绝 replies (no-op without live iLink).
+        var inboundPollCounter = 0
         while true {
             if done.wait(timeout: .now() + 0.15) == .success { break }
+            inboundPollCounter += 1
+            if inboundPollCounter % 4 == 0 {
+                _ = broker.pollWeChatInbound()
+            }
             guard pollReadable(client, timeoutMilliseconds: 100) else { continue }
             do {
                 let payload = try FrameCodec.readFrame(from: client, timeout: 10)
@@ -294,6 +303,11 @@ public final class UnixSocketServer: @unchecked Sendable {
     private final class ApprovalBroker: @unchecked Sendable {
         private let lock = NSLock()
         private var pending: [String: CheckedContinuation<Bool, Never>] = [:]
+        private let bridge: WeChatApprovalBridge?
+
+        init(bridge: WeChatApprovalBridge?) {
+            self.bridge = bridge
+        }
 
         func request(
             call: ToolCall,
@@ -301,21 +315,44 @@ public final class UnixSocketServer: @unchecked Sendable {
             writer: FrameWriter,
             timeout: TimeInterval
         ) async -> Bool {
-            await withCheckedContinuation { continuation in
+            let shortId = WeChatApprovalBridge.makeShortId(for: call.id)
+            let attemptPush = bridge?.shouldAttemptPush() == true
+            let effectiveTimeout = bridge?.preferredTimeout(attemptingWeChatPush: attemptPush) ?? timeout
+
+            return await withCheckedContinuation { continuation in
                 lock.lock()
                 pending[call.id] = continuation
                 lock.unlock()
 
+                bridge?.register(
+                    callID: call.id,
+                    shortId: shortId,
+                    title: definition.title,
+                    name: definition.name,
+                    onResolve: { [weak self] approved in
+                        self?.resolve(callID: call.id, approved: approved)
+                    }
+                )
+
                 writer.write(.success(.object([
                     "event": .string("approval"),
                     "callID": .string(call.id),
+                    "shortId": .string(shortId),
                     "name": .string(definition.name),
                     "title": .string(definition.title),
                     "risk": .string(definition.risk.rawValue),
                     "arguments": call.arguments,
+                    "wechatPushAttempted": .bool(attemptPush),
+                    "approvalTimeoutSec": .number(effectiveTimeout),
                 ]), requestID: call.id))
 
-                DispatchQueue.global().asyncAfter(deadline: .now() + timeout) { [weak self] in
+                // Side channel: push to WeChat when enabled + appears connected.
+                // Never blocks the desktop card; failures are non-fatal.
+                if attemptPush || bridge?.isPushEnabled() == true {
+                    _ = bridge?.notifyApproval(call: call, definition: definition, shortId: shortId)
+                }
+
+                DispatchQueue.global().asyncAfter(deadline: .now() + effectiveTimeout) { [weak self] in
                     self?.resolve(callID: call.id, approved: false)
                 }
             }
@@ -325,7 +362,13 @@ public final class UnixSocketServer: @unchecked Sendable {
             lock.lock()
             let continuation = pending.removeValue(forKey: callID)
             lock.unlock()
+            bridge?.clear(callID: callID)
             continuation?.resume(returning: approved)
+        }
+
+        @discardableResult
+        func pollWeChatInbound() -> Int {
+            bridge?.pollInboundOnce() ?? 0
         }
 
         func cancelAll() {
@@ -333,6 +376,9 @@ public final class UnixSocketServer: @unchecked Sendable {
             let all = pending
             pending.removeAll()
             lock.unlock()
+            for callID in all.keys {
+                bridge?.clear(callID: callID)
+            }
             for continuation in all.values {
                 continuation.resume(returning: false)
             }

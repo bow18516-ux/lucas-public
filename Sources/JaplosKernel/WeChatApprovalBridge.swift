@@ -1,0 +1,344 @@
+import Foundation
+import JaplosProtocol
+
+/// Bridges tool-approval requests to WeChat (ClawBot / iLink) so the user can
+/// approve/deny while away from the Mac. Desktop socket approvals remain the
+/// primary path; WeChat is a side channel.
+///
+/// Hard block: without a live iLink session token, `notifyApproval` will not
+/// fabricate delivery — it reports `needsLiveILink` / `not_connected` clearly.
+public final class WeChatApprovalBridge: @unchecked Sendable {
+    public static let configPath = "channels.wechat.approvalPush"
+    /// Desktop-only wait (seconds).
+    public static let desktopTimeout: TimeInterval = 120
+    /// Longer wait when a WeChat push was attempted (user may be away from Mac).
+    public static let wechatPushTimeout: TimeInterval = 300
+
+    private struct Entry {
+        let shortId: String
+        let title: String
+        let name: String
+        let resolve: (Bool) -> Void
+    }
+
+    private let store: KernelStore
+    private let wechat: WeChatChannel
+    private let lock = NSLock()
+    private var byCallID: [String: Entry] = [:]
+    private var callIDByShortId: [String: String] = [:]
+    private var lastPushNote: String?
+
+    public init(store: KernelStore, wechat: WeChatChannel) {
+        self.store = store
+        self.wechat = wechat
+    }
+
+    // MARK: - Settings
+
+    /// Default **on** when unset (push when WeChat appears connected).
+    public func isPushEnabled() -> Bool {
+        guard let value = try? store.configurationValue(Self.configPath) else {
+            return true
+        }
+        if let flag = value.boolValue { return flag }
+        if let object = value.objectValue, let flag = object["enabled"]?.boolValue {
+            return flag
+        }
+        return true
+    }
+
+    public func setPushEnabled(_ enabled: Bool, updatedBy: String = "settings") throws {
+        try store.setConfiguration(
+            path: Self.configPath,
+            value: .object([
+                "enabled": .bool(enabled),
+                "updatedAt": .string(ISO8601.string(from: Date())),
+            ]),
+            updatedBy: updatedBy
+        )
+    }
+
+    /// True when the toggle is on and WeChat ledger reports connected.
+    /// Still does not guarantee live iLink delivery.
+    public func shouldAttemptPush() -> Bool {
+        guard isPushEnabled() else { return false }
+        let status = (try? wechat.status()) ?? .object([:])
+        return status["connected"]?.boolValue == true
+    }
+
+    public func preferredTimeout(attemptingWeChatPush: Bool) -> TimeInterval {
+        attemptingWeChatPush ? Self.wechatPushTimeout : Self.desktopTimeout
+    }
+
+    public func statusExtras() -> [String: JSONValue] {
+        let enabled = isPushEnabled()
+        let attempt = shouldAttemptPush()
+        var extras: [String: JSONValue] = [
+            "approvalPushEnabled": .bool(enabled),
+            "approvalPushConfigPath": .string(Self.configPath),
+            "approvalPushWillAttempt": .bool(attempt),
+            "approvalPushDesktopTimeoutSec": .number(Self.desktopTimeout),
+            "approvalPushWeChatTimeoutSec": .number(Self.wechatPushTimeout),
+            "approvalPushReplyHint": .string("回复「同意」或「拒绝」；多笔待批时用「同意 AB12」/「拒绝 AB12」。"),
+            "approvalPushHardBlock": .string(
+                "Live delivery needs ClawBot QR scan + iLink session token. Without it, push reports not_connected/needsLiveILink and desktop card remains fallback."
+            ),
+        ]
+        if let lastPushNote {
+            extras["approvalPushLastNote"] = .string(lastPushNote)
+        }
+        lock.lock()
+        let pendingCount = byCallID.count
+        lock.unlock()
+        extras["approvalPushPendingCount"] = .number(Double(pendingCount))
+        return extras
+    }
+
+    // MARK: - Registry
+
+    public static func makeShortId(for callID: String) -> String {
+        let hex = callID.replacingOccurrences(of: "-", with: "").uppercased()
+        if hex.count >= 4 {
+            return String(hex.prefix(4))
+        }
+        return String(UUID().uuidString.replacingOccurrences(of: "-", with: "").prefix(4)).uppercased()
+    }
+
+    public func register(
+        callID: String,
+        shortId: String,
+        title: String,
+        name: String,
+        onResolve: @escaping (Bool) -> Void
+    ) {
+        lock.lock()
+        defer { lock.unlock() }
+        // Avoid shortId collisions while both are pending.
+        var sid = shortId
+        if let existing = callIDByShortId[sid], existing != callID {
+            sid = Self.makeShortId(for: UUID().uuidString)
+        }
+        byCallID[callID] = Entry(shortId: sid, title: title, name: name, resolve: onResolve)
+        callIDByShortId[sid] = callID
+    }
+
+    /// Remove without invoking the resolve callback (socket path already resumed).
+    public func clear(callID: String) {
+        lock.lock()
+        defer { lock.unlock() }
+        if let entry = byCallID.removeValue(forKey: callID) {
+            callIDByShortId.removeValue(forKey: entry.shortId)
+        }
+    }
+
+    public func clearAll() {
+        lock.lock()
+        byCallID.removeAll()
+        callIDByShortId.removeAll()
+        lock.unlock()
+    }
+
+    /// Resolve a pending approval (WeChat inbound or tests). Returns whether one was pending.
+    @discardableResult
+    public func resolve(callID: String, approved: Bool) -> Bool {
+        lock.lock()
+        let entry = byCallID.removeValue(forKey: callID)
+        if let entry {
+            callIDByShortId.removeValue(forKey: entry.shortId)
+        }
+        lock.unlock()
+        guard let entry else { return false }
+        entry.resolve(approved)
+        return true
+    }
+
+    @discardableResult
+    public func resolve(shortId: String, approved: Bool) -> Bool {
+        lock.lock()
+        let callID = callIDByShortId[shortId.uppercased()]
+        lock.unlock()
+        guard let callID else { return false }
+        return resolve(callID: callID, approved: approved)
+    }
+
+    // MARK: - Outbound push
+
+    public func notifyApproval(
+        call: ToolCall,
+        definition: ToolDefinition,
+        shortId: String
+    ) -> JSONValue {
+        guard isPushEnabled() else {
+            let note = "审批推送已关闭（\(Self.configPath)）。仅桌面卡片。"
+            lastPushNote = note
+            return .object([
+                "ok": .bool(false),
+                "skipped": .bool(true),
+                "reason": .string("disabled"),
+                "message": .string(note),
+            ])
+        }
+
+        guard shouldAttemptPush() else {
+            let note = "微信未连接，审批仅走桌面卡片。连接后回复「同意/\(shortId)」或「拒绝/\(shortId)」即可。"
+            lastPushNote = note
+            return .object([
+                "ok": .bool(false),
+                "skipped": .bool(true),
+                "reason": .string("not_connected"),
+                "message": .string(note),
+            ])
+        }
+
+        let summary = Self.compactSummary(call.arguments)
+        let body = """
+        【Lucas 审批】\(shortId)
+        工具：\(definition.title.isEmpty ? definition.name : definition.title)
+        名称：\(definition.name)
+        风险：\(definition.risk.rawValue)
+        \(summary.isEmpty ? "" : "参数：\(summary)\n")
+        回复「同意」或「拒绝」；多笔待批请带编号：同意 \(shortId) / 拒绝 \(shortId)
+        超时默认拒绝（约 \(Int(Self.wechatPushTimeout)) 秒）。
+        """
+
+        do {
+            let result = try wechat.sendText(text: body, suppressAck: true)
+            let delivered = result["delivered"]?.boolValue == true
+            let ok = result["ok"]?.boolValue == true && delivered
+            if ok {
+                lastPushNote = "已推送到微信 shortId=\(shortId)"
+            } else {
+                let msg = result["message"]?.stringValue
+                    ?? result["error"]?.stringValue
+                    ?? "push_failed"
+                lastPushNote = "微信推送未送达：\(msg)（桌面卡片仍可用）"
+            }
+            var merged = result.objectValue ?? [:]
+            merged["approvalShortId"] = .string(shortId)
+            merged["approvalPushAttempted"] = .bool(true)
+            merged["approvalPushOk"] = .bool(ok)
+            if let note = lastPushNote {
+                merged["approvalPushNote"] = .string(note)
+            }
+            return .object(merged)
+        } catch {
+            let note = "微信推送异常：\(error.localizedDescription)（桌面卡片仍可用）"
+            lastPushNote = note
+            return .object([
+                "ok": .bool(false),
+                "delivered": .bool(false),
+                "error": .string("push_exception"),
+                "message": .string(note),
+                "approvalShortId": .string(shortId),
+            ])
+        }
+    }
+
+    // MARK: - Inbound
+
+    /// Parse approve/deny from WeChat (or test) text. Bare 同意/拒绝 resolves the
+    /// sole pending item; with multiple pending, shortId is required.
+    @discardableResult
+    public func handleInboundText(_ text: String) -> Bool {
+        guard let decision = Self.parseDecision(text) else { return false }
+
+        if let shortId = decision.shortId {
+            return resolve(shortId: shortId, approved: decision.approved)
+        }
+
+        lock.lock()
+        let ids = Array(byCallID.keys)
+        lock.unlock()
+        guard ids.count == 1, let only = ids.first else {
+            return false
+        }
+        return resolve(callID: only, approved: decision.approved)
+    }
+
+    /// Best-effort poll of iLink getUpdates; without a live token returns 0 and never crashes.
+    @discardableResult
+    public func pollInboundOnce() -> Int {
+        let messages = wechat.pollInboundTextMessages()
+        var resolved = 0
+        for text in messages {
+            if handleInboundText(text) {
+                resolved += 1
+            }
+        }
+        return resolved
+    }
+
+    // MARK: - Parsing (testable)
+
+    public struct Decision: Equatable {
+        public let approved: Bool
+        public let shortId: String?
+    }
+
+    /// Accepts: 同意 / 拒绝 / 批准 / 允许 / yes / no / approve / deny,
+    /// optional shortId: `同意 AB12`, `拒绝:ab12`, `approve ab12`.
+    public static func parseDecision(_ raw: String) -> Decision? {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+
+        let normalized = trimmed
+            .replacingOccurrences(of: "：", with: " ")
+            .replacingOccurrences(of: ":", with: " ")
+            .replacingOccurrences(of: "　", with: " ")
+        let lower = normalized.lowercased()
+
+        let approveTokens = ["同意", "批准", "允许", "approve", "yes", "y", "ok", "允许执行"]
+        let denyTokens = ["拒绝", "否", "deny", "no", "n", "不允许"]
+
+        func match(tokens: [String]) -> (matched: Bool, shortId: String?) {
+            for token in tokens {
+                let t = token.lowercased()
+                if lower == t {
+                    return (true, nil)
+                }
+                if lower.hasPrefix(t + " ") {
+                    let rest = normalized.dropFirst(token.count).trimmingCharacters(in: .whitespacesAndNewlines)
+                    let sid = extractShortId(from: String(rest))
+                    return (true, sid)
+                }
+                // Chinese without space: 同意AB12
+                if token.count >= 2, lower.hasPrefix(t), lower.count > t.count {
+                    let rest = String(normalized.dropFirst(token.count))
+                    if let sid = extractShortId(from: rest) {
+                        return (true, sid)
+                    }
+                }
+            }
+            return (false, nil)
+        }
+
+        let approve = match(tokens: approveTokens)
+        if approve.matched {
+            return Decision(approved: true, shortId: approve.shortId)
+        }
+        let deny = match(tokens: denyTokens)
+        if deny.matched {
+            return Decision(approved: false, shortId: deny.shortId)
+        }
+        return nil
+    }
+
+    private static func extractShortId(from rest: String) -> String? {
+        let hex = rest.trimmingCharacters(in: .whitespacesAndNewlines)
+            .replacingOccurrences(of: "-", with: "")
+            .uppercased()
+        guard hex.count >= 4 else { return nil }
+        let candidate = String(hex.prefix(4))
+        guard candidate.unicodeScalars.allSatisfy({ CharacterSet(charactersIn: "0123456789ABCDEF").contains($0) }) else {
+            return nil
+        }
+        return candidate
+    }
+
+    private static func compactSummary(_ arguments: JSONValue) -> String {
+        let text = (try? arguments.encodedString()) ?? ""
+        let oneLine = text.replacingOccurrences(of: "\n", with: " ")
+        if oneLine.count <= 280 { return oneLine }
+        return String(oneLine.prefix(280)) + "…"
+    }
+}

@@ -91,6 +91,8 @@ final class AppModel: ObservableObject {
     @Published var knowledgeDocuments: [KnowledgeDocument] = []
     @Published var mcpEvents: [MCPEventItem] = []
     @Published var wechatStatus: JSONValue = .object([:])
+    /// Settings → 通道 → 微信：「审批推送到微信」(default on).
+    @Published var wechatApprovalPushEnabled: Bool = true
     @Published var feishuStatus: JSONValue = .object([:])
     @Published var mailStatus: JSONValue = .object([:])
     @Published var storeTableCounts: [(name: String, count: Int)] = []
@@ -1577,6 +1579,9 @@ final class AppModel: ObservableObject {
     func refreshChannelStatus() async {
         do {
             wechatStatus = try await client.callAsync(.runtimeWeChatStatus, arguments: .object([:]))
+            if let enabled = wechatStatus["approvalPushEnabled"]?.boolValue {
+                wechatApprovalPushEnabled = enabled
+            }
         } catch {
             wechatStatus = .object([
                 "state": .string("unavailable"),
@@ -1621,6 +1626,23 @@ final class AppModel: ObservableObject {
             return (error as? ClientError)?.description ?? String(describing: error)
         }
     }
+
+    func setWechatApprovalPushEnabled(_ enabled: Bool) async -> String {
+        wechatApprovalPushEnabled = enabled
+        do {
+            _ = try await client.callAsync(.configurationSet, arguments: .object([
+                "path": .string("channels.wechat.approvalPush"),
+                "value": .object([
+                    "enabled": .bool(enabled),
+                ]),
+            ]))
+            await refreshChannelStatus()
+            return enabled ? "已开启：审批将尝试推送到微信" : "已关闭：审批仅桌面卡片"
+        } catch {
+            return (error as? ClientError)?.description ?? String(describing: error)
+        }
+    }
+
 
     func feishuConfigure(appID: String, appSecret: String, verificationToken: String) async -> String {
         var args: [String: JSONValue] = [:]
