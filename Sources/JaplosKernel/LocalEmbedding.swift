@@ -17,8 +17,18 @@ public enum LocalEmbedding {
         return "unavailable"
     }
 
+    /// `NLEmbedding` is not thread-safe: concurrent `vector(for:)` calls inside
+    /// CoreNLP segfault. Serialise the computation behind one lock.
+    private static let computeLock = NSLock()
+
     /// Returns a unit-ish vector for ranking, or nil if embeddings aren't available.
     public static func vector(for text: String) -> [Double]? {
+        computeLock.lock()
+        defer { computeLock.unlock() }
+        return vectorLocked(for: text)
+    }
+
+    private static func vectorLocked(for text: String) -> [Double]? {
         let trimmed = text
             .trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return nil }

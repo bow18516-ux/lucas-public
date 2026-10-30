@@ -159,4 +159,7 @@ python3 scripts/stop_pending_check.py
 echo "18. MCP tool runs after approval"
 python3 scripts/approval_check.py allow mcp
 
+echo "19. ping stays fast under 50 slow streams"
+LUCAS_HOT_CONNECTIONS=50 python3 scripts/hot_connections_check.py
+
 echo "✅ smoke test passed"

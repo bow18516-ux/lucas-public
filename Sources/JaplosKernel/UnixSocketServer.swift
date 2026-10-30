@@ -195,9 +195,15 @@ public final class UnixSocketServer: @unchecked Sendable {
                 if errno == EBADF { return }
                 continue
             }
-            DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            // One dedicated thread per connection: `serve` reads the socket with
+            // blocking calls, and a streaming turn can hold it for minutes. Using
+            // the shared GCD pool here let a burst of slow turns starve ordinary
+            // requests (and the pool is small), so keep them off it.
+            let worker = Thread { [weak self] in
                 self?.serve(client)
             }
+            worker.stackSize = 512 * 1024
+            worker.start()
         }
     }
 
