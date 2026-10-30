@@ -145,10 +145,13 @@ public final class KernelClient: @unchecked Sendable {
             return try perform(operation, arguments: arguments, timeout: timeout, resource: resource)
         } catch let error as ClientError {
             switch error {
-            case .cannotConnect, .transport:
+            case .cannotConnect:
+                // Only a dead socket means "the daemon is gone". A timeout or a
+                // mid-stream disconnect is the server's answer: replaying it can
+                // double-apply a side effect.
                 try DaemonController.ensureRunning(client: self)
                 return try perform(operation, arguments: arguments, timeout: timeout, resource: resource)
-            case .kernel:
+            case .transport, .kernel:
                 throw error
             }
         }
@@ -402,18 +405,23 @@ public enum DaemonController {
 
     public static func locateDaemon() -> URL? {
         var candidates: [URL] = []
+#if DEBUG
+        // Development only: a release build must never pick up a binary from a
+        // checkout instead of the one shipped inside the app bundle.
         if let override = ProcessInfo.processInfo.environment["LUCASD_PATH"], !override.isEmpty {
             candidates.append(URL(fileURLWithPath: (override as NSString).expandingTildeInPath))
         }
+#endif
         if let bundleURL = Bundle.main.executableURL?.deletingLastPathComponent() {
             candidates.append(bundleURL.appendingPathComponent("lucasd"))
         }
+#if DEBUG
         let cwd = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
         candidates.append(cwd.appendingPathComponent(".build/release/lucasd"))
         candidates.append(cwd.appendingPathComponent(".build/debug/lucasd"))
         candidates.append(cwd.appendingPathComponent("clone/.build/debug/lucasd"))
         candidates.append(cwd.appendingPathComponent("clone/.build/release/lucasd"))
-
+#endif
         return candidates.first { FileManager.default.isExecutableFile(atPath: $0.path) }
     }
 }
