@@ -21,6 +21,8 @@ public enum Capability {
     public static let audioControl = "audio.control@1"
     public static let systemRead = "system.read@1"
     public static let notificationSend = "notification.send@1"
+    public static let channelRead = "channel.read@1"
+    public static let channelManage = "channel.manage@1"
 }
 
 public struct PermissionGrant: Codable, Sendable, Equatable {
@@ -141,6 +143,20 @@ public enum CapabilityRouting {
             return Capability.modelInvoke
         case .modelRoutesSet, .modelRoutesDelete, .speechProfilesSet:
             return Capability.root
+        case .runtimeWeChatStatus, .wechatLoginStatus, .wechatLoginEvents,
+             .wechatConnectionList, .wechatConnectionRead, .wechatConnections,
+             .runtimeFeishuStatus, .runtimeFeishuSession,
+             .feishuConnectionStatus, .feishuConnectionRead:
+            return Capability.channelRead
+        case .runtimeWeChatConnect, .runtimeWeChatDisconnect, .runtimeWeChatVerify,
+             .runtimeWeChatSendText, .runtimeWeChatSendFile,
+             .wechatLoginStart, .wechatLoginVerify,
+             .wechatConnectionManage, .wechatConnectionRemove,
+             .runtimeFeishuConnect, .runtimeFeishuDisconnect, .runtimeFeishuSendText,
+             .feishuConfigurationOpen, .feishuConfigurationCancel,
+             .feishuConnectionConfigure, .feishuConnectionDisconnect, .feishuConnectionManage,
+             .runtimeKnowledgeImportFeishu:
+            return Capability.channelManage
         default:
             return Capability.root
         }

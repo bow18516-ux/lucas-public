@@ -8,6 +8,8 @@ public final class KernelCore: @unchecked Sendable {
     public let policy: PolicyEngine
     public let tools: ToolRegistry
     public let mcp: MCPManager
+    public let wechat: WeChatChannel
+    public let feishu: FeishuChannel
     public let startedAt = Date()
     public let version = "1.0.0"
     public let workspace: URL
@@ -23,12 +25,16 @@ public final class KernelCore: @unchecked Sendable {
         self.policy = PolicyEngine(store: store)
         self.tools = ToolRegistry()
         self.mcp = MCPManager(store: store)
+        let support = URL(fileURLWithPath: storePath).deletingLastPathComponent()
+        self.wechat = WeChatChannel(store: store, supportDirectory: support)
+        self.feishu = FeishuChannel(store: store, supportDirectory: support)
         self.workspace = workspace ?? FileManager.default.homeDirectoryForCurrentUser
         try policy.bootstrap()
         tools.register(contentsOf: BuiltinTools.all())
         tools.register(contentsOf: ExtendedTools.all())
         tools.register(contentsOf: SystemInfoTools.all())
         tools.register(contentsOf: DocumentTools.all())
+        tools.register(contentsOf: ChannelTools.all(wechat: wechat, feishu: feishu))
     }
 
     /// Ensure `self-healing/` under Application Support Lucas and append a boot ledger row.
@@ -757,6 +763,94 @@ public final class KernelCore: @unchecked Sendable {
                     "id": .string(id),
                     "deleted": .bool(true),
                 ]), requestID: requestID)
+
+            // MARK: WeChat
+            case .runtimeWeChatStatus, .wechatLoginStatus, .wechatConnectionRead, .wechatConnections:
+                return .success(try wechat.status(), requestID: requestID)
+
+            case .runtimeWeChatConnect, .wechatLoginStart:
+                return .success(try await wechat.connect(), requestID: requestID)
+
+            case .runtimeWeChatDisconnect:
+                return .success(try wechat.disconnect(), requestID: requestID)
+
+            case .runtimeWeChatVerify, .wechatLoginVerify:
+                let code = request.arguments["code"]?.stringValue
+                    ?? request.arguments["verificationCode"]?.stringValue
+                    ?? ""
+                return .success(try wechat.verify(code: code), requestID: requestID)
+
+            case .runtimeWeChatSendText:
+                let text = request.arguments["text"]?.stringValue ?? ""
+                let suppress = request.arguments["suppressAck"]?.boolValue ?? false
+                return .success(try wechat.sendText(text: text, suppressAck: suppress), requestID: requestID)
+
+            case .runtimeWeChatSendFile:
+                let path = request.arguments["path"]?.stringValue
+                    ?? request.arguments["filePath"]?.stringValue
+                    ?? ""
+                let suppress = request.arguments["suppressTextReplyOnSuccess"]?.boolValue ?? false
+                return .success(try wechat.sendFile(path: path, suppressTextReplyOnSuccess: suppress), requestID: requestID)
+
+            case .wechatConnectionList:
+                return .success(try wechat.listConnections(), requestID: requestID)
+
+            case .wechatConnectionRemove:
+                let id = request.arguments["id"]?.stringValue
+                    ?? request.arguments["connectionID"]?.stringValue
+                    ?? ""
+                return .success(try wechat.removeConnection(id: id), requestID: requestID)
+
+            case .wechatConnectionManage, .wechatLoginEvents:
+                // Manage/events: status + connections summary (credential-free).
+                let status = try wechat.status()
+                let list = try wechat.listConnections()
+                return .success(.object([
+                    "status": status,
+                    "connections": list["connections"] ?? .array([]),
+                ]), requestID: requestID)
+
+            // MARK: Feishu
+            case .runtimeFeishuStatus, .feishuConnectionStatus, .feishuConnectionRead:
+                return .success(try feishu.status(), requestID: requestID)
+
+            case .runtimeFeishuConnect:
+                return .success(try await feishu.connect(), requestID: requestID)
+
+            case .runtimeFeishuDisconnect, .feishuConnectionDisconnect:
+                return .success(try feishu.disconnect(), requestID: requestID)
+
+            case .runtimeFeishuSession:
+                return .success(try feishu.session(), requestID: requestID)
+
+            case .runtimeFeishuSendText:
+                let text = request.arguments["text"]?.stringValue ?? ""
+                let receiveID = request.arguments["receiveID"]?.stringValue
+                    ?? request.arguments["receive_id"]?.stringValue
+                let receiveType = request.arguments["receiveIDType"]?.stringValue
+                    ?? request.arguments["receive_id_type"]?.stringValue
+                    ?? "open_id"
+                return .success(
+                    try await feishu.sendTextAsync(text: text, receiveID: receiveID, receiveIDType: receiveType),
+                    requestID: requestID
+                )
+
+            case .feishuConfigurationOpen:
+                return .success(try feishu.openConfiguration(), requestID: requestID)
+
+            case .feishuConfigurationCancel:
+                return .success(try feishu.cancelConfiguration(), requestID: requestID)
+
+            case .feishuConnectionConfigure, .feishuConnectionManage:
+                return .success(try feishu.configure(
+                    appID: request.arguments["appId"]?.stringValue ?? request.arguments["app_id"]?.stringValue,
+                    appSecret: request.arguments["appSecret"]?.stringValue ?? request.arguments["app_secret"]?.stringValue,
+                    verificationToken: request.arguments["verificationToken"]?.stringValue
+                        ?? request.arguments["verification_token"]?.stringValue
+                ), requestID: requestID)
+
+            case .runtimeKnowledgeImportFeishu:
+                return .success(feishu.importKnowledgeStub(), requestID: requestID)
 
             case .speechSynthesize:
                 return await Self.synthesizeSpeech(request: request, store: store)

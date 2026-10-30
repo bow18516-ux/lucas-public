@@ -73,8 +73,12 @@ func ensureSupportTree(_ support: URL) {
         "self-healing",
         "credentials",
         "Caches",
+        "Caches/wechat",
         "DownloadStaging",
         "feishu",
+        "feishu/credentials",
+        "wechat",
+        "wechat/credentials",
         "Prompts",
         "Injection",
         "BuiltinSkills",
@@ -83,6 +87,11 @@ func ensureSupportTree(_ support: URL) {
     for name in names {
         let url = support.appendingPathComponent(name, isDirectory: true)
         try? fm.createDirectory(at: url, withIntermediateDirectories: true)
+    }
+    // Japlos-shaped empty Feishu auth sqlite (0 rows until boss pastes credentials).
+    let auth = support.appendingPathComponent("feishu/credentials/auth.sqlite")
+    if !fm.fileExists(atPath: auth.path) {
+        try? FeishuAuthStore.ensureSchema(at: auth)
     }
     let logs = FileManager.default.homeDirectoryForCurrentUser
         .appendingPathComponent("Library/Logs/Lucas", isDirectory: true)

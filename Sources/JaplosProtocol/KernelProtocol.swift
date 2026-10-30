@@ -116,6 +116,38 @@ public extension KernelOperation {
     static let runtimeLedgerDelete = KernelOperation("runtime.ledger.delete")
     static let runtimeLedgerTables = KernelOperation("runtime.ledger.tables")
 
+    // WeChat ClawBot / iLink channel
+    static let runtimeWeChatConnect = KernelOperation("runtime.wechat.connect")
+    static let runtimeWeChatDisconnect = KernelOperation("runtime.wechat.disconnect")
+    static let runtimeWeChatStatus = KernelOperation("runtime.wechat.status")
+    static let runtimeWeChatVerify = KernelOperation("runtime.wechat.verify")
+    static let runtimeWeChatSendText = KernelOperation("runtime.wechat.send_text")
+    static let runtimeWeChatSendFile = KernelOperation("runtime.wechat.send_file")
+    static let wechatLoginStart = KernelOperation("wechat.login.start")
+    static let wechatLoginStatus = KernelOperation("wechat.login.status")
+    static let wechatLoginVerify = KernelOperation("wechat.login.verify")
+    static let wechatLoginEvents = KernelOperation("wechat.login.events")
+    static let wechatConnectionList = KernelOperation("wechat.connection.list")
+    static let wechatConnectionManage = KernelOperation("wechat.connection.manage")
+    static let wechatConnectionRead = KernelOperation("wechat.connection.read")
+    static let wechatConnectionRemove = KernelOperation("wechat.connection.remove")
+    static let wechatConnections = KernelOperation("wechat.connections")
+
+    // Feishu channel
+    static let runtimeFeishuConnect = KernelOperation("runtime.feishu.connect")
+    static let runtimeFeishuDisconnect = KernelOperation("runtime.feishu.disconnect")
+    static let runtimeFeishuStatus = KernelOperation("runtime.feishu.status")
+    static let runtimeFeishuSession = KernelOperation("runtime.feishu.session")
+    static let runtimeFeishuSendText = KernelOperation("runtime.feishu.send_text")
+    static let feishuConfigurationOpen = KernelOperation("feishu.configuration.open")
+    static let feishuConfigurationCancel = KernelOperation("feishu.configuration.cancel")
+    static let feishuConnectionConfigure = KernelOperation("feishu.connection.configure")
+    static let feishuConnectionDisconnect = KernelOperation("feishu.connection.disconnect")
+    static let feishuConnectionStatus = KernelOperation("feishu.connection.status")
+    static let feishuConnectionRead = KernelOperation("feishu.connection.read")
+    static let feishuConnectionManage = KernelOperation("feishu.connection.manage")
+    static let runtimeKnowledgeImportFeishu = KernelOperation("runtime.knowledge.import_feishu")
+
     // Model
     static let modelTest = KernelOperation("model.test")
     static let modelCatalog = KernelOperation("model.catalog")

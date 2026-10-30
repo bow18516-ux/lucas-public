@@ -6,6 +6,11 @@ public final class KernelStore {
     public static let modelSecretAccount = "agents.default.model.connection"
     public static let speechVolcengineAppIDAccount = "speech.volcengine.appId"
     public static let speechVolcengineTokenAccount = "speech.volcengine.token"
+    public static let feishuAppIDAccount = "feishu.app_id"
+    public static let feishuAppSecretAccount = "feishu.app_secret"
+    public static let feishuVerificationTokenAccount = "feishu.verification_token"
+    public static let feishuTenantAccessTokenAccount = "feishu.tenant_access_token"
+    public static let wechatILinkBaseURLAccount = "wechat.ilink.base_url"
 
     public let database: SQLiteDatabase
     public let path: String
@@ -327,6 +332,17 @@ public final class KernelStore {
         try recordPersistenceMigration(namespace: "lucas.store", version: 4)
         try recordPersistenceMigration(namespace: "lucas.store", version: 5)
         try recordPersistenceMigration(namespace: "lucas.store", version: 6)
+
+        // Store v7 — WeChat ClawBot connection ledger (credential-free summaries)
+        try database.execute("""
+        CREATE TABLE IF NOT EXISTS wechat_connections (
+            id TEXT PRIMARY KEY NOT NULL,
+            state TEXT NOT NULL,
+            updated_at REAL NOT NULL,
+            record_json TEXT NOT NULL
+        );
+        """)
+        try recordPersistenceMigration(namespace: "lucas.store", version: 7)
     }
 
     private func recordPersistenceMigration(namespace: String, version: Int) throws {
@@ -1708,6 +1724,7 @@ public final class KernelStore {
             "capability_delegations", "information_revisions", "generated_tool_artifacts",
             "persistence_migrations", "information_types", "information_heads",
             "information_processors", "deliveries", "situations", "self_healing_events",
+            "wechat_connections",
         ]
         tables.append(contentsOf: Self.runtimeLedgerTables)
         var result: [String: Int] = [:]
@@ -1716,6 +1733,48 @@ public final class KernelStore {
         }
         return result
     }
+
+    // MARK: - WeChat connections (v7)
+
+    public func listWeChatConnections(limit: Int = 50) throws -> [JSONValue] {
+        let lim = max(1, min(limit, 500))
+        return try database.query(
+            "SELECT id, state, updated_at, record_json FROM wechat_connections ORDER BY updated_at DESC LIMIT ?;",
+            [lim]
+        ).compactMap { row in
+            guard let id = row["id"] as? String else { return nil }
+            let state = (row["state"] as? String) ?? "disconnected"
+            let updatedAt = (row["updated_at"] as? Double) ?? 0
+            var record: JSONValue = .object([:])
+            if let raw = row["record_json"] as? String, let data = raw.data(using: .utf8) {
+                record = (try? ProtocolCoding.decode(JSONValue.self, from: data)) ?? .object([:])
+            }
+            return .object([
+                "id": .string(id),
+                "state": .string(state),
+                "updatedAt": .string(ISO8601.string(from: Date(timeIntervalSince1970: updatedAt))),
+                "record": record,
+            ])
+        }
+    }
+
+    public func upsertWeChatConnection(id: String, state: String, record: JSONValue) throws {
+        let now = Date().timeIntervalSince1970
+        let encoded = String(data: try ProtocolCoding.encode(record), encoding: .utf8) ?? "{}"
+        try database.execute("""
+        INSERT INTO wechat_connections(id, state, updated_at, record_json)
+        VALUES (?, ?, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET
+            state = excluded.state,
+            updated_at = excluded.updated_at,
+            record_json = excluded.record_json;
+        """, [id, state, now, encoded])
+    }
+
+    public func deleteWeChatConnection(id: String) throws {
+        try database.execute("DELETE FROM wechat_connections WHERE id = ?;", [id])
+    }
+
 }
 
 public enum KernelStoreError: Error, LocalizedError, Sendable {

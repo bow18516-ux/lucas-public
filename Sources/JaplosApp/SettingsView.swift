@@ -29,6 +29,7 @@ enum SettingsSection: String, CaseIterable, Identifiable {
     case model = "大模型设置"
     case voice = "语音设置"
     case alarms = "提醒"
+    case channels = "通道"
     case mcp = "MCP 服务"
     case skills = "Skill 列表"
     case tools = "工具列表"
@@ -41,6 +42,7 @@ enum SettingsSection: String, CaseIterable, Identifiable {
         case .model: return "cpu"
         case .voice: return "waveform"
         case .alarms: return "bell"
+        case .channels: return "antenna.radiowaves.left.and.right"
         case .mcp: return "globe.asia.australia"
         case .skills: return "square.stack.3d.up"
         case .tools: return "wrench.and.screwdriver"
@@ -176,6 +178,8 @@ struct SettingsScreen: View {
             VoiceSettingsPane(model: model, voice: voice)
         case .alarms:
             AlarmsSettingsPane(model: model)
+        case .channels:
+            ChannelsSettingsPane(model: model)
         case .mcp:
             MCPSettingsPane(model: model)
         case .updates:
@@ -1081,6 +1085,238 @@ struct PlaceholderPane: View {
                     .foregroundStyle(Theme.textSecondary)
             }
             Spacer()
+        }
+    }
+}
+
+
+// MARK: - Channels (微信 / 飞书)
+
+struct ChannelsSettingsPane: View {
+    @ObservedObject var model: AppModel
+    @State private var feishuAppID = ""
+    @State private var feishuAppSecret = ""
+    @State private var feishuVerificationToken = ""
+    @State private var busy = false
+    @State private var banner: String?
+
+    var body: some View {
+        VStack(spacing: 0) {
+            SettingsHeader(
+                title: "通道",
+                subtitle: "微信 ClawBot（扫码）与飞书 Open API。无密钥时不会伪造已连接。",
+                model: model
+            )
+
+            ScrollView {
+                VStack(alignment: .leading, spacing: SettingsMetrics.cardSpacing) {
+                    if let banner {
+                        Text(banner)
+                            .font(.system(size: SettingsMetrics.captionSize))
+                            .foregroundStyle(Theme.textSecondary)
+                            .padding(10)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .background(Color.white.opacity(0.04), in: RoundedRectangle(cornerRadius: 8))
+                    }
+                    wechatCard
+                    feishuCard
+                }
+                .padding(.horizontal, SettingsMetrics.pagePadding)
+                .padding(.bottom, 24)
+            }
+        }
+        .task {
+            await model.refreshChannelStatus()
+        }
+    }
+
+    private var wechatCard: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            HStack(spacing: 8) {
+                Image(systemName: "message.fill")
+                    .foregroundStyle(Theme.textSecondary)
+                Text("微信")
+                    .font(.system(size: SettingsMetrics.cardTitleSize, weight: .semibold))
+                    .foregroundStyle(Theme.textPrimary)
+                Spacer()
+                statusPill(model.wechatStatusLabel)
+            }
+
+            Text(model.wechatStatusDetail)
+                .font(.system(size: SettingsMetrics.cardSubtitleSize))
+                .foregroundStyle(Theme.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            HStack(spacing: 10) {
+                Button {
+                    Task {
+                        busy = true
+                        defer { busy = false }
+                        banner = await model.wechatConnect()
+                        await model.refreshChannelStatus()
+                    }
+                } label: {
+                    Text("连接（扫码）")
+                        .font(.system(size: SettingsMetrics.bodySize, weight: .medium))
+                        .foregroundStyle(Color.black.opacity(0.85))
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 6)
+                        .background(Theme.accent, in: RoundedRectangle(cornerRadius: 7))
+                }
+                .buttonStyle(.plain)
+                .disabled(busy)
+
+                Button {
+                    Task {
+                        busy = true
+                        defer { busy = false }
+                        banner = await model.wechatDisconnect()
+                        await model.refreshChannelStatus()
+                    }
+                } label: {
+                    Text("断开")
+                        .font(.system(size: SettingsMetrics.bodySize))
+                        .foregroundStyle(Theme.accent)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 6)
+                        .background(Theme.accent.opacity(0.12), in: RoundedRectangle(cornerRadius: 7))
+                }
+                .buttonStyle(.plain)
+                .disabled(busy)
+
+                Button {
+                    Task { await model.refreshChannelStatus() }
+                } label: {
+                    Text("刷新状态")
+                        .font(.system(size: SettingsMetrics.bodySize))
+                        .foregroundStyle(Theme.textSecondary)
+                }
+                .buttonStyle(.borderless)
+            }
+
+            Text("官方 ClawBot / iLink（ilinkai.weixin.qq.com）。不需要 AppID。真实扫码连通需老板现场扫码验证。")
+                .font(.system(size: SettingsMetrics.captionSize))
+                .foregroundStyle(Theme.textSecondary.opacity(0.85))
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .panel(padding: SettingsMetrics.cardPadding)
+    }
+
+    private var feishuCard: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            HStack(spacing: 8) {
+                Image(systemName: "airplane")
+                    .foregroundStyle(Theme.textSecondary)
+                Text("飞书")
+                    .font(.system(size: SettingsMetrics.cardTitleSize, weight: .semibold))
+                    .foregroundStyle(Theme.textPrimary)
+                Spacer()
+                statusPill(model.feishuStatusLabel)
+            }
+
+            Text(model.feishuStatusDetail)
+                .font(.system(size: SettingsMetrics.cardSubtitleSize))
+                .foregroundStyle(Theme.textSecondary)
+
+            VStack(alignment: .leading, spacing: 10) {
+                labeledField("App ID", text: $feishuAppID, secure: false)
+                labeledField("App Secret", text: $feishuAppSecret, secure: true)
+                labeledField("Verification Token（可选）", text: $feishuVerificationToken, secure: true)
+            }
+
+            HStack(spacing: 10) {
+                Button {
+                    Task {
+                        busy = true
+                        defer { busy = false }
+                        banner = await model.feishuConfigure(
+                            appID: feishuAppID,
+                            appSecret: feishuAppSecret,
+                            verificationToken: feishuVerificationToken
+                        )
+                        feishuAppSecret = ""
+                        feishuVerificationToken = ""
+                        await model.refreshChannelStatus()
+                    }
+                } label: {
+                    Text("保存凭据")
+                        .font(.system(size: SettingsMetrics.bodySize, weight: .medium))
+                        .foregroundStyle(Color.black.opacity(0.85))
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 6)
+                        .background(Theme.accent, in: RoundedRectangle(cornerRadius: 7))
+                }
+                .buttonStyle(.plain)
+                .disabled(busy)
+
+                Button {
+                    Task {
+                        busy = true
+                        defer { busy = false }
+                        banner = await model.feishuConnect()
+                        await model.refreshChannelStatus()
+                    }
+                } label: {
+                    Text("连接")
+                        .font(.system(size: SettingsMetrics.bodySize))
+                        .foregroundStyle(Theme.accent)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 6)
+                        .background(Theme.accent.opacity(0.12), in: RoundedRectangle(cornerRadius: 7))
+                }
+                .buttonStyle(.plain)
+                .disabled(busy)
+
+                Button {
+                    Task {
+                        busy = true
+                        defer { busy = false }
+                        banner = await model.feishuDisconnect()
+                        await model.refreshChannelStatus()
+                    }
+                } label: {
+                    Text("断开")
+                        .font(.system(size: SettingsMetrics.bodySize))
+                        .foregroundStyle(Theme.textSecondary)
+                }
+                .buttonStyle(.borderless)
+                .disabled(busy)
+            }
+
+            Text("凭据写入 SecretStore 与 feishu/credentials/auth.sqlite，界面与状态接口不回显密钥。")
+                .font(.system(size: SettingsMetrics.captionSize))
+                .foregroundStyle(Theme.textSecondary.opacity(0.85))
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .panel(padding: SettingsMetrics.cardPadding)
+    }
+
+    private func statusPill(_ text: String) -> some View {
+        Text(text)
+            .font(.system(size: SettingsMetrics.captionSize, weight: .medium))
+            .foregroundStyle(Theme.textPrimary)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 3)
+            .background(Color.white.opacity(0.06), in: Capsule())
+    }
+
+    private func labeledField(_ title: String, text: Binding<String>, secure: Bool) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(title)
+                .font(.system(size: SettingsMetrics.captionSize))
+                .foregroundStyle(Theme.textSecondary)
+            Group {
+                if secure {
+                    SecureField(title, text: text)
+                } else {
+                    TextField(title, text: text)
+                }
+            }
+            .textFieldStyle(.plain)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 7)
+            .background(Color.white.opacity(0.05), in: RoundedRectangle(cornerRadius: 6))
+            .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(Theme.panelBorder, lineWidth: 0.7))
         }
     }
 }

@@ -85,6 +85,8 @@ final class AppModel: ObservableObject {
     @Published var alarms: [AlarmItem] = []
     @Published var knowledgeDocuments: [KnowledgeDocument] = []
     @Published var mcpEvents: [MCPEventItem] = []
+    @Published var wechatStatus: JSONValue = .object([:])
+    @Published var feishuStatus: JSONValue = .object([:])
     @Published var storeTableCounts: [(name: String, count: Int)] = []
     @Published var lastSelfHealingEvent: SelfHealingEventSummary?
 
@@ -978,6 +980,132 @@ final class AppModel: ObservableObject {
             }
         } catch {
             testResult = "失败：\((error as? ClientError)?.description ?? String(describing: error))"
+        }
+    }
+
+
+    // MARK: - Channels (微信 / 飞书)
+
+    var wechatStatusLabel: String {
+        let state = wechatStatus["state"]?.stringValue ?? "unknown"
+        switch state {
+        case "connected": return "已连接"
+        case "awaiting_scan": return "待扫码"
+        case "verification_required": return "需验证码"
+        case "needs_auth": return "需授权"
+        case "disconnected": return "未连接"
+        case "unavailable": return "不可用"
+        default: return state
+        }
+    }
+
+    var wechatStatusDetail: String {
+        if let msg = wechatStatus["message"]?.stringValue, !msg.isEmpty { return msg }
+        if let action = wechatStatus["action"]?.stringValue, !action.isEmpty { return action }
+        if let err = wechatStatus["lastError"]?.stringValue, !err.isEmpty { return err }
+        let count = wechatStatus["connectedAccountCount"]?.intValue ?? 0
+        return "账号数 \(count) · 状态 \(wechatStatus["state"]?.stringValue ?? "—")"
+    }
+
+    var feishuStatusLabel: String {
+        let state = feishuStatus["state"]?.stringValue ?? "unknown"
+        switch state {
+        case "connected": return "已连接"
+        case "awaiting_configuration": return "待配置"
+        case "needs_auth": return "需凭据"
+        case "disconnected": return "未连接"
+        case "connecting": return "连接中"
+        case "error": return "错误"
+        default: return state
+        }
+    }
+
+    var feishuStatusDetail: String {
+        if let msg = feishuStatus["message"]?.stringValue, !msg.isEmpty { return msg }
+        if let action = feishuStatus["action"]?.stringValue, !action.isEmpty { return action }
+        let app = feishuStatus["appIdConfigured"]?.boolValue == true
+        let secret = feishuStatus["appSecretConfigured"]?.boolValue == true
+        return "App ID \(app ? "已配置" : "未配置") · Secret \(secret ? "已配置" : "未配置")"
+    }
+
+    func refreshChannelStatus() async {
+        do {
+            wechatStatus = try await client.callAsync(.runtimeWeChatStatus, arguments: .object([:]))
+        } catch {
+            wechatStatus = .object([
+                "state": .string("unavailable"),
+                "message": .string((error as? ClientError)?.description ?? String(describing: error)),
+            ])
+        }
+        do {
+            feishuStatus = try await client.callAsync(.runtimeFeishuStatus, arguments: .object([:]))
+        } catch {
+            feishuStatus = .object([
+                "state": .string("unavailable"),
+                "message": .string((error as? ClientError)?.description ?? String(describing: error)),
+            ])
+        }
+    }
+
+    func wechatConnect() async -> String {
+        do {
+            let result = try await client.callAsync(.runtimeWeChatConnect, arguments: .object([:]), timeout: 30)
+            wechatStatus = result
+            return result["message"]?.stringValue
+                ?? (result["ok"]?.boolValue == true ? "已启动扫码登录" : (result["error"]?.stringValue ?? "连接未完成"))
+        } catch {
+            return (error as? ClientError)?.description ?? String(describing: error)
+        }
+    }
+
+    func wechatDisconnect() async -> String {
+        do {
+            let result = try await client.callAsync(.runtimeWeChatDisconnect, arguments: .object([:]))
+            wechatStatus = result
+            return result["message"]?.stringValue ?? "已断开"
+        } catch {
+            return (error as? ClientError)?.description ?? String(describing: error)
+        }
+    }
+
+    func feishuConfigure(appID: String, appSecret: String, verificationToken: String) async -> String {
+        var args: [String: JSONValue] = [:]
+        if !appID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            args["app_id"] = .string(appID.trimmingCharacters(in: .whitespacesAndNewlines))
+        }
+        if !appSecret.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            args["app_secret"] = .string(appSecret.trimmingCharacters(in: .whitespacesAndNewlines))
+        }
+        if !verificationToken.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            args["verification_token"] = .string(verificationToken.trimmingCharacters(in: .whitespacesAndNewlines))
+        }
+        do {
+            let result = try await client.callAsync(.feishuConnectionConfigure, arguments: .object(args))
+            feishuStatus = result
+            return result["message"]?.stringValue ?? "已保存"
+        } catch {
+            return (error as? ClientError)?.description ?? String(describing: error)
+        }
+    }
+
+    func feishuConnect() async -> String {
+        do {
+            let result = try await client.callAsync(.runtimeFeishuConnect, arguments: .object([:]), timeout: 30)
+            feishuStatus = result
+            return result["message"]?.stringValue
+                ?? (result["ok"]?.boolValue == true ? "已连接" : (result["error"]?.stringValue ?? "连接失败"))
+        } catch {
+            return (error as? ClientError)?.description ?? String(describing: error)
+        }
+    }
+
+    func feishuDisconnect() async -> String {
+        do {
+            let result = try await client.callAsync(.runtimeFeishuDisconnect, arguments: .object([:]))
+            feishuStatus = result
+            return result["message"]?.stringValue ?? "已断开"
+        } catch {
+            return (error as? ClientError)?.description ?? String(describing: error)
         }
     }
 
