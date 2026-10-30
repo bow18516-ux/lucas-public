@@ -225,9 +225,6 @@ public struct ApplicationTool: KernelTool {
                 return url
             }
         }
-        if let url = NSWorkspace.shared.urlForApplication(toOpen: URL(fileURLWithPath: "/Applications")) {
-            _ = url
-        }
         let target = name.lowercased()
         if let match = Self.installedApplications().first(where: {
             $0.name.lowercased() == target || $0.name.lowercased().contains(target)
@@ -273,10 +270,18 @@ public struct ApplicationTool: KernelTool {
 public enum SensitivePaths {
     public static func reject(_ path: String) throws {
         let expanded = (path as NSString).expandingTildeInPath
-        let candidates = [
-            URL(fileURLWithPath: expanded).standardizedFileURL.path,
-            (expanded as NSString).resolvingSymlinksInPath,
-        ]
+        let standardized = URL(fileURLWithPath: expanded).standardizedFileURL.path
+        var candidates = [standardized]
+        if FileManager.default.fileExists(atPath: standardized) {
+            candidates.append((standardized as NSString).resolvingSymlinksInPath)
+        } else {
+            // A missing target cannot be realpath'd, but its parent can: without
+            // this, `~/tmp-link/.ssh/new` would slip past the symlink check.
+            let parent = (standardized as NSString).deletingLastPathComponent
+            let name = (standardized as NSString).lastPathComponent
+            let resolvedParent = (parent as NSString).resolvingSymlinksInPath
+            candidates.append((resolvedParent as NSString).appendingPathComponent(name))
+        }
         for candidate in candidates {
             if let reason = reason(for: candidate) {
                 throw ToolError.denied(reason)
@@ -301,8 +306,12 @@ public enum SensitivePaths {
             "Library/Safari",
             "Library/Cookies",
         ].map { (home as NSString).appendingPathComponent($0) }
+        // APFS is case-insensitive by default, so `~/.SSH` and `~/.ssh` are the
+        // same directory; compare lowercased or the check is trivially bypassed.
+        let lowered = path.lowercased()
         for root in roots {
-            if path == root || path.hasPrefix(root + "/") {
+            let loweredRoot = root.lowercased()
+            if lowered == loweredRoot || lowered.hasPrefix(loweredRoot + "/") {
                 return "拒绝读取或写入敏感路径：\(root)"
             }
         }
@@ -343,7 +352,7 @@ public struct FilesystemTool: KernelTool {
         else {
             throw ToolError.invalidArguments("action and path are required")
         }
-        let url = try Self.allowedURL(path: rawPath)
+        let url = try TrustRoots.allowedURL(path: rawPath)
         try SensitivePaths.reject(url.path)
         let fileManager = FileManager.default
 
@@ -391,13 +400,6 @@ public struct FilesystemTool: KernelTool {
         }
     }
 
-    static func allowedRoots() -> [String] {
-        TrustRoots.allowedRoots()
-    }
-
-    static func allowedURL(path: String) throws -> URL {
-        try TrustRoots.allowedURL(path: path)
-    }
 }
 
 // MARK: - Screenshot
@@ -430,7 +432,7 @@ public struct ScreenshotTool: KernelTool {
 
         let path: String
         if let explicit = arguments["path"]?.stringValue, !explicit.isEmpty {
-            path = try FilesystemTool.allowedURL(path: explicit).path
+            path = try TrustRoots.allowedURL(path: explicit).path
         } else {
             let stamp = ISO8601.string(from: Date()).replacingOccurrences(of: ":", with: "-")
             path = capturesDirectory.appendingPathComponent("capture-\(stamp).png").path

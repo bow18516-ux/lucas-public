@@ -38,7 +38,7 @@ public struct PDFCreateTool: KernelTool {
 
         let path: String
         if let explicit = arguments["path"]?.stringValue, !explicit.isEmpty {
-            path = try FilesystemTool.allowedURL(path: explicit).path
+            path = try TrustRoots.allowedURL(path: explicit).path
         } else {
             let stamp = ISO8601.string(from: Date()).replacingOccurrences(of: ":", with: "-")
             path = FileManager.default.homeDirectoryForCurrentUser
@@ -158,11 +158,11 @@ public struct DownloadFetchTool: KernelTool {
 
         let destination: URL
         if let explicit = arguments["path"]?.stringValue, !explicit.isEmpty {
-            destination = try FilesystemTool.allowedURL(path: explicit)
+            destination = try TrustRoots.allowedURL(path: explicit)
         } else {
             let suggested = response.suggestedFilename ?? remote.lastPathComponent
             let name = suggested.isEmpty ? "download-\(Int(Date().timeIntervalSince1970))" : suggested
-            destination = try FilesystemTool.allowedURL(
+            destination = try TrustRoots.allowedURL(
                 path: FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Downloads/\(name)").path
             )
         }

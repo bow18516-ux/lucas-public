@@ -130,14 +130,12 @@ final class IMAPSession {
         try client.writeLine("\(tag) UID FETCH \(uid) (BODY.PEEK[])")
         var body = Data()
         var literalLeft = 0
-        var sawLiteral = false
         let deadline = Date().addingTimeInterval(90)
         while Date() < deadline {
             if literalLeft > 0 {
                 let chunk = try client.readExact(count: literalLeft, timeout: max(0.1, deadline.timeIntervalSinceNow))
                 body.append(chunk)
                 literalLeft = 0
-                sawLiteral = true
                 continue
             }
             let line = try client.readLine(timeout: max(0.1, deadline.timeIntervalSinceNow))
@@ -153,7 +151,6 @@ final class IMAPSession {
                 literalLeft = n
                 continue
             }
-            _ = sawLiteral
         }
         throw MailError.protocolFailure("FETCH timeout")
     }
