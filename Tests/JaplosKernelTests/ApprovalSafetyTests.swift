@@ -138,6 +138,25 @@ final class ApprovalSafetyTests: XCTestCase {
         XCTAssertNotNil(executable["modifiedAt"]?.doubleValue)
     }
 
+    func testSensitivePathsAreCaseInsensitiveAndResolveMissingParents() throws {
+        // None of these exist, which is exactly the case that used to slip past
+        // both the case-sensitive prefix check and the symlink resolution.
+        let paths = [
+            "~/.SSH/new_file",
+            "~/library/keychains/x",
+            "~/Library/Application Support/LUCAS/x",
+        ]
+        for path in paths {
+            let expanded = (path as NSString).expandingTildeInPath
+            XCTAssertFalse(FileManager.default.fileExists(atPath: expanded), path)
+            XCTAssertThrowsError(try SensitivePaths.reject(path), path) { error in
+                XCTAssertTrue(String(describing: error).contains("敏感"), "\(path): \(error)")
+            }
+        }
+        // A normal new file under the home directory is still allowed.
+        XCTAssertNoThrow(try SensitivePaths.reject("~/lucas-tmp-allowed.txt"))
+    }
+
     func testShellLargeOutputIsTruncatedInsteadOfTimingOut() async throws {
         let tool = ShellTool()
         let output = try await tool.invoke(
