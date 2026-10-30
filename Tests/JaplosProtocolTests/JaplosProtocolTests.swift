@@ -72,4 +72,18 @@ final class JaplosProtocolTests: XCTestCase {
         XCTAssertEqual(CapabilityRouting.capability(for: .toolInvoke), Capability.toolInvoke)
         XCTAssertEqual(CapabilityRouting.capability(for: .kernelStatus), Capability.root)
     }
+
+    func testKernelResponseEncodesErrorAlongsideFailure() throws {
+        let response = KernelResponse.failure(.invalidArgument("missing model"), requestID: "REQ-ERR")
+        let data = try ProtocolCoding.encode(response)
+        let json = String(decoding: data, as: UTF8.self)
+        XCTAssertTrue(json.contains("\"failure\""))
+        XCTAssertTrue(json.contains("\"error\":\"missing model\""))
+        XCTAssertTrue(json.contains("\"servedAt\""))
+
+        let decoded = try ProtocolCoding.decode(KernelResponse.self, from: data)
+        XCTAssertEqual(decoded.failure?.code, "invalid_argument")
+        XCTAssertEqual(decoded.error, "missing model")
+        XCTAssertNil(decoded.result)
+    }
 }

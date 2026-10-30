@@ -139,6 +139,8 @@ public struct KernelResponse: Codable, Sendable {
     public var requestID: String
     public var result: JSONValue?
     public var failure: KernelFailure?
+    /// Japlos envelope parity: plain string mirror of the failure message (kept alongside structured `failure`).
+    public var error: String?
     public var servedAt: Date
 
     public init(
@@ -146,12 +148,14 @@ public struct KernelResponse: Codable, Sendable {
         requestID: String,
         result: JSONValue? = nil,
         failure: KernelFailure? = nil,
+        error: String? = nil,
         servedAt: Date = Date()
     ) {
         self.protocolVersion = protocolVersion
         self.requestID = requestID
         self.result = result
         self.failure = failure
+        self.error = error ?? failure?.message
         self.servedAt = servedAt
     }
 
@@ -160,7 +164,7 @@ public struct KernelResponse: Codable, Sendable {
     }
 
     public static func failure(_ failure: KernelFailure, requestID: String) -> KernelResponse {
-        KernelResponse(requestID: requestID, failure: failure)
+        KernelResponse(requestID: requestID, failure: failure, error: failure.message)
     }
 }
 

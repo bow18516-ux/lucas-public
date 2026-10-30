@@ -147,6 +147,9 @@ public final class KernelClient: @unchecked Sendable {
             if let failure = response.failure {
                 throw ClientError.kernel(failure)
             }
+            if let error = response.error, !error.isEmpty {
+                throw ClientError.kernel(KernelFailure(code: "error", message: error))
+            }
             return response.result ?? .null
         } catch let error as ClientError {
             throw error
@@ -207,6 +210,9 @@ public final class KernelClient: @unchecked Sendable {
                         let response = try ProtocolCoding.decode(KernelResponse.self, from: payload)
                         if let failure = response.failure {
                             throw ClientError.kernel(failure)
+                        }
+                        if let error = response.error, !error.isEmpty {
+                            throw ClientError.kernel(KernelFailure(code: "error", message: error))
                         }
                         guard let result = response.result else { continue }
                         continuation.yield(result)
