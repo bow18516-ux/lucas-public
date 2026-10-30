@@ -65,7 +65,7 @@ enum SettingsSection: String, CaseIterable, Identifiable {
     }
 }
 
-/// Nested rows under L1 「知识库」 — industry libraries, not file-type folders.
+/// Knowledge library filters (used inside the 知识库 pane; deep-linkable via LUCAS_SETTINGS_SECTION).
 enum KnowledgeNav: String, CaseIterable, Identifiable {
     case company = "公司资料"
     case client = "客户与往来"
@@ -102,7 +102,7 @@ enum KnowledgeNav: String, CaseIterable, Identifiable {
 struct SettingsScreen: View {
     @ObservedObject var model: AppModel
     @ObservedObject var voice: SpeechOutput
-    /// Top-level sidebar destination: settings / memory / knowledge children.
+    /// Sidebar destination under the single L1 「设置」 group (settings panes + 记忆 + 知识库).
     private enum SidebarDestination: Equatable {
         case settings(SettingsSection)
         case memory
@@ -110,12 +110,8 @@ struct SettingsScreen: View {
     }
 
     @State private var destination: SidebarDestination
-    /// Top-level 「设置」 group — default expanded so the eight panes stay one click away.
+    /// Top-level 「设置」 group — default expanded so panes (incl. 记忆/知识库) stay one click away.
     @State private var settingsGroupExpanded = true
-    /// Top-level 「记忆」 group — default expanded (same pattern as 「设置」).
-    @State private var memoryGroupExpanded = true
-    /// Top-level 「知识库」 group — sibling of 设置/记忆; default expanded.
-    @State private var knowledgeGroupExpanded = true
     @ObservedObject private var updateService = UpdateService.shared
 
     init(model: AppModel, voice: SpeechOutput) {
@@ -232,83 +228,25 @@ struct SettingsScreen: View {
                             }
                             .buttonStyle(.pressable)
                         }
-                    }
-                }
 
-                // Top-level group: 「记忆」 — same expandable pattern as 「设置」
-                Button {
-                    withAnimation(.easeInOut(duration: 0.18)) {
-                        memoryGroupExpanded.toggle()
-                    }
-                } label: {
-                    HStack(spacing: 8) {
-                        Image(systemName: memoryGroupExpanded ? "chevron.down" : "chevron.right")
-                            .font(.system(size: 11, weight: .semibold))
-                            .frame(width: 12)
-                        Image(systemName: "brain.head.profile")
-                            .font(.system(size: SettingsMetrics.navIconSize))
-                            .frame(width: 22)
-                        Text("记忆")
-                            .font(.system(size: SettingsMetrics.navSize, weight: .semibold))
-                        Spacer()
-                    }
-                    .foregroundStyle(Theme.textPrimary)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 10)
-                    .background(Color.clear, in: RoundedRectangle(cornerRadius: 7))
-                }
-                .buttonStyle(.pressable)
-
-                if memoryGroupExpanded {
-                    VStack(spacing: 2) {
+                        // L2 under 「设置」: 记忆 / 知识库 (no longer peer L1 groups)
                         sidebarNavItem(
-                            title: "记忆管理",
-                            icon: "note.text",
+                            title: "记忆",
+                            icon: "brain.head.profile",
                             selected: destination == .memory
                         ) {
                             destination = .memory
                         }
-                    }
-                }
 
-                // Top-level group: 「知识库」 — must-read context used with 记忆 when answering.
-                Button {
-                    withAnimation(.easeInOut(duration: 0.18)) {
-                        knowledgeGroupExpanded.toggle()
-                    }
-                } label: {
-                    HStack(spacing: 8) {
-                        Image(systemName: knowledgeGroupExpanded ? "chevron.down" : "chevron.right")
-                            .font(.system(size: 11, weight: .semibold))
-                            .frame(width: 12)
-                        Image(systemName: "books.vertical")
-                            .font(.system(size: SettingsMetrics.navIconSize))
-                            .frame(width: 22)
-                        Text("知识库")
-                            .font(.system(size: SettingsMetrics.navSize, weight: .semibold))
-                        Spacer()
-                    }
-                    .foregroundStyle(Theme.textPrimary)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 10)
-                    .background(Color.clear, in: RoundedRectangle(cornerRadius: 7))
-                }
-                .buttonStyle(.pressable)
-
-                if knowledgeGroupExpanded {
-                    VStack(spacing: 2) {
-                        ForEach(KnowledgeNav.allCases) { item in
-                            let selected: Bool = {
-                                if case .knowledge(let nav) = destination { return nav == item }
+                        sidebarNavItem(
+                            title: "知识库",
+                            icon: "books.vertical",
+                            selected: {
+                                if case .knowledge = destination { return true }
                                 return false
                             }()
-                            sidebarNavItem(
-                                title: item.rawValue,
-                                icon: item.icon,
-                                selected: selected
-                            ) {
-                                destination = .knowledge(item)
-                            }
+                        ) {
+                            destination = .knowledge(.all)
                         }
                     }
                 }
@@ -2591,18 +2529,26 @@ struct MemorySettingsPane: View {
 }
 
 struct KnowledgeLibraryPane: View {
+    /// Initial library from sidebar / deep-link; user can switch via in-pane chips.
     let nav: KnowledgeNav
     @ObservedObject var model: AppModel
+    @State private var selectedLibrary: KnowledgeNav
     @State private var titleDraft = ""
     @State private var bodyDraft = ""
     @State private var typeFilter: String = "全部"
     @State private var importNote: String?
 
+    init(nav: KnowledgeNav, model: AppModel) {
+        self.nav = nav
+        self.model = model
+        _selectedLibrary = State(initialValue: nav)
+    }
+
     private static let typeFilters = ["全部", "md", "txt", "pdf", "csv", "xlsx", "pptx", "chat", "其他"]
 
     private var visibleDocs: [AppModel.KnowledgeDocument] {
         model.knowledgeDocuments.filter { doc in
-            if nav.libraryID != "all", doc.library != nav.libraryID {
+            if selectedLibrary.libraryID != "all", doc.library != selectedLibrary.libraryID {
                 return false
             }
             if typeFilter == "全部" { return true }
@@ -2620,8 +2566,8 @@ struct KnowledgeLibraryPane: View {
     var body: some View {
         VStack(spacing: 0) {
             SettingsHeader(
-                title: nav.rawValue,
-                subtitle: nav.subtitle + " · 上传后参与每轮检索；类型标签仅作筛选",
+                title: "知识库",
+                subtitle: selectedLibrary.subtitle + " · 上传后参与每轮检索；类型/库标签可筛选",
                 model: model
             )
 
@@ -2705,7 +2651,7 @@ struct KnowledgeLibraryPane: View {
                                     await model.upsertKnowledgeDocument(
                                         title: title,
                                         body: body,
-                                        library: nav.libraryID == "all" ? "all" : nav.libraryID,
+                                        library: selectedLibrary.libraryID == "all" ? "all" : selectedLibrary.libraryID,
                                         fileType: "note"
                                     )
                                 }
@@ -2730,7 +2676,32 @@ struct KnowledgeLibraryPane: View {
                             Spacer()
                         }
 
-                        if nav == .all {
+                        ScrollView(.horizontal, showsIndicators: false) {
+                            HStack(spacing: 6) {
+                                ForEach(KnowledgeNav.allCases) { lib in
+                                    let selected = selectedLibrary == lib
+                                    Button(lib.rawValue) {
+                                        selectedLibrary = lib
+                                        Task {
+                                            await model.loadKnowledgeDocuments(
+                                                library: lib.libraryID == "all" ? nil : lib.libraryID
+                                            )
+                                        }
+                                    }
+                                    .buttonStyle(.pressable)
+                                    .font(.system(size: SettingsMetrics.captionSize, weight: selected ? .semibold : .regular))
+                                    .foregroundStyle(selected ? Color.black.opacity(0.85) : Theme.textSecondary)
+                                    .padding(.horizontal, 10)
+                                    .padding(.vertical, 4)
+                                    .background(
+                                        selected ? Theme.accent : Color.white.opacity(0.06),
+                                        in: Capsule()
+                                    )
+                                }
+                            }
+                        }
+
+                        if selectedLibrary == .all {
                             ScrollView(.horizontal, showsIndicators: false) {
                                 HStack(spacing: 6) {
                                     ForEach(Self.typeFilters, id: \.self) { tag in
@@ -2811,7 +2782,7 @@ struct KnowledgeLibraryPane: View {
             }
         }
         .task {
-            await model.loadKnowledgeDocuments(library: nav.libraryID == "all" ? nil : nav.libraryID)
+            await model.loadKnowledgeDocuments(library: selectedLibrary.libraryID == "all" ? nil : selectedLibrary.libraryID)
         }
     }
 
@@ -2841,7 +2812,7 @@ struct KnowledgeLibraryPane: View {
         panel.canChooseFiles = true
         panel.canChooseDirectories = false
         panel.allowsMultipleSelection = true
-        panel.message = "选择要加入「\(nav.rawValue)」的本地文件"
+        panel.message = "选择要加入「\(selectedLibrary.rawValue)」的本地文件"
         var types: [UTType] = [.plainText, .utf8PlainText, .text, .pdf, .commaSeparatedText]
         for ext in ["md", "markdown", "json", "csv", "xlsx", "xls", "pptx", "ppt", "txt"] {
             if let t = UTType(filenameExtension: ext) { types.append(t) }
@@ -2854,10 +2825,10 @@ struct KnowledgeLibraryPane: View {
         Task {
             let result = await model.importKnowledgeFiles(
                 urls: urls,
-                library: nav.libraryID == "all" ? "all" : nav.libraryID
+                library: selectedLibrary.libraryID == "all" ? "all" : selectedLibrary.libraryID
             )
             importNote = result
-            await model.loadKnowledgeDocuments(library: nav.libraryID == "all" ? nil : nav.libraryID)
+            await model.loadKnowledgeDocuments(library: selectedLibrary.libraryID == "all" ? nil : selectedLibrary.libraryID)
         }
     }
 }
