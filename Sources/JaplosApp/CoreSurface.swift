@@ -1005,11 +1005,19 @@ struct RightColumn: View {
     @Binding var showTools: Bool
 
     private var latestSteps: [AppModel.ToolStep] {
-        model.messages.last(where: { !$0.steps.isEmpty })?.steps ?? []
+        if let last = model.messages.last(where: { !$0.steps.isEmpty })?.steps, !last.isEmpty {
+            return last
+        }
+        return []
+    }
+
+    private var projectionSteps: [AppModel.ToolStep] {
+        Array(model.messages.suffix(12).flatMap(\.steps).reversed())
     }
 
     var body: some View {
         VStack(spacing: 14) {
+            ProjectionStack(steps: projectionSteps)
             sourcesPanel
             Spacer(minLength: 0)
             taskPanel
@@ -1159,6 +1167,155 @@ struct RightColumn: View {
         .panel()
     }
 }
+
+
+// MARK: - Projections (tool-driven chrome)
+
+struct ProjectionStack: View {
+    let steps: [AppModel.ToolStep]
+
+    private var music: AppModel.ToolStep? {
+        steps.last(where: { $0.name == "system.music" || $0.name.hasSuffix(".music") })
+    }
+    private var application: AppModel.ToolStep? {
+        steps.last(where: { $0.name == "system.application" || $0.name.contains(".application") })
+    }
+    private var screenshot: AppModel.ToolStep? {
+        steps.last(where: { $0.name == "system.screen.capture" || $0.name.contains("screen.capture") })
+    }
+
+    private var hasAny: Bool { music != nil || application != nil || screenshot != nil }
+
+    var body: some View {
+        if hasAny {
+            VStack(alignment: .leading, spacing: 10) {
+                HStack(spacing: 6) {
+                    Image(systemName: "rectangle.on.rectangle")
+                        .font(.system(size: 10))
+                        .foregroundStyle(Theme.textSecondary)
+                    Text("投影")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(Theme.textSecondary)
+                    Spacer()
+                }
+                if let music { MusicProjectionCard(step: music) }
+                if let application { AppsProjectionCard(step: application) }
+                if let screenshot { ScreenshotProjectionCard(step: screenshot) }
+            }
+            .panel()
+        }
+    }
+}
+
+struct MusicProjectionCard: View {
+    let step: AppModel.ToolStep
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "music.note.list")
+                .font(.system(size: 16))
+                .foregroundStyle(Theme.accent)
+                .frame(width: 28, height: 28)
+                .background(Theme.accent.opacity(0.12), in: RoundedRectangle(cornerRadius: 7))
+            VStack(alignment: .leading, spacing: 2) {
+                Text("音乐")
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundStyle(Theme.textSecondary)
+                Text(step.detail.isEmpty ? (step.ok ? "已执行播放控制" : "控制失败") : step.detail)
+                    .font(.system(size: 11))
+                    .foregroundStyle(Theme.textPrimary)
+                    .lineLimit(2)
+            }
+            Spacer(minLength: 0)
+            Circle()
+                .fill(step.ok ? Theme.success : Color.red.opacity(0.8))
+                .frame(width: 6, height: 6)
+        }
+        .padding(10)
+        .background(Color.white.opacity(0.03), in: RoundedRectangle(cornerRadius: 10))
+        .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Theme.panelBorder, lineWidth: 0.6))
+    }
+}
+
+struct AppsProjectionCard: View {
+    let step: AppModel.ToolStep
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "app.badge.checkmark")
+                .font(.system(size: 16))
+                .foregroundStyle(Theme.accent)
+                .frame(width: 28, height: 28)
+                .background(Theme.accent.opacity(0.12), in: RoundedRectangle(cornerRadius: 7))
+            VStack(alignment: .leading, spacing: 2) {
+                Text("应用")
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundStyle(Theme.textSecondary)
+                Text(step.detail.isEmpty ? step.name : step.detail)
+                    .font(.system(size: 11))
+                    .foregroundStyle(Theme.textPrimary)
+                    .lineLimit(2)
+            }
+            Spacer(minLength: 0)
+            Circle()
+                .fill(step.ok ? Theme.success : Color.red.opacity(0.8))
+                .frame(width: 6, height: 6)
+        }
+        .padding(10)
+        .background(Color.white.opacity(0.03), in: RoundedRectangle(cornerRadius: 10))
+        .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Theme.panelBorder, lineWidth: 0.6))
+    }
+}
+
+struct ScreenshotProjectionCard: View {
+    let step: AppModel.ToolStep
+
+    private var imagePath: String? {
+        let tokens = step.detail.split(whereSeparator: { $0.isWhitespace || ",{}".contains($0) }).map(String.init)
+        if let hit = tokens.first(where: { $0.hasPrefix("/") && $0.contains(".png") }) {
+            return hit.trimmingCharacters(in: CharacterSet(charactersIn: "\"'"))
+        }
+        if let range = step.detail.range(of: #"/[^\\s\"']+\\.png"#, options: .regularExpression) {
+            return String(step.detail[range])
+        }
+        return nil
+    }
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 10) {
+            if let path = imagePath, let ns = NSImage(contentsOfFile: path) {
+                Image(nsImage: ns)
+                    .resizable()
+                    .aspectRatio(contentMode: .fill)
+                    .frame(width: 56, height: 40)
+                    .clipped()
+                    .cornerRadius(6)
+                    .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(Theme.panelBorder, lineWidth: 0.5))
+            } else {
+                Image(systemName: "camera.viewfinder")
+                    .font(.system(size: 16))
+                    .foregroundStyle(Theme.accent)
+                    .frame(width: 56, height: 40)
+                    .background(Theme.accent.opacity(0.12), in: RoundedRectangle(cornerRadius: 7))
+            }
+            VStack(alignment: .leading, spacing: 2) {
+                Text("截图")
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundStyle(Theme.textSecondary)
+                Text(imagePath ?? (step.detail.isEmpty ? "已截屏" : step.detail))
+                    .font(.system(size: 10, design: .monospaced))
+                    .foregroundStyle(Theme.textPrimary)
+                    .lineLimit(3)
+                    .textSelection(.enabled)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(10)
+        .background(Color.white.opacity(0.03), in: RoundedRectangle(cornerRadius: 10))
+        .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Theme.panelBorder, lineWidth: 0.6))
+    }
+}
+
 
 // MARK: - Tool sheet
 

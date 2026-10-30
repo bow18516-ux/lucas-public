@@ -331,6 +331,17 @@ public final class ChatService: @unchecked Sendable {
         if let path = execution.output["path"]?.stringValue {
             return path
         }
+        if let track = execution.output["track"]?.stringValue, !track.isEmpty {
+            let artist = execution.output["artist"]?.stringValue ?? ""
+            let state = execution.output["state"]?.stringValue ?? ""
+            return [state, track, artist].filter { !$0.isEmpty }.joined(separator: " · ")
+        }
+        if let name = execution.output["name"]?.stringValue ?? execution.output["application"]?.stringValue {
+            return name
+        }
+        if let action = execution.output["action"]?.stringValue {
+            return action
+        }
         if let text = try? JSONCoding.encodeToString(execution.output) {
             return String(text.prefix(160))
         }

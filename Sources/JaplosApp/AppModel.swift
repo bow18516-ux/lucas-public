@@ -268,10 +268,26 @@ final class AppModel: ObservableObject {
                     }
                     if let stepArray = event["steps"]?.arrayValue, !stepArray.isEmpty {
                         messages[index].steps = stepArray.map { step in
-                            ToolStep(
+                            let error = step["error"]?.stringValue ?? ""
+                            let output = step["output"]
+                            let path = output?["path"]?.stringValue
+                            let track = output?["track"]?.stringValue
+                            let detail: String
+                            if !error.isEmpty {
+                                detail = error
+                            } else if let path, !path.isEmpty {
+                                detail = path
+                            } else if let track, !track.isEmpty {
+                                let artist = output?["artist"]?.stringValue ?? ""
+                                let state = output?["state"]?.stringValue ?? ""
+                                detail = [state, track, artist].filter { !$0.isEmpty }.joined(separator: " · ")
+                            } else {
+                                detail = ""
+                            }
+                            return ToolStep(
                                 name: step["tool"]?.stringValue ?? "tool",
                                 ok: step["ok"]?.boolValue ?? false,
-                                detail: String((step["error"]?.stringValue ?? "").prefix(220))
+                                detail: String(detail.prefix(220))
                             )
                         }
                     }
