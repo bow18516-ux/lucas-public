@@ -174,14 +174,32 @@ public struct DownloadFetchTool: KernelTool {
         }
         try SensitivePaths.reject(destination.path)
         try FileManager.default.createDirectory(at: destination.deletingLastPathComponent(), withIntermediateDirectories: true)
-        if FileManager.default.fileExists(atPath: destination.path) {
-            try FileManager.default.removeItem(at: destination)
-        }
-        try FileManager.default.moveItem(at: temporary, to: destination)
-        return .object([
-            "path": .string(destination.path),
+        // Never destroy a file the user already has: pick "name (1).ext" instead.
+        let finalDestination = Self.uniqueDestination(destination)
+        try FileManager.default.moveItem(at: temporary, to: finalDestination)
+        var result: [String: JSONValue] = [
+            "path": .string(finalDestination.path),
             "bytes": .number(Double(size)),
-        ])
+        ]
+        if finalDestination.path != destination.path {
+            result["renamedFrom"] = .string(destination.path)
+        }
+        return .object(result)
+    }
+
+    /// `report.txt` occupied -> `report (1).txt`, then `report (2).txt`, ...
+    static func uniqueDestination(_ url: URL) -> URL {
+        let fileManager = FileManager.default
+        guard fileManager.fileExists(atPath: url.path) else { return url }
+        let directory = url.deletingLastPathComponent()
+        let ext = url.pathExtension
+        let base = url.deletingPathExtension().lastPathComponent
+        for index in 1...999 {
+            let name = ext.isEmpty ? "\(base) (\(index))" : "\(base) (\(index)).\(ext)"
+            let candidate = directory.appendingPathComponent(name)
+            if !fileManager.fileExists(atPath: candidate.path) { return candidate }
+        }
+        return directory.appendingPathComponent("\(base)-\(UUID().uuidString)\(ext.isEmpty ? "" : ".\(ext)")")
     }
 
     private static func advertisedByteCount(_ url: URL) async throws -> Int? {
