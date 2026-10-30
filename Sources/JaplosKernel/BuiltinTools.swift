@@ -380,7 +380,7 @@ public struct FilesystemTool: KernelTool {
                 throw ToolError.failed("Content exceeds 2 MB write limit")
             }
             try fileManager.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-            try data.write(to: url, options: .atomic)
+            try SafeFile.write(data, to: url)
             return .object(["path": .string(url.path), "bytes": .number(Double(data.count))])
         case "list":
             let entries = try fileManager.contentsOfDirectory(at: url, includingPropertiesForKeys: [.isDirectoryKey, .fileSizeKey, .contentModificationDateKey])

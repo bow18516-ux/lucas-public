@@ -54,7 +54,13 @@ public struct PDFCreateTool: KernelTool {
         }
         try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
 
-        let pages = try render(text: text, to: url)
+        // Render beside the destination, then publish through the same
+        // O_NOFOLLOW writer the filesystem tool uses.
+        let staging = url.deletingLastPathComponent()
+            .appendingPathComponent(".lucas-pdf-\(UUID().uuidString).tmp")
+        let pages = try render(text: text, to: staging)
+        defer { try? FileManager.default.removeItem(at: staging) }
+        try SafeFile.write(Data(contentsOf: staging), to: url, exclusive: true)
         let size = (try? FileManager.default.attributesOfItem(atPath: path)[.size] as? NSNumber)?.intValue ?? 0
         return .object([
             "path": .string(path),
