@@ -55,7 +55,8 @@ if [ ! -w "$HOME/Library/LaunchAgents" ] || [ ! -w "$HOME/Library/Logs/Lucas" ];
     echo
     echo "run these two lines in a normal Terminal to install:"
     echo "  mkdir -p ~/Library/LaunchAgents ~/Library/Logs/Lucas"
-    echo "  cp \\"$STAGED\\" \\"$PLIST\\" && launchctl bootstrap gui/$(id -u) \\"$PLIST\\""
+    printf '  cp "%s" "%s" && launchctl bootstrap gui/%s "%s"
+' "$STAGED" "$PLIST" "$(id -u)" "$PLIST"
     exit 0
 fi
 
