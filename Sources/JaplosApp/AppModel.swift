@@ -38,8 +38,18 @@ final class AppModel: ObservableObject {
     struct ToolSummary: Identifiable, Equatable {
         var name: String
         var title: String
+        var summary: String = ""
+        var capability: String = ""
         var risk: String
+        var provider: String = "kernel"
         var id: String { name }
+
+        var sourceLabel: String {
+            if provider.lowercased().contains("mcp") || name.hasPrefix("mcp.") {
+                return "MCP"
+            }
+            return "Kernel"
+        }
     }
 
     struct SessionSummary: Identifiable, Equatable {
@@ -325,12 +335,16 @@ final class AppModel: ObservableObject {
             let result = try await client.callAsync(.toolList, arguments: .object([:]))
             tools = (result.arrayValue ?? []).compactMap { item in
                 guard let name = item["name"]?.stringValue else { return nil }
+                let provider = item["provider"]?.stringValue ?? "kernel"
                 return ToolSummary(
                     name: name,
                     title: item["title"]?.stringValue ?? "",
-                    risk: item["risk"]?.stringValue ?? "low"
+                    summary: item["summary"]?.stringValue ?? "",
+                    capability: item["capability"]?.stringValue ?? "",
+                    risk: item["risk"]?.stringValue ?? "low",
+                    provider: provider
                 )
-            }
+            }.sorted { $0.name < $1.name }
         } catch {
             // Tool catalog is informational; keep the UI usable.
         }

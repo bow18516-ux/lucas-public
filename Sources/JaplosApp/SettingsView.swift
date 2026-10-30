@@ -1,3 +1,5 @@
+import AppKit
+import SwiftUI
 import JaplosProtocol
 
 /// One typographic + spacing scale for every settings page.
@@ -22,7 +24,6 @@ enum SettingsMetrics {
     static let labelWidth: CGFloat = 104
     static let pagePadding: CGFloat = 10
 }
-import SwiftUI
 
 enum SettingsSection: String, CaseIterable, Identifiable {
     case model = "大模型设置"
@@ -626,20 +627,28 @@ struct ToolsSettingsPane: View {
     @ObservedObject var model: AppModel
     @State private var query = ""
     @State private var source = "全部来源"
+    @State private var riskFilter = "全部风险"
+    @State private var expanded: Set<String> = []
 
     private var filtered: [AppModel.ToolSummary] {
-        guard !query.isEmpty else { return model.tools }
-        return model.tools.filter {
-            $0.name.localizedCaseInsensitiveContains(query) || $0.title.localizedCaseInsensitiveContains(query)
+        model.tools.filter { tool in
+            if source != "全部来源", tool.sourceLabel != source { return false }
+            if riskFilter != "全部风险", tool.risk.lowercased() != riskFilter.lowercased() { return false }
+            if query.isEmpty { return true }
+            let hay = "\(tool.name) \(tool.title) \(tool.summary) \(tool.capability) \(tool.provider)"
+            return hay.localizedCaseInsensitiveContains(query)
         }
     }
+
+    private var kernelCount: Int { model.tools.filter { $0.sourceLabel == "Kernel" }.count }
+    private var mcpCount: Int { model.tools.filter { $0.sourceLabel == "MCP" }.count }
 
     var body: some View {
         VStack(spacing: 0) {
             SettingsHeader(title: "工具列表", subtitle: "浏览本地服务注册的工具与能力", model: model)
 
             HStack(spacing: 10) {
-                TextField("搜索工具名称或说明", text: $query)
+                TextField("搜索工具名称、说明或能力", text: $query)
                     .textFieldStyle(.plain)
                     .font(.system(size: SettingsMetrics.cardSubtitleSize))
                     .padding(8)
@@ -648,9 +657,18 @@ struct ToolsSettingsPane: View {
                 Picker("", selection: $source) {
                     Text("全部来源").tag("全部来源")
                     Text("Kernel").tag("Kernel")
+                    Text("MCP").tag("MCP")
                 }
                 .labelsHidden()
                 .frame(width: 120)
+                Picker("", selection: $riskFilter) {
+                    Text("全部风险").tag("全部风险")
+                    Text("low").tag("low")
+                    Text("medium").tag("medium")
+                    Text("high").tag("high")
+                }
+                .labelsHidden()
+                .frame(width: 110)
                 Button {
                     Task { await model.loadTools() }
                 } label: {
@@ -662,7 +680,7 @@ struct ToolsSettingsPane: View {
             }
             .padding(.horizontal, SettingsMetrics.pagePadding)
 
-            Text("已注册工具与 MCP 服务提供的工具 · \(filtered.count) 个")
+            Text("Kernel \(kernelCount) · MCP \(mcpCount) · 当前显示 \(filtered.count)")
                 .font(.system(size: SettingsMetrics.captionSize))
                 .foregroundStyle(Theme.textSecondary)
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -675,7 +693,7 @@ struct ToolsSettingsPane: View {
                     Image(systemName: "wrench.and.screwdriver")
                         .font(.system(size: SettingsMetrics.metricSize, weight: .light))
                         .foregroundStyle(Theme.textSecondary.opacity(0.7))
-                    Text("暂无已注册工具")
+                    Text(model.tools.isEmpty ? "暂无已注册工具" : "没有匹配的工具")
                         .font(.system(size: SettingsMetrics.bodySize, weight: .medium))
                         .foregroundStyle(Theme.textPrimary)
                     Text("这里显示本地服务的注册目录与 MCP 工具。运行时按需提供的系统能力不包含在此目录中。")
@@ -689,24 +707,7 @@ struct ToolsSettingsPane: View {
                 ScrollView {
                     VStack(spacing: 6) {
                         ForEach(filtered) { tool in
-                            HStack(alignment: .top, spacing: 10) {
-                                Text(tool.risk.uppercased())
-                                    .font(.system(size: SettingsMetrics.microSize, weight: .semibold))
-                                    .foregroundStyle(tool.risk == "high" ? Color.red.opacity(0.9) : Theme.textSecondary)
-                                    .frame(width: 36, alignment: .leading)
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text(tool.name)
-                                        .font(.system(size: SettingsMetrics.cardSubtitleSize, weight: .medium, design: .monospaced))
-                                        .foregroundStyle(Theme.textPrimary)
-                                    Text(tool.title)
-                                        .font(.system(size: SettingsMetrics.captionSize))
-                                        .foregroundStyle(Theme.textSecondary)
-                                }
-                                Spacer()
-                            }
-                            .padding(9)
-                            .background(Color.white.opacity(0.025), in: RoundedRectangle(cornerRadius: 7))
-                            .overlay(RoundedRectangle(cornerRadius: 7).strokeBorder(Theme.panelBorder, lineWidth: 0.6))
+                            toolRow(tool)
                         }
                     }
                     .padding(.horizontal, SettingsMetrics.pagePadding)
@@ -714,11 +715,97 @@ struct ToolsSettingsPane: View {
                 }
             }
         }
+        .task { await model.loadTools() }
+    }
+
+    @ViewBuilder
+    private func toolRow(_ tool: AppModel.ToolSummary) -> some View {
+        let isOpen = expanded.contains(tool.name)
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .top, spacing: 10) {
+                Text(tool.risk.uppercased())
+                    .font(.system(size: SettingsMetrics.microSize, weight: .semibold))
+                    .foregroundStyle(riskColor(tool.risk))
+                    .frame(width: 52, alignment: .leading)
+                VStack(alignment: .leading, spacing: 2) {
+                    HStack(spacing: 8) {
+                        Text(tool.name)
+                            .font(.system(size: SettingsMetrics.cardSubtitleSize, weight: .medium, design: .monospaced))
+                            .foregroundStyle(Theme.textPrimary)
+                            .textSelection(.enabled)
+                        Text(tool.sourceLabel)
+                            .font(.system(size: SettingsMetrics.microSize, weight: .medium))
+                            .foregroundStyle(Theme.accent)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 1)
+                            .background(Theme.accent.opacity(0.12), in: Capsule())
+                    }
+                    Text(tool.title.isEmpty ? "（无标题）" : tool.title)
+                        .font(.system(size: SettingsMetrics.captionSize))
+                        .foregroundStyle(Theme.textSecondary)
+                }
+                Spacer(minLength: 8)
+                Button {
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(tool.name, forType: .string)
+                } label: {
+                    Image(systemName: "doc.on.doc")
+                        .font(.system(size: SettingsMetrics.captionSize))
+                        .foregroundStyle(Theme.textSecondary)
+                }
+                .buttonStyle(.borderless)
+                .help("复制工具名")
+                Button {
+                    if isOpen { expanded.remove(tool.name) } else { expanded.insert(tool.name) }
+                } label: {
+                    Image(systemName: isOpen ? "chevron.up" : "chevron.down")
+                        .font(.system(size: SettingsMetrics.captionSize))
+                        .foregroundStyle(Theme.textSecondary)
+                }
+                .buttonStyle(.borderless)
+            }
+            if isOpen {
+                VStack(alignment: .leading, spacing: 6) {
+                    if !tool.summary.isEmpty {
+                        Text(tool.summary)
+                            .font(.system(size: SettingsMetrics.captionSize))
+                            .foregroundStyle(Theme.textPrimary.opacity(0.9))
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    HStack(spacing: 12) {
+                        metaChip("能力", tool.capability.isEmpty ? "—" : tool.capability)
+                        metaChip("提供方", tool.provider.isEmpty ? "—" : tool.provider)
+                        metaChip("风险", tool.risk)
+                    }
+                }
+                .padding(.leading, 62)
+            }
+        }
+        .padding(9)
+        .background(Color.white.opacity(0.025), in: RoundedRectangle(cornerRadius: 7))
+        .overlay(RoundedRectangle(cornerRadius: 7).strokeBorder(Theme.panelBorder, lineWidth: 0.6))
+    }
+
+    private func metaChip(_ label: String, _ value: String) -> some View {
+        HStack(spacing: 4) {
+            Text(label)
+                .foregroundStyle(Theme.textSecondary)
+            Text(value)
+                .foregroundStyle(Theme.textPrimary)
+                .lineLimit(1)
+        }
+        .font(.system(size: SettingsMetrics.microSize, design: .monospaced))
+    }
+
+    private func riskColor(_ risk: String) -> Color {
+        switch risk.lowercased() {
+        case "high": return Color.red.opacity(0.9)
+        case "medium": return Color.orange.opacity(0.9)
+        default: return Theme.textSecondary
+        }
     }
 }
 
-
-// MARK: - Skills settings
 
 struct SkillsSettingsPane: View {
     @ObservedObject var model: AppModel
