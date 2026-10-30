@@ -63,7 +63,13 @@ enum SettingsSection: String, CaseIterable, Identifiable {
 struct SettingsScreen: View {
     @ObservedObject var model: AppModel
     @ObservedObject var voice: SpeechOutput
-    @State private var section: SettingsSection
+    /// Top-level sidebar destination: nested settings panes, or sibling 「记忆」.
+    private enum SidebarDestination: Equatable {
+        case settings(SettingsSection)
+        case memory
+    }
+
+    @State private var destination: SidebarDestination
     /// Top-level 「设置」 group — default expanded so the eight panes stay one click away.
     @State private var settingsGroupExpanded = true
     @ObservedObject private var updateService = UpdateService.shared
@@ -72,7 +78,12 @@ struct SettingsScreen: View {
         self.model = model
         self.voice = voice
         let requested = ProcessInfo.processInfo.environment["LUCAS_SETTINGS_SECTION"] ?? ""
-        _section = State(initialValue: SettingsSection.allCases.first { $0.rawValue == requested } ?? .model)
+        if requested == "记忆" || requested.lowercased() == "memory" {
+            _destination = State(initialValue: .memory)
+        } else {
+            let section = SettingsSection.allCases.first { $0.rawValue == requested } ?? .model
+            _destination = State(initialValue: .settings(section))
+        }
     }
 
     var body: some View {
@@ -107,8 +118,8 @@ struct SettingsScreen: View {
             .padding(.top, 54)
             .padding(.bottom, 22)
 
-            VStack(alignment: .leading, spacing: 2) {
-                // Top-level group: 「设置」 — room for more top-level groups later.
+            VStack(alignment: .leading, spacing: 4) {
+                // Top-level group: 「设置」 — room for more top-level siblings later.
                 Button {
                     withAnimation(.easeInOut(duration: 0.18)) {
                         settingsGroupExpanded.toggle()
@@ -140,8 +151,12 @@ struct SettingsScreen: View {
                 if settingsGroupExpanded {
                     VStack(spacing: 2) {
                         ForEach(SettingsSection.allCases) { item in
+                            let selected: Bool = {
+                                if case .settings(let section) = destination { return section == item }
+                                return false
+                            }()
                             Button {
-                                section = item
+                                destination = .settings(item)
                             } label: {
                                 HStack(spacing: 9) {
                                     Image(systemName: item.icon)
@@ -150,7 +165,7 @@ struct SettingsScreen: View {
                                     Text(item.rawValue)
                                         .font(.system(size: SettingsMetrics.navItemSize))
                                     Spacer()
-                                    if section == item {
+                                    if selected {
                                         Circle()
                                             .fill(Theme.accent)
                                             .frame(width: 4, height: 4)
@@ -160,16 +175,16 @@ struct SettingsScreen: View {
                                             .frame(width: 6, height: 6)
                                     }
                                 }
-                                .foregroundStyle(section == item ? Theme.textPrimary : Theme.textSecondary)
+                                .foregroundStyle(selected ? Theme.textPrimary : Theme.textSecondary)
                                 .padding(.leading, 28)
                                 .padding(.trailing, 12)
                                 .padding(.vertical, 9)
                                 .background(
-                                    section == item ? Theme.accent.opacity(0.10) : Color.clear,
+                                    selected ? Theme.accent.opacity(0.10) : Color.clear,
                                     in: RoundedRectangle(cornerRadius: 7)
                                 )
                                 .overlay(alignment: .leading) {
-                                    if section == item {
+                                    if selected {
                                         Rectangle()
                                             .fill(Theme.accent)
                                             .frame(width: 2)
@@ -182,6 +197,43 @@ struct SettingsScreen: View {
                         }
                     }
                 }
+
+                // Sibling top-level: 「记忆」
+                let memorySelected = destination == .memory
+                Button {
+                    destination = .memory
+                } label: {
+                    HStack(spacing: 8) {
+                        Color.clear.frame(width: 12)
+                        Image(systemName: "brain.head.profile")
+                            .font(.system(size: SettingsMetrics.navIconSize))
+                            .frame(width: 22)
+                        Text("记忆")
+                            .font(.system(size: SettingsMetrics.navSize, weight: .semibold))
+                        Spacer()
+                        if memorySelected {
+                            Circle()
+                                .fill(Theme.accent)
+                                .frame(width: 4, height: 4)
+                        }
+                    }
+                    .foregroundStyle(memorySelected ? Theme.textPrimary : Theme.textSecondary)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 10)
+                    .background(
+                        memorySelected ? Theme.accent.opacity(0.10) : Color.clear,
+                        in: RoundedRectangle(cornerRadius: 7)
+                    )
+                    .overlay(alignment: .leading) {
+                        if memorySelected {
+                            Rectangle()
+                                .fill(Theme.accent)
+                                .frame(width: 2)
+                                .padding(.vertical, 6)
+                        }
+                    }
+                }
+                .buttonStyle(.pressable)
             }
             .padding(.horizontal, 10)
 
@@ -205,26 +257,29 @@ struct SettingsScreen: View {
 
     @ViewBuilder
     private var content: some View {
-        switch section {
-        case .model:
+        switch destination {
+        case .memory:
+            MemorySettingsPane(model: model)
+        case .settings(.model):
             ModelSettingsPane(model: model)
-        case .tools:
+        case .settings(.tools):
             ToolsSettingsPane(model: model)
-        case .skills:
+        case .settings(.skills):
             SkillsSettingsPane(model: model)
-        case .voice:
+        case .settings(.voice):
             VoiceSettingsPane(model: model, voice: voice)
-        case .alarms:
+        case .settings(.alarms):
             AlarmsSettingsPane(model: model)
-        case .channels:
+        case .settings(.channels):
             ChannelsSettingsPane(model: model)
-        case .mcp:
+        case .settings(.mcp):
             MCPSettingsPane(model: model)
-        case .updates:
+        case .settings(.updates):
             UpdatesSettingsPane(updates: UpdateService.shared, model: model)
         }
     }
 }
+
 
 // MARK: - Header
 
@@ -1952,6 +2007,132 @@ struct VoiceSettingsPane: View {
 
 
 // MARK: - Alarms settings
+
+struct MemorySettingsPane: View {
+    @ObservedObject var model: AppModel
+    @State private var draft = ""
+
+    var body: some View {
+        VStack(spacing: 0) {
+            SettingsHeader(
+                title: "记忆",
+                subtitle: "持久化短笔记（memory.list / upsert / delete），与会话聊天分开存放",
+                model: model
+            )
+
+            ScrollView {
+                VStack(alignment: .leading, spacing: SettingsMetrics.cardSpacing) {
+                    VStack(alignment: .leading, spacing: 14) {
+                        HStack(alignment: .firstTextBaseline, spacing: 8) {
+                            Image(systemName: "square.and.pencil")
+                                .font(.system(size: SettingsMetrics.bodySize))
+                                .foregroundStyle(Theme.textSecondary)
+                            Text("记一条")
+                                .font(.system(size: SettingsMetrics.cardTitleSize, weight: .semibold))
+                                .foregroundStyle(Theme.textPrimary)
+                            Spacer()
+                            Text("\(model.memoryNotes.count) 条")
+                                .font(.system(size: SettingsMetrics.captionSize, design: .monospaced))
+                                .foregroundStyle(Theme.textSecondary)
+                        }
+
+                        HStack(spacing: 10) {
+                            TextField("写下要长期记住的内容…", text: $draft, axis: .vertical)
+                                .textFieldStyle(.plain)
+                                .font(.system(size: SettingsMetrics.bodySize))
+                                .lineLimit(2...4)
+                                .padding(.horizontal, 10)
+                                .padding(.vertical, 8)
+                                .background(Color.white.opacity(0.05), in: RoundedRectangle(cornerRadius: 6))
+                                .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(Theme.panelBorder, lineWidth: 0.7))
+                            Button("保存") {
+                                let text = draft
+                                draft = ""
+                                Task {
+                                    await model.rememberNote(text, reloadScopedToCurrentSession: false)
+                                }
+                            }
+                            .buttonStyle(.pressable)
+                            .font(.system(size: SettingsMetrics.cardSubtitleSize))
+                            .foregroundStyle(Color.black.opacity(0.85))
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 5)
+                            .background(Theme.accent, in: RoundedRectangle(cornerRadius: 6))
+                            .disabled(draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                        }
+
+                        Button("记上条用户发言") {
+                            Task {
+                                await model.rememberLatestUserMessage()
+                                await model.loadMemories(scopedToCurrentSession: false)
+                            }
+                        }
+                        .buttonStyle(.pressable)
+                        .font(.system(size: SettingsMetrics.cardSubtitleSize))
+                        .foregroundStyle(Theme.textSecondary)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .topLeading)
+                    .panel(padding: SettingsMetrics.cardPadding)
+
+                    VStack(alignment: .leading, spacing: 12) {
+                        Text("已保存")
+                            .font(.system(size: SettingsMetrics.cardTitleSize, weight: .semibold))
+                            .foregroundStyle(Theme.textPrimary)
+
+                        if model.memoryNotes.isEmpty {
+                            Text("暂无持久化记忆。在上方写入后点「保存」。")
+                                .font(.system(size: SettingsMetrics.cardSubtitleSize))
+                                .foregroundStyle(Theme.textSecondary)
+                        } else {
+                            ForEach(model.memoryNotes) { note in
+                                HStack(alignment: .top, spacing: 12) {
+                                    VStack(alignment: .leading, spacing: 4) {
+                                        Text(note.content)
+                                            .font(.system(size: SettingsMetrics.labelSize))
+                                            .foregroundStyle(Theme.textPrimary)
+                                            .fixedSize(horizontal: false, vertical: true)
+                                        HStack(spacing: 8) {
+                                            Text(note.kind)
+                                                .font(.system(size: SettingsMetrics.captionSize))
+                                                .foregroundStyle(Theme.textSecondary)
+                                            if !note.sessionID.isEmpty {
+                                                Text("会话 \(note.sessionID.prefix(8))")
+                                                    .font(.system(size: SettingsMetrics.captionSize, design: .monospaced))
+                                                    .foregroundStyle(Theme.textSecondary.opacity(0.8))
+                                            }
+                                        }
+                                    }
+                                    Spacer(minLength: 8)
+                                    Button {
+                                        Task {
+                                            await model.deleteMemory(id: note.id, reloadScopedToCurrentSession: false)
+                                        }
+                                    } label: {
+                                        Image(systemName: "trash")
+                                            .font(.system(size: SettingsMetrics.captionSize))
+                                            .foregroundStyle(Color.red.opacity(0.8))
+                                    }
+                                    .buttonStyle(.pressable)
+                                }
+                                .padding(.vertical, 6)
+                                if note.id != model.memoryNotes.last?.id {
+                                    Divider().overlay(Theme.panelBorder.opacity(0.6))
+                                }
+                            }
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .topLeading)
+                    .panel(padding: SettingsMetrics.cardPadding)
+                }
+                .padding(.horizontal, SettingsMetrics.pagePadding)
+                .padding(.bottom, 28)
+            }
+        }
+        .task {
+            await model.loadMemories(limit: 100, scopedToCurrentSession: false)
+        }
+    }
+}
 
 struct AlarmsSettingsPane: View {
     @ObservedObject var model: AppModel

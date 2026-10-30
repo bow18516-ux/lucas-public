@@ -408,10 +408,12 @@ final class AppModel: ObservableObject {
         isSending = false
     }
 
-    func loadMemories(limit: Int = 40) async {
+    /// - Parameter scopedToCurrentSession: when true (default), filter by `currentSessionID` if set.
+    ///   Settings 「记忆」 pane passes false to list every persisted note.
+    func loadMemories(limit: Int = 40, scopedToCurrentSession: Bool = true) async {
         do {
             var args: [String: JSONValue] = ["limit": .number(Double(limit))]
-            if let sessionID = currentSessionID {
+            if scopedToCurrentSession, let sessionID = currentSessionID {
                 args["sessionID"] = .string(sessionID)
             }
             let result = try await client.callAsync(.memoryList, arguments: .object(args))
@@ -429,11 +431,11 @@ final class AppModel: ObservableObject {
                 )
             }
         } catch {
-            // Keep session-title fallback in UI when kernel is offline.
+            // Soft-fail when kernel is offline.
         }
     }
 
-    func rememberNote(_ content: String) async {
+    func rememberNote(_ content: String, reloadScopedToCurrentSession: Bool = true) async {
         let trimmed = content.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
         do {
@@ -445,7 +447,18 @@ final class AppModel: ObservableObject {
                 args["sessionID"] = .string(sessionID)
             }
             _ = try await client.callAsync(.memoryUpsert, arguments: .object(args))
-            await loadMemories()
+            await loadMemories(scopedToCurrentSession: reloadScopedToCurrentSession)
+        } catch {
+            errorText = (error as? ClientError)?.description ?? String(describing: error)
+        }
+    }
+
+    func deleteMemory(id: String, reloadScopedToCurrentSession: Bool = true) async {
+        let trimmed = id.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        do {
+            _ = try await client.callAsync(.memoryDelete, arguments: .object(["id": .string(trimmed)]))
+            await loadMemories(scopedToCurrentSession: reloadScopedToCurrentSession)
         } catch {
             errorText = (error as? ClientError)?.description ?? String(describing: error)
         }

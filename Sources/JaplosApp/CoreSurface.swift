@@ -280,7 +280,6 @@ struct LeftColumn: View {
     var body: some View {
         VStack(spacing: 14) {
             ModelCard(model: model)
-            MemoryCard(model: model)
             KnowledgeCard(model: model)
             CalendarCard(model: model)
             Spacer(minLength: 0)
@@ -375,124 +374,6 @@ struct ModelCard: View {
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
-
-struct MemoryCard: View {
-    @ObservedObject var model: AppModel
-    @State private var draft = ""
-
-    private var displayItems: [(id: String, text: String)] {
-        if !model.memoryNotes.isEmpty {
-            return model.memoryNotes.prefix(6).map { ($0.id, $0.content) }
-        }
-        var items: [(String, String)] = []
-        for session in model.sessions.prefix(6) {
-            let title = session.title.trimmingCharacters(in: .whitespacesAndNewlines)
-            items.append((session.id, title.isEmpty ? "会话 \(session.id.prefix(8))" : title))
-        }
-        if items.isEmpty {
-            for message in model.messages.reversed() where message.role == "user" {
-                let clip = message.text.replacingOccurrences(of: "\n", with: " ")
-                if clip.isEmpty { continue }
-                items.append((message.id.uuidString, String(clip.prefix(36))))
-                if items.count >= 5 { break }
-            }
-        }
-        return items
-    }
-
-    private var excerptCount: Int {
-        model.messages.filter { $0.role == "assistant" && !$0.text.isEmpty }.count
-    }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack {
-                Text("记忆")
-                    .font(.system(size: 15, weight: .medium))
-                    .foregroundStyle(Theme.textPrimary)
-                Spacer()
-                Text(model.memoryNotes.isEmpty ? "会话回退" : "已持久化")
-                    .font(.system(size: 10))
-                    .foregroundStyle(Theme.textSecondary)
-                    .padding(.horizontal, 7)
-                    .padding(.vertical, 2)
-                    .background(Color.white.opacity(0.05), in: Capsule())
-            }
-
-            RoundedRectangle(cornerRadius: 8)
-                .strokeBorder(Theme.panelBorder, style: StrokeStyle(lineWidth: 0.8, dash: [3, 3]))
-                .frame(minHeight: 150)
-                .overlay(alignment: .topLeading) {
-                    if displayItems.isEmpty {
-                        VStack(alignment: .leading, spacing: 8) {
-                            RoundedRectangle(cornerRadius: 2)
-                                .fill(Color.white.opacity(0.18))
-                                .frame(width: 7, height: 7)
-                            Text("暂无记忆")
-                                .font(.system(size: 11))
-                                .foregroundStyle(Theme.textSecondary.opacity(0.7))
-                            Text("点「记一条」保存短笔记")
-                                .font(.system(size: 10))
-                                .foregroundStyle(Theme.textSecondary.opacity(0.55))
-                        }
-                        .padding(12)
-                    } else {
-                        VStack(alignment: .leading, spacing: 8) {
-                            ForEach(displayItems, id: \.id) { item in
-                                HStack(alignment: .top, spacing: 8) {
-                                    Circle()
-                                        .fill(Theme.accent.opacity(0.85))
-                                        .frame(width: 6, height: 6)
-                                        .padding(.top, 3)
-                                    Text(item.text)
-                                        .font(.system(size: 11))
-                                        .foregroundStyle(Theme.textPrimary.opacity(0.9))
-                                        .lineLimit(2)
-                                }
-                            }
-                        }
-                        .padding(12)
-                    }
-                }
-
-            HStack(spacing: 8) {
-                TextField("记一条…", text: $draft)
-                    .textFieldStyle(.plain)
-                    .font(.system(size: 11))
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 5)
-                    .background(Color.white.opacity(0.04), in: RoundedRectangle(cornerRadius: 6))
-                Button("保存") {
-                    let text = draft
-                    draft = ""
-                    Task { await model.rememberNote(text) }
-                }
-                .buttonStyle(.pressable)
-                .font(.system(size: 11))
-                .foregroundStyle(Theme.accent)
-                .disabled(draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                Button("记上条") {
-                    Task { await model.rememberLatestUserMessage() }
-                }
-                .buttonStyle(.pressable)
-                .font(.system(size: 11))
-                .foregroundStyle(Theme.textSecondary)
-            }
-
-            HStack(spacing: 12) {
-                Label("记忆 \(displayItems.count)", systemImage: "square")
-                Label("知识摘录 \(excerptCount)", systemImage: "square")
-                Spacer()
-            }
-            .font(.system(size: 10))
-            .foregroundStyle(Theme.textSecondary.opacity(0.8))
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .panel(padding: 18)
-        .task { await model.loadMemories() }
-    }
-}
-
 
 struct KnowledgeCard: View {
     @ObservedObject var model: AppModel
