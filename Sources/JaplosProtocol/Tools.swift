@@ -135,17 +135,30 @@ public struct ModelConnection: Codable, Sendable, Equatable {
     public var model: String
     public var apiKey: String
     public var temperature: Double
+    /// Human label for the connection card (optional; empty falls back to host).
+    public var displayName: String
 
     public init(
         baseURL: String = "https://api.deepseek.com/v1",
         model: String = "deepseek-chat",
         apiKey: String = "",
-        temperature: Double = 0.3
+        temperature: Double = 0.3,
+        displayName: String = ""
     ) {
         self.baseURL = baseURL
         self.model = model
         self.apiKey = apiKey
         self.temperature = temperature
+        self.displayName = displayName
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        baseURL = try container.decodeIfPresent(String.self, forKey: .baseURL) ?? "https://api.deepseek.com/v1"
+        model = try container.decodeIfPresent(String.self, forKey: .model) ?? ""
+        apiKey = try container.decodeIfPresent(String.self, forKey: .apiKey) ?? ""
+        temperature = try container.decodeIfPresent(Double.self, forKey: .temperature) ?? 0.3
+        displayName = try container.decodeIfPresent(String.self, forKey: .displayName) ?? ""
     }
 
     public var isConfigured: Bool {

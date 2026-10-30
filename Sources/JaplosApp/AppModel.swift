@@ -395,6 +395,7 @@ final class AppModel: ObservableObject {
                 "model": .string(settings.model),
                 "apiKey": .string(key),
                 "temperature": .number(settings.temperature),
+                "displayName": .string(settings.displayName),
             ])
             _ = try await client.callAsync(.configurationSet, arguments: .object([
                 "path": .string("agents.default.model.connection"),

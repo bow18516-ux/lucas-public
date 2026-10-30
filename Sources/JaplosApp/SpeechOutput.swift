@@ -16,6 +16,9 @@ final class SpeechOutput: NSObject, ObservableObject {
     @Published var rate: Double {
         didSet { defaults.set(rate, forKey: Keys.rate) }
     }
+    @Published var pitch: Double {
+        didSet { defaults.set(pitch, forKey: Keys.pitch) }
+    }
     @Published var languageCode: String {
         didSet { defaults.set(languageCode, forKey: Keys.language) }
     }
@@ -29,6 +32,7 @@ final class SpeechOutput: NSObject, ObservableObject {
         static let enabled = "japlos.voice.output.enabled"
         static let voice = "japlos.voice.output.voice"
         static let rate = "japlos.voice.output.rate"
+        static let pitch = "japlos.voice.output.pitch"
         static let language = "japlos.voice.language"
         static let input = "japlos.voice.input"
     }
@@ -41,6 +45,7 @@ final class SpeechOutput: NSObject, ObservableObject {
         enabled = defaults.object(forKey: Keys.enabled) as? Bool ?? true
         voiceIdentifier = defaults.string(forKey: Keys.voice) ?? ""
         rate = defaults.object(forKey: Keys.rate) as? Double ?? 0.50
+        pitch = defaults.object(forKey: Keys.pitch) as? Double ?? 1.0
         languageCode = defaults.string(forKey: Keys.language) ?? "zh-CN"
         inputDeviceUID = defaults.string(forKey: Keys.input) ?? ""
         super.init()
@@ -50,6 +55,12 @@ final class SpeechOutput: NSObject, ObservableObject {
     static var chineseVoices: [AVSpeechSynthesisVoice] {
         AVSpeechSynthesisVoice.speechVoices()
             .filter { $0.language.hasPrefix("zh") }
+            .sorted { $0.name < $1.name }
+    }
+
+    static var englishVoices: [AVSpeechSynthesisVoice] {
+        AVSpeechSynthesisVoice.speechVoices()
+            .filter { $0.language.hasPrefix("en") }
             .sorted { $0.name < $1.name }
     }
 
@@ -67,6 +78,7 @@ final class SpeechOutput: NSObject, ObservableObject {
             utterance.voice = AVSpeechSynthesisVoice(language: "zh-CN")
         }
         utterance.rate = Float(min(max(rate, 0.35), 0.65))
+        utterance.pitchMultiplier = Float(min(max(pitch, 0.5), 2.0))
         synthesizer.speak(utterance)
     }
 

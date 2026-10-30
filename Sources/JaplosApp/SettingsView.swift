@@ -282,7 +282,17 @@ struct ModelSettingsPane: View {
                     .font(.system(size: SettingsMetrics.cardSubtitleSize))
                     .foregroundStyle(Theme.textSecondary)
                 Spacer()
-                Button("新增连接") {}
+                Button("新增连接") {
+                    model.settings = ModelConnection(
+                        baseURL: "https://api.deepseek.com/v1",
+                        model: "",
+                        apiKey: "",
+                        temperature: 0.3,
+                        displayName: ""
+                    )
+                    model.hasStoredConnection = false
+                    savedNote = "已清空表单，填写后点保存并使用"
+                }
                     .buttonStyle(.borderless)
                     .font(.system(size: SettingsMetrics.cardSubtitleSize))
                     .foregroundStyle(Theme.accent)
@@ -321,7 +331,21 @@ struct ModelSettingsPane: View {
                         .foregroundStyle(Theme.textSecondary.opacity(0.85))
                     }
                     Spacer()
-                    Button("选择并使用模型") {}
+                    Button("选择并使用模型") {
+                        Task {
+                            await model.refreshModels()
+                            if model.availableModels.isEmpty {
+                                savedNote = "未能拉取模型列表，请检查 Base URL / Key"
+                            } else if model.settings.model.isEmpty,
+                                      let first = model.availableModels.first {
+                                await model.switchModel(first)
+                                savedNote = "已选用 \(first)"
+                            } else if !model.settings.model.isEmpty {
+                                let ok = await model.saveSettings()
+                                savedNote = ok ? "已保存并使用 \(model.settings.model)" : "保存失败"
+                            }
+                        }
+                    }
                         .buttonStyle(.borderless)
                         .font(.system(size: SettingsMetrics.cardSubtitleSize))
                         .foregroundStyle(Theme.textPrimary)
@@ -359,7 +383,7 @@ struct ModelSettingsPane: View {
                 .foregroundStyle(Theme.textPrimary)
 
             field("服务商") {
-                darkMenu(selection: providerSelection, options: ["DeepSeek", "MiMo", "Pollinations 测试", "自定义"], width: 180)
+                darkMenu(selection: providerSelection, options: ["DeepSeek", "MiMo", "OpenAI", "OpenAI 兼容", "Pollinations 测试", "自定义"], width: 200)
             }
 
             field("Base URL") {
@@ -434,6 +458,26 @@ struct ModelSettingsPane: View {
                 .font(.system(size: SettingsMetrics.captionSize))
                 .foregroundStyle(Theme.textSecondary.opacity(0.7))
 
+            field("连接名称（可选）") {
+                TextField("例如 DeepSeek 主连接", text: $model.settings.displayName)
+                    .textFieldStyle(.plain)
+                    .font(.system(size: SettingsMetrics.labelSize))
+                    .padding(9)
+                    .background(Color.white.opacity(0.04), in: RoundedRectangle(cornerRadius: 6))
+                    .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(Theme.panelBorder, lineWidth: 0.7))
+            }
+
+            field("温度") {
+                HStack(spacing: 12) {
+                    Slider(value: $model.settings.temperature, in: 0...1.5, step: 0.05)
+                        .tint(Theme.accent)
+                    Text(String(format: "%.2f", model.settings.temperature))
+                        .font(.system(size: SettingsMetrics.cardSubtitleSize, design: .monospaced))
+                        .foregroundStyle(Theme.textSecondary)
+                        .frame(width: 44, alignment: .trailing)
+                }
+            }
+
             HStack(alignment: .firstTextBaseline) {
                 Text("API 协议")
                     .font(.system(size: SettingsMetrics.labelSize))
@@ -441,6 +485,9 @@ struct ModelSettingsPane: View {
                 Spacer()
             }
             darkMenu(selection: $protocolName, options: protocols, width: 160)
+            Text(protocolName == "Responses" ? "Responses 协议尚未接入，当前请求仍走 Chat Completions。" : "当前请求走 OpenAI 兼容 Chat Completions。")
+                .font(.system(size: SettingsMetrics.captionSize))
+                .foregroundStyle(Theme.textSecondary.opacity(0.7))
 
             if let result = model.testResult {
                 Text(result)
@@ -488,7 +535,9 @@ struct ModelSettingsPane: View {
                 let url = model.settings.baseURL.lowercased()
                 if url.contains("deepseek") { return "DeepSeek" }
                 if url.contains("xiaomimimo") { return "MiMo" }
+                if url.contains("api.openai.com") { return "OpenAI" }
                 if url.contains("pollinations") { return "Pollinations 测试" }
+                if url.contains("your-api.example") { return "OpenAI 兼容" }
                 return "自定义"
             },
             set: { value in
@@ -496,12 +545,22 @@ struct ModelSettingsPane: View {
                 case "DeepSeek":
                     model.settings.baseURL = "https://api.deepseek.com/v1"
                     if model.settings.model.isEmpty { model.settings.model = "deepseek-chat" }
+                    if model.settings.displayName.isEmpty { model.settings.displayName = "DeepSeek" }
                 case "MiMo":
                     model.settings.baseURL = "https://api.xiaomimimo.com/v1"
                     if model.settings.model.isEmpty { model.settings.model = "mimo-v2.5" }
+                    if model.settings.displayName.isEmpty { model.settings.displayName = "MiMo" }
+                case "OpenAI":
+                    model.settings.baseURL = "https://api.openai.com/v1"
+                    if model.settings.model.isEmpty { model.settings.model = "gpt-4o-mini" }
+                    if model.settings.displayName.isEmpty { model.settings.displayName = "OpenAI" }
+                case "OpenAI 兼容":
+                    model.settings.baseURL = "https://your-api.example/v1"
+                    if model.settings.displayName.isEmpty { model.settings.displayName = "OpenAI 兼容" }
                 case "Pollinations 测试":
                     model.settings.baseURL = "https://text.pollinations.ai/openai"
                     model.settings.model = "openai"
+                    if model.settings.displayName.isEmpty { model.settings.displayName = "Pollinations" }
                     if model.settings.apiKey.isEmpty && model.storedAPIKey.isEmpty {
                         model.settings.apiKey = "anonymous"
                     }
@@ -513,9 +572,14 @@ struct ModelSettingsPane: View {
     }
 
     private var providerLabel: String {
+        if !model.settings.displayName.trimmingCharacters(in: .whitespaces).isEmpty {
+            return model.settings.displayName
+        }
         let url = model.settings.baseURL.lowercased()
         if url.contains("deepseek") { return "DeepSeek" }
         if url.contains("xiaomimimo") { return "MiMo" }
+        if url.contains("openai.com") { return "OpenAI" }
+        if url.contains("pollinations") { return "Pollinations" }
         if let host = URL(string: model.settings.baseURL)?.host, !host.isEmpty { return host }
         return "自定义"
     }
@@ -1024,7 +1088,6 @@ struct VoiceSettingsPane: View {
     @ObservedObject var model: AppModel
     @ObservedObject var voice: SpeechOutput
     @State private var devices: [AudioDevices.Input] = []
-    @State private var showTuning = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -1046,11 +1109,6 @@ struct VoiceSettingsPane: View {
             }
         }
         .task { devices = AudioDevices.inputs() }
-        .alert("声音调音台", isPresented: $showTuning) {
-            Button("好", role: .cancel) {}
-        } message: {
-            Text("自定义音色调音会在后续版本接入；当前使用系统语音合成。")
-        }
     }
 
     // MARK: Cards
@@ -1102,8 +1160,7 @@ struct VoiceSettingsPane: View {
     }
 
     private var synthesisCard: some View {
-        card(icon: "speaker.wave.2", title: "语音合成", subtitle: "选择回复的声音与语速") {
-            row("已保存音色") { voiceMenu }
+        card(icon: "speaker.wave.2", title: "语音合成", subtitle: "选择回复的声音、语速与音高") {
             row("合成服务") { staticField("系统语音 · Apple") }
             row("音色") { voiceMenu }
             row("语速") {
@@ -1114,6 +1171,16 @@ struct VoiceSettingsPane: View {
                         .font(.system(size: SettingsMetrics.cardSubtitleSize, design: .monospaced))
                         .foregroundStyle(Theme.textSecondary)
                         .frame(width: 36, alignment: .trailing)
+                }
+            }
+            row("音高") {
+                HStack(spacing: 12) {
+                    Slider(value: $voice.pitch, in: 0.5...2.0)
+                        .tint(Theme.accent)
+                    Text(String(format: "%.2f", voice.pitch))
+                        .font(.system(size: SettingsMetrics.cardSubtitleSize, design: .monospaced))
+                        .foregroundStyle(Theme.textSecondary)
+                        .frame(width: 44, alignment: .trailing)
                 }
             }
             row("试听") {
@@ -1144,23 +1211,33 @@ struct VoiceSettingsPane: View {
     }
 
     private var agentVoiceCard: some View {
-        card(icon: "slider.horizontal.3", title: "智能体音色", subtitle: "调音、试听和管理自定义声音") {
-            Button {
-                showTuning = true
-            } label: {
-                HStack {
-                    Text("声音调音台")
-                        .font(.system(size: SettingsMetrics.labelSize))
-                        .foregroundStyle(Theme.textPrimary)
-                    Spacer()
-                    Image(systemName: "chevron.right")
-                        .font(.system(size: SettingsMetrics.captionSize))
-                        .foregroundStyle(Theme.textSecondary)
-                }
-                .padding(.vertical, 4)
-                .contentShape(Rectangle())
+        card(icon: "slider.horizontal.3", title: "智能体音色", subtitle: "播报开关与快速调音") {
+            row("自动播报回复") {
+                Toggle("", isOn: $voice.enabled)
+                    .labelsHidden()
+                    .toggleStyle(.switch)
+                    .tint(Theme.accent)
             }
-            .buttonStyle(.borderless)
+            row("快捷") {
+                HStack(spacing: 10) {
+                    Button("重置语速/音高") {
+                        voice.rate = 0.50
+                        voice.pitch = 1.0
+                    }
+                    .buttonStyle(.borderless)
+                    .font(.system(size: SettingsMetrics.cardSubtitleSize))
+                    .foregroundStyle(Theme.accent)
+                    if voice.isSpeaking {
+                        Button("停止播报") { voice.stop() }
+                            .buttonStyle(.borderless)
+                            .font(.system(size: SettingsMetrics.cardSubtitleSize))
+                            .foregroundStyle(Color.red.opacity(0.85))
+                    }
+                }
+            }
+            Text("云端 TTS / 火山音色会在后续版本接入；当前为系统语音，改动即时生效。")
+                .font(.system(size: SettingsMetrics.captionSize))
+                .foregroundStyle(Theme.textSecondary.opacity(0.75))
         }
     }
 
@@ -1235,10 +1312,20 @@ struct VoiceSettingsPane: View {
 
     private var voiceMenu: some View {
         Menu {
-            Button("系统默认（中文）") { voice.voiceIdentifier = "" }
-            Divider()
-            ForEach(SpeechOutput.chineseVoices, id: \.identifier) { item in
-                Button("\(item.name) · \(item.language)") { voice.voiceIdentifier = item.identifier }
+            Button("系统默认") { voice.voiceIdentifier = "" }
+            if !SpeechOutput.chineseVoices.isEmpty {
+                Divider()
+                Text("中文")
+                ForEach(SpeechOutput.chineseVoices, id: \.identifier) { item in
+                    Button("\(item.name) · \(item.language)") { voice.voiceIdentifier = item.identifier }
+                }
+            }
+            if !SpeechOutput.englishVoices.isEmpty {
+                Divider()
+                Text("English")
+                ForEach(SpeechOutput.englishVoices.prefix(40), id: \.identifier) { item in
+                    Button("\(item.name) · \(item.language)") { voice.voiceIdentifier = item.identifier }
+                }
             }
         } label: {
             fieldLabel(currentVoiceName)
@@ -1248,17 +1335,18 @@ struct VoiceSettingsPane: View {
         .frame(maxWidth: .infinity)
     }
 
-    private var currentDeviceName: String {
-        guard !voice.inputDeviceUID.isEmpty else { return "跟随系统默认" }
-        return devices.first { $0.id == voice.inputDeviceUID }?.name ?? "跟随系统默认"
+    private var currentVoiceName: String {
+        guard !voice.voiceIdentifier.isEmpty else { return "系统默认" }
+        let all = SpeechOutput.chineseVoices + SpeechOutput.englishVoices
+        if let item = all.first(where: { $0.identifier == voice.voiceIdentifier }) {
+            return "\(item.name) · \(item.language)"
+        }
+        return voice.voiceIdentifier
     }
 
-    private var currentVoiceName: String {
-        guard
-            !voice.voiceIdentifier.isEmpty,
-            let item = SpeechOutput.chineseVoices.first(where: { $0.identifier == voice.voiceIdentifier })
-        else { return "系统默认（中文）" }
-        return "\(item.name) · \(item.language)"
+    private var currentDeviceName: String {
+        if voice.inputDeviceUID.isEmpty { return "跟随系统默认" }
+        return devices.first(where: { $0.id == voice.inputDeviceUID })?.name ?? "跟随系统默认"
     }
 }
 
@@ -1309,7 +1397,7 @@ struct MCPSettingsPane: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            SettingsHeader(title: "MCP 服务", subtitle: "连接本地 stdio MCP server，把它的工具并进对话", model: model)
+            SettingsHeader(title: "MCP 服务", subtitle: "stdio / HTTP MCP；预设可一键加入，刷新后并进对话工具", model: model)
 
             ScrollView {
                 VStack(alignment: .leading, spacing: SettingsMetrics.cardSpacing) {
@@ -1328,6 +1416,24 @@ struct MCPSettingsPane: View {
             Text("添加服务")
                 .font(.system(size: SettingsMetrics.bodySize, weight: .semibold))
                 .foregroundStyle(Theme.textPrimary)
+
+            HStack(spacing: 8) {
+                Text("预设")
+                    .font(.system(size: SettingsMetrics.captionSize))
+                    .foregroundStyle(Theme.textSecondary)
+                Button("Echo (stdio)") {
+                    applyPresetEcho()
+                }
+                .buttonStyle(.borderless)
+                .font(.system(size: SettingsMetrics.captionSize))
+                .foregroundStyle(Theme.accent)
+                Button("HTTP 示例") {
+                    applyPresetHTTP()
+                }
+                .buttonStyle(.borderless)
+                .font(.system(size: SettingsMetrics.captionSize))
+                .foregroundStyle(Theme.accent)
+            }
 
             HStack(spacing: 10) {
                 TextField("名称", text: $name)
@@ -1429,17 +1535,29 @@ struct MCPSettingsPane: View {
                                 Text(server.name)
                                     .font(.system(size: SettingsMetrics.labelSize, weight: .medium))
                                     .foregroundStyle(Theme.textPrimary)
-                                Text(server.url?.isEmpty == false
-                                     ? "HTTP · \(server.url ?? "")"
-                                     : ([server.command] + server.args).joined(separator: " "))
+                                Text(serverSubtitle(server))
                                     .font(.system(size: SettingsMetrics.captionSize, design: .monospaced))
                                     .foregroundStyle(Theme.textSecondary)
                                     .lineLimit(1)
                             }
                             Spacer()
+                            Toggle("", isOn: bindingEnabled(for: server))
+                                .labelsHidden()
+                                .toggleStyle(.switch)
+                                .tint(Theme.accent)
+                                .controlSize(.mini)
                             Text(statusLabel(server.id))
                                 .font(.system(size: SettingsMetrics.captionSize))
                                 .foregroundStyle(Theme.textSecondary)
+                            Button {
+                                Task { await reconnect(server) }
+                            } label: {
+                                Image(systemName: "arrow.clockwise")
+                                    .font(.system(size: SettingsMetrics.captionSize))
+                                    .foregroundStyle(Theme.accent)
+                            }
+                            .buttonStyle(.borderless)
+                            .help("重新连接")
                             Button {
                                 Task { await removeServer(server) }
                             } label: {
@@ -1472,6 +1590,58 @@ struct MCPSettingsPane: View {
         guard let status = statuses[id] else { return "未启动" }
         if status.state == "ready" { return "\(status.tools) 个工具" }
         return "连接失败"
+    }
+
+    private func serverSubtitle(_ server: MCPServerDraft) -> String {
+        if let url = server.url, !url.isEmpty {
+            return "HTTP · \(url)"
+        }
+        return ([server.command] + server.args).joined(separator: " ")
+    }
+
+    private func applyPresetEcho() {
+        let candidates = [
+            "/Users/w/Desktop/japlosv2/clone/scripts/mcp_echo_server.py",
+            FileManager.default.currentDirectoryPath + "/scripts/mcp_echo_server.py",
+        ]
+        let script = candidates.first { FileManager.default.fileExists(atPath: $0) } ?? candidates[0]
+        name = "echo"
+        url = ""
+        command = "python3"
+        arguments = script
+        message = "已填入 Echo 预设，点添加后生效"
+    }
+
+    private func applyPresetHTTP() {
+        name = "http-echo"
+        url = "http://127.0.0.1:8765/mcp"
+        command = ""
+        arguments = ""
+        message = "已填入 HTTP 示例；请先本地跑起 mcp_http_server.py 再添加"
+    }
+
+    private func bindingEnabled(for server: MCPServerDraft) -> Binding<Bool> {
+        Binding(
+            get: { servers.first(where: { $0.id == server.id })?.enabled ?? true },
+            set: { value in
+                if let idx = servers.firstIndex(where: { $0.id == server.id }) {
+                    servers[idx].enabled = value
+                    Task { await persist() }
+                }
+            }
+        )
+    }
+
+    private func reconnect(_ server: MCPServerDraft) async {
+        busy = true
+        defer { busy = false }
+        do {
+            _ = try await model.client.callAsync(.mcpRefresh, arguments: .object([:]), timeout: 60)
+            await reload()
+            message = "已刷新 \(server.name)"
+        } catch {
+            message = (error as? ClientError)?.description ?? String(describing: error)
+        }
     }
 
     private func reload() async {
