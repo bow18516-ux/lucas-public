@@ -83,6 +83,22 @@ final class AppModel: ObservableObject {
     @Published var memoryNotes: [MemoryNote] = []
     @Published var recentTasks: [PersistedTask] = []
     @Published var alarms: [AlarmItem] = []
+    @Published var knowledgeDocuments: [KnowledgeDocument] = []
+    @Published var mcpEvents: [MCPEventItem] = []
+
+    struct KnowledgeDocument: Identifiable, Equatable {
+        var id: String
+        var title: String
+        var body: String
+        var updatedAt: Date
+    }
+
+    struct MCPEventItem: Identifiable, Equatable {
+        var id: String
+        var serverID: String
+        var event: String
+        var createdAt: Date
+    }
 
     struct AlarmItem: Identifiable, Equatable {
         var id: String
@@ -170,6 +186,8 @@ final class AppModel: ObservableObject {
         await loadMemories()
         await loadRecentTasks()
         await loadAlarms()
+        await loadKnowledgeDocuments()
+        await loadMCPEvents()
     }
 
     // MARK: - Sessions
@@ -191,6 +209,7 @@ final class AppModel: ObservableObject {
 
     func createSession() async {
         do {
+            await snapshotContext(reason: "session_create")
             let result = try await client.callAsync(.chatSessionCreate, arguments: .object(["title": .string("新对话")]))
             guard let id = result["id"]?.stringValue else { return }
             currentSessionID = id
@@ -204,6 +223,7 @@ final class AppModel: ObservableObject {
     }
 
     func selectSession(_ id: String) async {
+        await snapshotContext(reason: "session_switch")
         currentSessionID = id
         messages = []
         await loadHistory(sessionID: id)
@@ -250,6 +270,7 @@ final class AppModel: ObservableObject {
         currentStream = nil
         pendingApproval = nil
         isSending = false
+        Task { await recordCancellation(state: "user_stop") }
     }
 
     func resolveApproval(_ approved: Bool) {
@@ -423,6 +444,117 @@ final class AppModel: ObservableObject {
         guard let last = messages.last(where: { $0.role == "user" }) else { return }
         await rememberNote(String(last.text.prefix(280)))
     }
+
+
+    func loadKnowledgeDocuments(limit: Int = 40) async {
+        do {
+            let result = try await client.callAsync(
+                .knowledgeDocumentsList,
+                arguments: .object(["limit": .number(Double(limit))])
+            )
+            knowledgeDocuments = (result.arrayValue ?? []).compactMap { item in
+                guard let id = item["id"]?.stringValue else { return nil }
+                let title = item["title"]?.stringValue ?? ""
+                let body = item["record"]?["body"]?.stringValue
+                    ?? item["record"]?["text"]?.stringValue
+                    ?? item["body"]?.stringValue
+                    ?? ""
+                let updated = item["updatedAt"]?.stringValue.flatMap(ISO8601.date(from:)) ?? Date()
+                return KnowledgeDocument(id: id, title: title, body: body, updatedAt: updated)
+            }
+        } catch {
+            // Soft-fail when kernel offline.
+        }
+    }
+
+    func upsertKnowledgeDocument(title: String, body: String, id: String? = nil) async {
+        let trimmedTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedBody = body.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedTitle.isEmpty else { return }
+        do {
+            var args: [String: JSONValue] = [
+                "title": .string(trimmedTitle),
+                "body": .string(trimmedBody),
+                "record": .object([
+                    "title": .string(trimmedTitle),
+                    "body": .string(trimmedBody),
+                ]),
+            ]
+            if let id, !id.isEmpty {
+                args["id"] = .string(id)
+            }
+            _ = try await client.callAsync(.knowledgeDocumentsUpsert, arguments: .object(args))
+            await loadKnowledgeDocuments()
+        } catch {
+            errorText = (error as? ClientError)?.description ?? String(describing: error)
+        }
+    }
+
+    func deleteKnowledgeDocument(id: String) async {
+        guard !id.isEmpty else { return }
+        do {
+            _ = try await client.callAsync(.knowledgeDocumentsDelete, arguments: .object([
+                "id": .string(id),
+            ]))
+            await loadKnowledgeDocuments()
+        } catch {
+            errorText = (error as? ClientError)?.description ?? String(describing: error)
+        }
+    }
+
+    func loadMCPEvents(limit: Int = 10) async {
+        do {
+            let result = try await client.callAsync(
+                .mcpEventsList,
+                arguments: .object(["limit": .number(Double(limit))])
+            )
+            mcpEvents = (result.arrayValue ?? []).compactMap { item in
+                guard let id = item["id"]?.stringValue else { return nil }
+                let created = item["createdAt"]?.stringValue.flatMap(ISO8601.date(from:)) ?? Date()
+                return MCPEventItem(
+                    id: id,
+                    serverID: item["serverID"]?.stringValue ?? "",
+                    event: item["event"]?.stringValue ?? "",
+                    createdAt: created
+                )
+            }
+        } catch {
+            // Soft-fail.
+        }
+    }
+
+    private func recordCancellation(state: String) async {
+        let session = currentSessionID ?? ""
+        _ = try? await client.callAsync(.cancellationsUpsert, arguments: .object([
+            "state": .string(state),
+            "requestID": .string(UUID().uuidString),
+            "record": .object([
+                "sessionID": .string(session),
+                "messageCount": .number(Double(messages.count)),
+                "source": .string("app.stop"),
+            ]),
+        ]))
+    }
+
+    private func snapshotContext(reason: String) async {
+        guard let sessionID = currentSessionID else { return }
+        let preview = messages.suffix(6).map { msg in
+            JSONValue.object([
+                "role": .string(msg.role),
+                "text": .string(String(msg.text.prefix(160))),
+            ])
+        }
+        _ = try? await client.callAsync(.contextSnapshotsUpsert, arguments: .object([
+            "agentID": .string("default"),
+            "record": .object([
+                "reason": .string(reason),
+                "sessionID": .string(sessionID),
+                "messageCount": .number(Double(messages.count)),
+                "preview": .array(Array(preview)),
+            ]),
+        ]))
+    }
+
 
     func loadRecentTasks(limit: Int = 20) async {
         do {

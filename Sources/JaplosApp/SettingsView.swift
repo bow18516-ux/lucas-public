@@ -1791,12 +1791,76 @@ struct MCPSettingsPane: View {
                 VStack(alignment: .leading, spacing: SettingsMetrics.cardSpacing) {
                     addCard
                     listCard
+                    eventsCard
                 }
                 .padding(.horizontal, SettingsMetrics.pagePadding)
                 .padding(.bottom, 20)
             }
         }
-        .task { await reload() }
+        .task {
+            await reload()
+            await model.loadMCPEvents()
+        }
+    }
+
+    private var eventsCard: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Text("最近事件")
+                    .font(.system(size: SettingsMetrics.cardTitleSize, weight: .medium))
+                    .foregroundStyle(Theme.textPrimary)
+                Text("只读")
+                    .font(.system(size: SettingsMetrics.captionSize))
+                    .foregroundStyle(Theme.textSecondary)
+                Spacer()
+                Button {
+                    Task { await model.loadMCPEvents() }
+                } label: {
+                    Label("刷新", systemImage: "arrow.clockwise")
+                        .font(.system(size: SettingsMetrics.cardSubtitleSize))
+                }
+                .buttonStyle(.borderless)
+                .foregroundStyle(Theme.textSecondary)
+            }
+
+            if model.mcpEvents.isEmpty {
+                Text("暂无 mcp.events 记录")
+                    .font(.system(size: SettingsMetrics.captionSize))
+                    .foregroundStyle(Theme.textSecondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.vertical, 8)
+            } else {
+                VStack(alignment: .leading, spacing: 6) {
+                    ForEach(Array(model.mcpEvents.prefix(10))) { event in
+                        HStack(spacing: 8) {
+                            Text(event.serverID.isEmpty ? "—" : event.serverID)
+                                .font(.system(size: SettingsMetrics.captionSize, design: .monospaced))
+                                .foregroundStyle(Theme.accent.opacity(0.9))
+                                .frame(width: 100, alignment: .leading)
+                                .lineLimit(1)
+                            Text(event.event)
+                                .font(.system(size: SettingsMetrics.captionSize))
+                                .foregroundStyle(Theme.textPrimary)
+                                .lineLimit(1)
+                            Spacer(minLength: 0)
+                            Text(Self.shortTime(event.createdAt))
+                                .font(.system(size: 9, design: .monospaced))
+                                .foregroundStyle(Theme.textSecondary)
+                        }
+                    }
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .panel(padding: 16)
+    }
+
+    private static func shortTime(_ date: Date) -> String {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "zh_CN")
+        formatter.timeZone = TimeZone(identifier: "Asia/Shanghai")
+        formatter.dateFormat = "MM-dd HH:mm:ss"
+        return formatter.string(from: date)
     }
 
     private var addCard: some View {
@@ -2160,6 +2224,7 @@ struct MCPSettingsPane: View {
                 )
             }
             statuses = map
+            await model.loadMCPEvents()
         } catch {
             message = (error as? ClientError)?.description ?? String(describing: error)
         }

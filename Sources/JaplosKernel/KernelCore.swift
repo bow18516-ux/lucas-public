@@ -415,7 +415,12 @@ public final class KernelCore: @unchecked Sendable {
                 }
                 let id = request.arguments["id"]?.stringValue?.trimmingCharacters(in: .whitespacesAndNewlines)
                 let docID = (id?.isEmpty == false) ? id! : UUID().uuidString
-                let record = request.arguments["record"] ?? .object(["title": .string(title)])
+                var recordObject = request.arguments["record"]?.objectValue ?? ["title": .string(title)]
+                recordObject["title"] = .string(title)
+                if let body = request.arguments["body"]?.stringValue ?? request.arguments["text"]?.stringValue {
+                    recordObject["body"] = .string(body)
+                }
+                let record = JSONValue.object(recordObject)
                 try store.upsertKnowledgeDocument(id: docID, title: title, record: record)
                 return .success(.object(["id": .string(docID), "saved": .bool(true)]), requestID: requestID)
 
@@ -440,6 +445,134 @@ public final class KernelCore: @unchecked Sendable {
                 let record = request.arguments["record"] ?? .object([:])
                 try store.upsertSubscription(id: subID, informationType: informationType, active: active, record: record)
                 return .success(.object(["id": .string(subID), "saved": .bool(true)]), requestID: requestID)
+
+            case .contextSnapshotsList:
+                let agentID = request.arguments["agentID"]?.stringValue
+                let limit = request.arguments["limit"]?.intValue ?? 50
+                return .success(.array(try store.listContextSnapshots(agentID: agentID, limit: limit)), requestID: requestID)
+
+            case .contextSnapshotsUpsert:
+                let id = request.arguments["id"]?.stringValue?.trimmingCharacters(in: .whitespacesAndNewlines)
+                let snapshotID = (id?.isEmpty == false) ? id! : UUID().uuidString
+                let agentID = request.arguments["agentID"]?.stringValue ?? "default"
+                let record = request.arguments["record"] ?? .object([:])
+                try store.upsertContextSnapshot(id: snapshotID, agentID: agentID, record: record)
+                return .success(.object(["id": .string(snapshotID), "saved": .bool(true)]), requestID: requestID)
+
+            case .cancellationsList:
+                let limit = request.arguments["limit"]?.intValue ?? 50
+                return .success(.array(try store.listCancellations(limit: limit)), requestID: requestID)
+
+            case .cancellationsUpsert:
+                let rawID = request.arguments["cancellationID"]?.stringValue
+                    ?? request.arguments["id"]?.stringValue
+                let trimmed = rawID?.trimmingCharacters(in: .whitespacesAndNewlines)
+                let cancellationID = (trimmed?.isEmpty == false) ? trimmed! : UUID().uuidString
+                let requestIDValue = request.arguments["requestID"]?.stringValue ?? request.id
+                let state = request.arguments["state"]?.stringValue ?? "requested"
+                let record = request.arguments["record"] ?? .object([:])
+                try store.upsertCancellation(
+                    cancellationID: cancellationID,
+                    requestID: requestIDValue,
+                    state: state,
+                    record: record
+                )
+                return .success(.object([
+                    "cancellationID": .string(cancellationID),
+                    "saved": .bool(true),
+                    "state": .string(state),
+                ]), requestID: requestID)
+
+            case .capabilityDelegationsList:
+                let limit = request.arguments["limit"]?.intValue ?? 50
+                return .success(.array(try store.listCapabilityDelegations(limit: limit)), requestID: requestID)
+
+            case .capabilityDelegationsUpsert:
+                let id = request.arguments["id"]?.stringValue?.trimmingCharacters(in: .whitespacesAndNewlines)
+                let delegationID = (id?.isEmpty == false) ? id! : UUID().uuidString
+                let requestIDValue = request.arguments["requestID"]?.stringValue ?? request.id
+                guard let delegatee = request.arguments["delegatee"]?.stringValue, !delegatee.isEmpty else {
+                    return .failure(.invalidArgument("delegatee is required"), requestID: requestID)
+                }
+                var expiresAt: Date?
+                if let iso = request.arguments["expiresAt"]?.stringValue, let parsed = ISO8601.date(from: iso) {
+                    expiresAt = parsed
+                } else if let epoch = request.arguments["expiresAtEpoch"]?.doubleValue {
+                    expiresAt = Date(timeIntervalSince1970: epoch)
+                }
+                let record = request.arguments["record"] ?? .object([:])
+                try store.upsertCapabilityDelegation(
+                    id: delegationID,
+                    requestID: requestIDValue,
+                    delegatee: delegatee,
+                    expiresAt: expiresAt,
+                    record: record
+                )
+                return .success(.object(["id": .string(delegationID), "saved": .bool(true)]), requestID: requestID)
+
+            case .informationRevisionsList:
+                let informationID = request.arguments["informationID"]?.stringValue
+                let limit = request.arguments["limit"]?.intValue ?? 50
+                return .success(.array(try store.listInformationRevisions(informationID: informationID, limit: limit)), requestID: requestID)
+
+            case .informationRevisionsUpsert:
+                let rawID = request.arguments["revisionID"]?.stringValue
+                    ?? request.arguments["id"]?.stringValue
+                let trimmed = rawID?.trimmingCharacters(in: .whitespacesAndNewlines)
+                let revisionID = (trimmed?.isEmpty == false) ? trimmed! : UUID().uuidString
+                guard let informationID = request.arguments["informationID"]?.stringValue, !informationID.isEmpty else {
+                    return .failure(.invalidArgument("informationID is required"), requestID: requestID)
+                }
+                let type = request.arguments["type"]?.stringValue ?? "note"
+                let namespace = request.arguments["namespace"]?.stringValue ?? "default"
+                let owner = request.arguments["owner"]?.stringValue ?? request.principal
+                let observedAt: Date
+                if let iso = request.arguments["observedAt"]?.stringValue, let parsed = ISO8601.date(from: iso) {
+                    observedAt = parsed
+                } else if let epoch = request.arguments["observedAtEpoch"]?.doubleValue {
+                    observedAt = Date(timeIntervalSince1970: epoch)
+                } else {
+                    observedAt = Date()
+                }
+                let record = request.arguments["record"] ?? .object([:])
+                try store.upsertInformationRevision(
+                    revisionID: revisionID,
+                    informationID: informationID,
+                    type: type,
+                    namespace: namespace,
+                    owner: owner,
+                    observedAt: observedAt,
+                    record: record
+                )
+                return .success(.object(["revisionID": .string(revisionID), "saved": .bool(true)]), requestID: requestID)
+
+            case .toolArtifactsList:
+                let projectID = request.arguments["projectID"]?.stringValue
+                let limit = request.arguments["limit"]?.intValue ?? 50
+                return .success(.array(try store.listToolArtifacts(projectID: projectID, limit: limit)), requestID: requestID)
+
+            case .toolArtifactsUpsert:
+                let id = request.arguments["id"]?.stringValue?.trimmingCharacters(in: .whitespacesAndNewlines)
+                let artifactID = (id?.isEmpty == false) ? id! : UUID().uuidString
+                let projectID = request.arguments["projectID"]?.stringValue ?? "default"
+                let enabled = request.arguments["enabled"]?.boolValue ?? true
+                let builtAt: Date
+                if let iso = request.arguments["builtAt"]?.stringValue, let parsed = ISO8601.date(from: iso) {
+                    builtAt = parsed
+                } else if let epoch = request.arguments["builtAtEpoch"]?.doubleValue {
+                    builtAt = Date(timeIntervalSince1970: epoch)
+                } else {
+                    builtAt = Date()
+                }
+                let record = request.arguments["record"] ?? .object([:])
+                try store.upsertToolArtifact(
+                    id: artifactID,
+                    projectID: projectID,
+                    enabled: enabled,
+                    builtAt: builtAt,
+                    record: record
+                )
+                return .success(.object(["id": .string(artifactID), "saved": .bool(true)]), requestID: requestID)
 
             case .speechSynthesize:
                 return await Self.synthesizeSpeech(request: request, store: store)

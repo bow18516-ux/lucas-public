@@ -197,8 +197,59 @@ public struct OpenURLTool: KernelTool {
     }
 }
 
+
+// MARK: - Paths
+
+public struct OpenPathTool: KernelTool {
+    public init() {}
+
+    public var definition: ToolDefinition {
+        ToolDefinition(
+            name: "system.path.open",
+            title: "打开路径",
+            summary: "用 Finder 显示或用默认应用打开本机路径。action=reveal|open。",
+            inputSchema: .object([
+                "type": "object",
+                "properties": .object([
+                    "action": .object(["type": "string", "enum": .array(["reveal", "open"])]),
+                    "path": .object(["type": "string", "description": "绝对路径或 ~/ 路径"]),
+                ]),
+                "required": .array(["action", "path"]),
+                "additionalProperties": false,
+            ]),
+            capability: Capability.applicationsControl,
+            risk: .low
+        )
+    }
+
+    public func invoke(arguments: JSONValue, context: ToolContext) async throws -> JSONValue {
+        guard let action = arguments["action"]?.stringValue else {
+            throw ToolError.invalidArguments("action is required")
+        }
+        guard let raw = arguments["path"]?.stringValue, !raw.isEmpty else {
+            throw ToolError.invalidArguments("path is required")
+        }
+        let expanded = (raw as NSString).expandingTildeInPath
+        guard FileManager.default.fileExists(atPath: expanded) else {
+            throw ToolError.failed("路径不存在：\(expanded)")
+        }
+        let url = URL(fileURLWithPath: expanded)
+        switch action {
+        case "reveal":
+            NSWorkspace.shared.activateFileViewerSelecting([url])
+            return .object(["path": .string(expanded), "revealed": .bool(true)])
+        case "open":
+            let opened = NSWorkspace.shared.open(url)
+            guard opened else { throw ToolError.failed("系统拒绝打开 \(expanded)") }
+            return .object(["path": .string(expanded), "opened": .bool(true)])
+        default:
+            throw ToolError.invalidArguments("Unknown action \(action)")
+        }
+    }
+}
+
 public enum ExtendedTools {
     public static func all() -> [any KernelTool] {
-        [MusicTool(), AudioTool(), OpenURLTool()]
+        [MusicTool(), AudioTool(), OpenURLTool(), OpenPathTool()]
     }
 }

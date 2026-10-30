@@ -83,6 +83,18 @@ public extension KernelOperation {
     static let subscriptionsList = KernelOperation("subscriptions.list")
     static let subscriptionsUpsert = KernelOperation("subscriptions.upsert")
 
+    // Context / cancellations / delegations / revisions / tool artifacts
+    static let contextSnapshotsList = KernelOperation("context.snapshots.list")
+    static let contextSnapshotsUpsert = KernelOperation("context.snapshots.upsert")
+    static let cancellationsList = KernelOperation("cancellations.list")
+    static let cancellationsUpsert = KernelOperation("cancellations.upsert")
+    static let capabilityDelegationsList = KernelOperation("capability.delegations.list")
+    static let capabilityDelegationsUpsert = KernelOperation("capability.delegations.upsert")
+    static let informationRevisionsList = KernelOperation("information.revisions.list")
+    static let informationRevisionsUpsert = KernelOperation("information.revisions.upsert")
+    static let toolArtifactsList = KernelOperation("tool.artifacts.list")
+    static let toolArtifactsUpsert = KernelOperation("tool.artifacts.upsert")
+
     // Model
     static let modelTest = KernelOperation("model.test")
     static let modelCatalog = KernelOperation("model.catalog")

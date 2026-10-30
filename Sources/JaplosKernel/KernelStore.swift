@@ -195,6 +195,59 @@ public final class KernelStore {
         );
         """)
         try database.execute("CREATE INDEX IF NOT EXISTS idx_subscriptions_type ON subscriptions(information_type, active);")
+
+        try database.execute("""
+        CREATE TABLE IF NOT EXISTS context_snapshots (
+            id TEXT PRIMARY KEY NOT NULL,
+            agent_id TEXT NOT NULL,
+            created_at REAL NOT NULL,
+            record_json TEXT NOT NULL
+        );
+        """)
+        try database.execute("CREATE INDEX IF NOT EXISTS idx_context_snapshots_time ON context_snapshots(created_at DESC);")
+        try database.execute("""
+        CREATE TABLE IF NOT EXISTS cancellations (
+            cancellation_id TEXT PRIMARY KEY NOT NULL,
+            request_id TEXT NOT NULL,
+            state TEXT NOT NULL,
+            requested_at REAL NOT NULL,
+            record_json TEXT NOT NULL
+        );
+        """)
+        try database.execute("CREATE INDEX IF NOT EXISTS idx_cancellations_requested ON cancellations(requested_at DESC);")
+        try database.execute("""
+        CREATE TABLE IF NOT EXISTS capability_delegations (
+            id TEXT PRIMARY KEY NOT NULL,
+            request_id TEXT NOT NULL,
+            delegatee TEXT NOT NULL,
+            expires_at REAL,
+            record_json TEXT NOT NULL
+        );
+        """)
+        try database.execute("CREATE INDEX IF NOT EXISTS idx_capability_delegations_expires ON capability_delegations(expires_at);")
+        try database.execute("""
+        CREATE TABLE IF NOT EXISTS information_revisions (
+            revision_id TEXT PRIMARY KEY NOT NULL,
+            information_id TEXT NOT NULL,
+            type TEXT NOT NULL,
+            namespace TEXT NOT NULL,
+            owner TEXT NOT NULL,
+            observed_at REAL NOT NULL,
+            record_json TEXT NOT NULL
+        );
+        """)
+        try database.execute("CREATE INDEX IF NOT EXISTS idx_information_revisions_observed ON information_revisions(observed_at DESC);")
+        try database.execute("""
+        CREATE TABLE IF NOT EXISTS generated_tool_artifacts (
+            id TEXT PRIMARY KEY NOT NULL,
+            project_id TEXT NOT NULL,
+            enabled INTEGER NOT NULL,
+            built_at REAL NOT NULL,
+            record_json TEXT NOT NULL
+        );
+        """)
+        try database.execute("CREATE INDEX IF NOT EXISTS idx_generated_tool_artifacts_built ON generated_tool_artifacts(built_at DESC);")
+
         try database.execute("""
         CREATE TABLE IF NOT EXISTS persistence_migrations (
             namespace TEXT NOT NULL,
@@ -205,6 +258,7 @@ public final class KernelStore {
         """)
         try recordPersistenceMigration(namespace: "lucas.store", version: 2)
         try recordPersistenceMigration(namespace: "lucas.store", version: 3)
+        try recordPersistenceMigration(namespace: "lucas.store", version: 4)
     }
 
     private func recordPersistenceMigration(namespace: String, version: Int) throws {
@@ -1061,6 +1115,234 @@ public final class KernelStore {
             active = excluded.active,
             record_json = excluded.record_json;
         """, [id, informationType, active ? 1 : 0, encoded])
+    }
+
+
+    // MARK: - Context snapshots
+
+    public func listContextSnapshots(agentID: String? = nil, limit: Int = 50) throws -> [JSONValue] {
+        let rows: [[String: Any]]
+        if let agentID {
+            rows = try database.query(
+                """
+                SELECT id, agent_id, created_at, record_json FROM context_snapshots
+                WHERE agent_id = ? ORDER BY created_at DESC LIMIT ?;
+                """,
+                [agentID, limit]
+            )
+        } else {
+            rows = try database.query(
+                """
+                SELECT id, agent_id, created_at, record_json FROM context_snapshots
+                ORDER BY created_at DESC LIMIT ?;
+                """,
+                [limit]
+            )
+        }
+        return rows.compactMap { row in Self.decodeRecordRow(row, idKey: "id", extra: { r in
+            [
+                "agentID": .string((r["agent_id"] as? String) ?? ""),
+                "createdAt": .string(ISO8601.string(from: Date(timeIntervalSince1970: (r["created_at"] as? Double) ?? 0))),
+            ]
+        })}
+    }
+
+    public func upsertContextSnapshot(id: String, agentID: String, record: JSONValue) throws {
+        let encoded = String(data: try ProtocolCoding.encode(record), encoding: .utf8) ?? "{}"
+        let now = Date().timeIntervalSince1970
+        try database.execute("""
+        INSERT INTO context_snapshots(id, agent_id, created_at, record_json)
+        VALUES (?, ?, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET
+            agent_id = excluded.agent_id,
+            created_at = excluded.created_at,
+            record_json = excluded.record_json;
+        """, [id, agentID, now, encoded])
+    }
+
+    // MARK: - Cancellations
+
+    public func listCancellations(limit: Int = 50) throws -> [JSONValue] {
+        try database.query(
+            """
+            SELECT cancellation_id, request_id, state, requested_at, record_json FROM cancellations
+            ORDER BY requested_at DESC LIMIT ?;
+            """,
+            [limit]
+        ).compactMap { row in Self.decodeRecordRow(row, idKey: "cancellation_id", extra: { r in
+            [
+                "cancellationID": .string((r["cancellation_id"] as? String) ?? ""),
+                "requestID": .string((r["request_id"] as? String) ?? ""),
+                "state": .string((r["state"] as? String) ?? "unknown"),
+                "requestedAt": .string(ISO8601.string(from: Date(timeIntervalSince1970: (r["requested_at"] as? Double) ?? 0))),
+            ]
+        })}
+    }
+
+    public func upsertCancellation(
+        cancellationID: String,
+        requestID: String,
+        state: String,
+        record: JSONValue
+    ) throws {
+        let encoded = String(data: try ProtocolCoding.encode(record), encoding: .utf8) ?? "{}"
+        let now = Date().timeIntervalSince1970
+        try database.execute("""
+        INSERT INTO cancellations(cancellation_id, request_id, state, requested_at, record_json)
+        VALUES (?, ?, ?, ?, ?)
+        ON CONFLICT(cancellation_id) DO UPDATE SET
+            request_id = excluded.request_id,
+            state = excluded.state,
+            requested_at = excluded.requested_at,
+            record_json = excluded.record_json;
+        """, [cancellationID, requestID, state, now, encoded])
+    }
+
+    // MARK: - Capability delegations
+
+    public func listCapabilityDelegations(limit: Int = 50) throws -> [JSONValue] {
+        try database.query(
+            """
+            SELECT id, request_id, delegatee, expires_at, record_json FROM capability_delegations
+            ORDER BY (expires_at IS NULL) ASC, expires_at DESC LIMIT ?;
+            """,
+            [limit]
+        ).compactMap { row in Self.decodeRecordRow(row, idKey: "id", extra: { r in
+            var extra: [String: JSONValue] = [
+                "requestID": .string((r["request_id"] as? String) ?? ""),
+                "delegatee": .string((r["delegatee"] as? String) ?? ""),
+            ]
+            if let expires = r["expires_at"] as? Double {
+                extra["expiresAt"] = .string(ISO8601.string(from: Date(timeIntervalSince1970: expires)))
+            }
+            return extra
+        })}
+    }
+
+    public func upsertCapabilityDelegation(
+        id: String,
+        requestID: String,
+        delegatee: String,
+        expiresAt: Date?,
+        record: JSONValue
+    ) throws {
+        let encoded = String(data: try ProtocolCoding.encode(record), encoding: .utf8) ?? "{}"
+        try database.execute("""
+        INSERT INTO capability_delegations(id, request_id, delegatee, expires_at, record_json)
+        VALUES (?, ?, ?, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET
+            request_id = excluded.request_id,
+            delegatee = excluded.delegatee,
+            expires_at = excluded.expires_at,
+            record_json = excluded.record_json;
+        """, [id, requestID, delegatee, expiresAt?.timeIntervalSince1970, encoded])
+    }
+
+    // MARK: - Information revisions
+
+    public func listInformationRevisions(informationID: String? = nil, limit: Int = 50) throws -> [JSONValue] {
+        let rows: [[String: Any]]
+        if let informationID {
+            rows = try database.query(
+                """
+                SELECT revision_id, information_id, type, namespace, owner, observed_at, record_json
+                FROM information_revisions
+                WHERE information_id = ? ORDER BY observed_at DESC LIMIT ?;
+                """,
+                [informationID, limit]
+            )
+        } else {
+            rows = try database.query(
+                """
+                SELECT revision_id, information_id, type, namespace, owner, observed_at, record_json
+                FROM information_revisions
+                ORDER BY observed_at DESC LIMIT ?;
+                """,
+                [limit]
+            )
+        }
+        return rows.compactMap { row in Self.decodeRecordRow(row, idKey: "revision_id", extra: { r in
+            [
+                "revisionID": .string((r["revision_id"] as? String) ?? ""),
+                "informationID": .string((r["information_id"] as? String) ?? ""),
+                "type": .string((r["type"] as? String) ?? ""),
+                "namespace": .string((r["namespace"] as? String) ?? ""),
+                "owner": .string((r["owner"] as? String) ?? ""),
+                "observedAt": .string(ISO8601.string(from: Date(timeIntervalSince1970: (r["observed_at"] as? Double) ?? 0))),
+            ]
+        })}
+    }
+
+    public func upsertInformationRevision(
+        revisionID: String,
+        informationID: String,
+        type: String,
+        namespace: String,
+        owner: String,
+        observedAt: Date,
+        record: JSONValue
+    ) throws {
+        let encoded = String(data: try ProtocolCoding.encode(record), encoding: .utf8) ?? "{}"
+        try database.execute("""
+        INSERT INTO information_revisions(revision_id, information_id, type, namespace, owner, observed_at, record_json)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(revision_id) DO UPDATE SET
+            information_id = excluded.information_id,
+            type = excluded.type,
+            namespace = excluded.namespace,
+            owner = excluded.owner,
+            observed_at = excluded.observed_at,
+            record_json = excluded.record_json;
+        """, [revisionID, informationID, type, namespace, owner, observedAt.timeIntervalSince1970, encoded])
+    }
+
+    // MARK: - Generated tool artifacts
+
+    public func listToolArtifacts(projectID: String? = nil, limit: Int = 50) throws -> [JSONValue] {
+        let rows: [[String: Any]]
+        if let projectID {
+            rows = try database.query(
+                """
+                SELECT id, project_id, enabled, built_at, record_json FROM generated_tool_artifacts
+                WHERE project_id = ? ORDER BY built_at DESC LIMIT ?;
+                """,
+                [projectID, limit]
+            )
+        } else {
+            rows = try database.query(
+                """
+                SELECT id, project_id, enabled, built_at, record_json FROM generated_tool_artifacts
+                ORDER BY built_at DESC LIMIT ?;
+                """,
+                [limit]
+            )
+        }
+        return rows.compactMap { row in Self.decodeRecordRow(row, idKey: "id", extra: { r in
+            [
+                "projectID": .string((r["project_id"] as? String) ?? ""),
+                "enabled": .bool(((r["enabled"] as? Int64) ?? 0) != 0),
+                "builtAt": .string(ISO8601.string(from: Date(timeIntervalSince1970: (r["built_at"] as? Double) ?? 0))),
+            ]
+        })}
+    }
+
+    public func upsertToolArtifact(
+        id: String,
+        projectID: String,
+        enabled: Bool,
+        builtAt: Date,
+        record: JSONValue
+    ) throws {
+        let encoded = String(data: try ProtocolCoding.encode(record), encoding: .utf8) ?? "{}"
+        try database.execute("""
+        INSERT INTO generated_tool_artifacts(id, project_id, enabled, built_at, record_json)
+        VALUES (?, ?, ?, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET
+            project_id = excluded.project_id,
+            enabled = excluded.enabled,
+            built_at = excluded.built_at,
+            record_json = excluded.record_json;
+        """, [id, projectID, enabled ? 1 : 0, builtAt.timeIntervalSince1970, encoded])
     }
 
     public func statistics() throws -> (sessions: Int, turns: Int, tools: Int) {
