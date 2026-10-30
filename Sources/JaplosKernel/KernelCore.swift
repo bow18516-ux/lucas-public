@@ -31,6 +31,43 @@ public final class KernelCore: @unchecked Sendable {
         tools.register(contentsOf: DocumentTools.all())
     }
 
+    /// Ensure `self-healing/` under Application Support Lucas and append a boot ledger row.
+    public func recordBootSelfHealing(supportDirectory: URL? = nil) {
+        recordSelfHealing(
+            kind: "boot",
+            detail: [
+                "storePath": .string(store.path),
+                "version": .string(version),
+            ],
+            supportDirectory: supportDirectory
+        )
+    }
+
+    public func recordSelfHealing(kind: String, detail: [String: JSONValue] = [:], supportDirectory: URL? = nil) {
+        let support = supportDirectory ?? URL(fileURLWithPath: store.path).deletingLastPathComponent()
+        let dir = support.appendingPathComponent("self-healing", isDirectory: true)
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        var record = detail
+        record["at"] = .string(ISO8601.string(from: Date()))
+        try? store.appendSelfHealingEvent(kind: kind, record: .object(record))
+        var payloadObject = record
+        payloadObject["kind"] = .string(kind)
+        if let encoded = try? ProtocolCoding.encode(JSONValue.object(payloadObject)),
+           var line = String(data: encoded, encoding: .utf8) {
+            line.append("\n")
+            let jsonl = dir.appendingPathComponent("events.jsonl")
+            let payload = Data(line.utf8)
+            if FileManager.default.fileExists(atPath: jsonl.path),
+               let handle = try? FileHandle(forWritingTo: jsonl) {
+                defer { try? handle.close() }
+                _ = try? handle.seekToEnd()
+                try? handle.write(contentsOf: payload)
+            } else {
+                try? payload.write(to: jsonl, options: .atomic)
+            }
+        }
+    }
+
     public var mcpDefinitions: [ToolDefinition] {
         mcp.definitions
     }
@@ -573,6 +610,116 @@ public final class KernelCore: @unchecked Sendable {
                     record: record
                 )
                 return .success(.object(["id": .string(artifactID), "saved": .bool(true)]), requestID: requestID)
+
+            case .informationTypesList:
+                let limit = request.arguments["limit"]?.intValue ?? 100
+                return .success(.array(try store.listInformationTypes(limit: limit)), requestID: requestID)
+
+            case .informationTypesUpsert:
+                guard let typeID = request.arguments["typeID"]?.stringValue?.trimmingCharacters(in: .whitespacesAndNewlines),
+                      !typeID.isEmpty else {
+                    return .failure(.invalidArgument("typeID is required"), requestID: requestID)
+                }
+                let schemaVersion = request.arguments["schemaVersion"]?.intValue ?? 1
+                let record = request.arguments["record"] ?? .object([:])
+                try store.upsertInformationType(typeID: typeID, schemaVersion: schemaVersion, record: record)
+                return .success(.object([
+                    "typeID": .string(typeID),
+                    "schemaVersion": .number(Double(schemaVersion)),
+                    "saved": .bool(true),
+                ]), requestID: requestID)
+
+            case .informationHeadsList:
+                let limit = request.arguments["limit"]?.intValue ?? 100
+                return .success(.array(try store.listInformationHeads(limit: limit)), requestID: requestID)
+
+            case .informationHeadsSet:
+                guard let informationID = request.arguments["informationID"]?.stringValue, !informationID.isEmpty else {
+                    return .failure(.invalidArgument("informationID is required"), requestID: requestID)
+                }
+                guard let revisionID = request.arguments["revisionID"]?.stringValue, !revisionID.isEmpty else {
+                    return .failure(.invalidArgument("revisionID is required"), requestID: requestID)
+                }
+                try store.setInformationHead(informationID: informationID, revisionID: revisionID)
+                return .success(.object([
+                    "informationID": .string(informationID),
+                    "revisionID": .string(revisionID),
+                    "saved": .bool(true),
+                ]), requestID: requestID)
+
+            case .informationProcessorsList:
+                let limit = request.arguments["limit"]?.intValue ?? 100
+                return .success(.array(try store.listInformationProcessors(limit: limit)), requestID: requestID)
+
+            case .informationProcessorsUpsert:
+                let raw = request.arguments["id"]?.stringValue?.trimmingCharacters(in: .whitespacesAndNewlines)
+                let processorID = (raw?.isEmpty == false) ? raw! : UUID().uuidString
+                let moduleID = request.arguments["moduleID"]?.stringValue ?? "default"
+                let capability = request.arguments["capability"]?.stringValue ?? "*"
+                let priority = request.arguments["priority"]?.intValue ?? 0
+                let record = request.arguments["record"] ?? .object([:])
+                try store.upsertInformationProcessor(
+                    id: processorID,
+                    moduleID: moduleID,
+                    capability: capability,
+                    priority: priority,
+                    record: record
+                )
+                return .success(.object(["id": .string(processorID), "saved": .bool(true)]), requestID: requestID)
+
+            case .deliveriesList:
+                let subscriptionID = request.arguments["subscriptionID"]?.stringValue
+                let limit = request.arguments["limit"]?.intValue ?? 50
+                return .success(.array(try store.listDeliveries(subscriptionID: subscriptionID, limit: limit)), requestID: requestID)
+
+            case .deliveriesUpsert:
+                let raw = request.arguments["id"]?.stringValue?.trimmingCharacters(in: .whitespacesAndNewlines)
+                let deliveryID = (raw?.isEmpty == false) ? raw! : UUID().uuidString
+                let subscriptionID = request.arguments["subscriptionID"]?.stringValue ?? ""
+                let revisionID = request.arguments["revisionID"]?.stringValue ?? ""
+                let state = request.arguments["state"]?.stringValue ?? "pending"
+                let record = request.arguments["record"] ?? .object([:])
+                try store.upsertDelivery(
+                    id: deliveryID,
+                    subscriptionID: subscriptionID,
+                    revisionID: revisionID,
+                    state: state,
+                    record: record
+                )
+                return .success(.object(["id": .string(deliveryID), "saved": .bool(true)]), requestID: requestID)
+
+            case .situationsList:
+                let limit = request.arguments["limit"]?.intValue ?? 50
+                return .success(.array(try store.listSituations(limit: limit)), requestID: requestID)
+
+            case .situationsUpsert:
+                let raw = request.arguments["id"]?.stringValue?.trimmingCharacters(in: .whitespacesAndNewlines)
+                let situationID = (raw?.isEmpty == false) ? raw! : UUID().uuidString
+                let record = request.arguments["record"] ?? .object([:])
+                try store.upsertSituation(id: situationID, record: record)
+                return .success(.object(["id": .string(situationID), "saved": .bool(true)]), requestID: requestID)
+
+            case .selfHealingEventsList:
+                let limit = request.arguments["limit"]?.intValue ?? 50
+                return .success(.array(try store.listSelfHealingEvents(limit: limit)), requestID: requestID)
+
+            case .selfHealingEventsAppend:
+                let kind = request.arguments["kind"]?.stringValue ?? "note"
+                let record = request.arguments["record"] ?? .object([:])
+                let id = request.arguments["id"]?.stringValue
+                try store.appendSelfHealingEvent(id: id, kind: kind, record: record)
+                return .success(.object(["kind": .string(kind), "appended": .bool(true)]), requestID: requestID)
+
+            case .kernelStoreStats:
+                let counts = try store.tableCounts()
+                var object: [String: JSONValue] = [:]
+                for (table, count) in counts.sorted(by: { $0.key < $1.key }) {
+                    object[table] = .number(Double(count))
+                }
+                return .success(.object([
+                    "tables": .object(object),
+                    "tableCount": .number(Double(counts.count)),
+                ]), requestID: requestID)
 
             case .speechSynthesize:
                 return await Self.synthesizeSpeech(request: request, store: store)

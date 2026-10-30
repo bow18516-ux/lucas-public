@@ -249,6 +249,58 @@ public final class KernelStore {
         try database.execute("CREATE INDEX IF NOT EXISTS idx_generated_tool_artifacts_built ON generated_tool_artifacts(built_at DESC);")
 
         try database.execute("""
+        CREATE TABLE IF NOT EXISTS information_types (
+            type_id TEXT NOT NULL,
+            schema_version INTEGER NOT NULL,
+            record_json TEXT NOT NULL,
+            PRIMARY KEY(type_id, schema_version)
+        );
+        """)
+        try database.execute("""
+        CREATE TABLE IF NOT EXISTS information_heads (
+            information_id TEXT PRIMARY KEY NOT NULL,
+            revision_id TEXT NOT NULL
+        );
+        """)
+        try database.execute("""
+        CREATE TABLE IF NOT EXISTS information_processors (
+            id TEXT PRIMARY KEY NOT NULL,
+            module_id TEXT NOT NULL,
+            capability TEXT NOT NULL,
+            priority INTEGER NOT NULL,
+            record_json TEXT NOT NULL
+        );
+        """)
+        try database.execute("CREATE INDEX IF NOT EXISTS idx_information_processors_priority ON information_processors(priority DESC, module_id);")
+        try database.execute("""
+        CREATE TABLE IF NOT EXISTS deliveries (
+            id TEXT PRIMARY KEY NOT NULL,
+            subscription_id TEXT NOT NULL,
+            revision_id TEXT NOT NULL,
+            state TEXT NOT NULL,
+            record_json TEXT NOT NULL
+        );
+        """)
+        try database.execute("CREATE INDEX IF NOT EXISTS idx_deliveries_subscription ON deliveries(subscription_id, state);")
+        try database.execute("""
+        CREATE TABLE IF NOT EXISTS situations (
+            id TEXT PRIMARY KEY NOT NULL,
+            updated_at REAL NOT NULL,
+            record_json TEXT NOT NULL
+        );
+        """)
+        try database.execute("CREATE INDEX IF NOT EXISTS idx_situations_updated ON situations(updated_at DESC);")
+        try database.execute("""
+        CREATE TABLE IF NOT EXISTS self_healing_events (
+            id TEXT PRIMARY KEY NOT NULL,
+            kind TEXT NOT NULL,
+            created_at REAL NOT NULL,
+            record_json TEXT NOT NULL
+        );
+        """)
+        try database.execute("CREATE INDEX IF NOT EXISTS idx_self_healing_events_time ON self_healing_events(created_at DESC);")
+
+        try database.execute("""
         CREATE TABLE IF NOT EXISTS persistence_migrations (
             namespace TEXT NOT NULL,
             version INTEGER NOT NULL,
@@ -259,6 +311,7 @@ public final class KernelStore {
         try recordPersistenceMigration(namespace: "lucas.store", version: 2)
         try recordPersistenceMigration(namespace: "lucas.store", version: 3)
         try recordPersistenceMigration(namespace: "lucas.store", version: 4)
+        try recordPersistenceMigration(namespace: "lucas.store", version: 5)
     }
 
     private func recordPersistenceMigration(namespace: String, version: Int) throws {
@@ -357,7 +410,7 @@ public final class KernelStore {
     }
 
     public func configurationHistory(path: String? = nil, limit: Int = 50) throws -> [JSONValue] {
-        let rows: [[String: Any]]
+        let rows: [[String: Any?]]
         if let path {
             rows = try database.query(
                 """
@@ -773,7 +826,7 @@ public final class KernelStore {
     // MARK: - Memories
 
     public func listMemories(sessionID: String? = nil, limit: Int = 50) throws -> [JSONValue] {
-        let rows: [[String: Any]]
+        let rows: [[String: Any?]]
         if let sessionID {
             rows = try database.query(
                 """
@@ -828,7 +881,7 @@ public final class KernelStore {
     // MARK: - Agent tasks
 
     public func listAgentTasks(sessionID: String? = nil, limit: Int = 50) throws -> [JSONValue] {
-        let rows: [[String: Any]]
+        let rows: [[String: Any?]]
         if let sessionID {
             rows = try database.query(
                 """
@@ -922,7 +975,7 @@ public final class KernelStore {
     // MARK: - MCP events
 
     public func listMCPEvents(serverID: String? = nil, limit: Int = 100) throws -> [JSONValue] {
-        let rows: [[String: Any]]
+        let rows: [[String: Any?]]
         if let serverID {
             rows = try database.query(
                 """
@@ -963,9 +1016,9 @@ public final class KernelStore {
     }
 
     private static func decodeRecordRow(
-        _ row: [String: Any],
+        _ row: [String: Any?],
         idKey: String,
-        extra: ([String: Any]) -> [String: JSONValue]
+        extra: ([String: Any?]) -> [String: JSONValue]
     ) -> JSONValue? {
         guard
             let id = row[idKey] as? String,
@@ -1009,7 +1062,7 @@ public final class KernelStore {
     // MARK: - Runs
 
     public func listRuns(agentID: String? = nil, limit: Int = 50) throws -> [JSONValue] {
-        let rows: [[String: Any]]
+        let rows: [[String: Any?]]
         if let agentID {
             rows = try database.query(
                 """
@@ -1121,7 +1174,7 @@ public final class KernelStore {
     // MARK: - Context snapshots
 
     public func listContextSnapshots(agentID: String? = nil, limit: Int = 50) throws -> [JSONValue] {
-        let rows: [[String: Any]]
+        let rows: [[String: Any?]]
         if let agentID {
             rows = try database.query(
                 """
@@ -1241,7 +1294,7 @@ public final class KernelStore {
     // MARK: - Information revisions
 
     public func listInformationRevisions(informationID: String? = nil, limit: Int = 50) throws -> [JSONValue] {
-        let rows: [[String: Any]]
+        let rows: [[String: Any?]]
         if let informationID {
             rows = try database.query(
                 """
@@ -1299,7 +1352,7 @@ public final class KernelStore {
     // MARK: - Generated tool artifacts
 
     public func listToolArtifacts(projectID: String? = nil, limit: Int = 50) throws -> [JSONValue] {
-        let rows: [[String: Any]]
+        let rows: [[String: Any?]]
         if let projectID {
             rows = try database.query(
                 """
@@ -1345,12 +1398,230 @@ public final class KernelStore {
         """, [id, projectID, enabled ? 1 : 0, builtAt.timeIntervalSince1970, encoded])
     }
 
+    // MARK: - Information types
+
+    public func listInformationTypes(limit: Int = 100) throws -> [JSONValue] {
+        try database.query(
+            """
+            SELECT type_id, schema_version, record_json FROM information_types
+            ORDER BY type_id ASC, schema_version DESC LIMIT ?;
+            """,
+            [limit]
+        ).compactMap { row -> JSONValue? in
+            guard
+                let typeID = row["type_id"] as? String,
+                let schemaVersion = row["schema_version"] as? Int64,
+                let recordJSON = row["record_json"] as? String,
+                let data = recordJSON.data(using: .utf8),
+                let record = try? ProtocolCoding.decode(JSONValue.self, from: data)
+            else { return nil }
+            return .object([
+                "typeID": .string(typeID),
+                "schemaVersion": .number(Double(schemaVersion)),
+                "record": record,
+            ])
+        }
+    }
+
+    public func upsertInformationType(typeID: String, schemaVersion: Int, record: JSONValue) throws {
+        let encoded = String(data: try ProtocolCoding.encode(record), encoding: .utf8) ?? "{}"
+        try database.execute("""
+        INSERT INTO information_types(type_id, schema_version, record_json)
+        VALUES (?, ?, ?)
+        ON CONFLICT(type_id, schema_version) DO UPDATE SET
+            record_json = excluded.record_json;
+        """, [typeID, schemaVersion, encoded])
+    }
+
+    // MARK: - Information heads
+
+    public func listInformationHeads(limit: Int = 100) throws -> [JSONValue] {
+        try database.query(
+            "SELECT information_id, revision_id FROM information_heads ORDER BY information_id ASC LIMIT ?;",
+            [limit]
+        ).compactMap { row -> JSONValue? in
+            guard let informationID = row["information_id"] as? String,
+                  let revisionID = row["revision_id"] as? String else { return nil }
+            return .object([
+                "informationID": .string(informationID),
+                "revisionID": .string(revisionID),
+            ])
+        }
+    }
+
+    public func setInformationHead(informationID: String, revisionID: String) throws {
+        try database.execute("""
+        INSERT INTO information_heads(information_id, revision_id)
+        VALUES (?, ?)
+        ON CONFLICT(information_id) DO UPDATE SET
+            revision_id = excluded.revision_id;
+        """, [informationID, revisionID])
+    }
+
+    // MARK: - Information processors
+
+    public func listInformationProcessors(limit: Int = 100) throws -> [JSONValue] {
+        try database.query(
+            """
+            SELECT id, module_id, capability, priority, record_json FROM information_processors
+            ORDER BY priority DESC, module_id ASC LIMIT ?;
+            """,
+            [limit]
+        ).compactMap { row in Self.decodeRecordRow(row, idKey: "id", extra: { r in
+            [
+                "moduleID": .string((r["module_id"] as? String) ?? ""),
+                "capability": .string((r["capability"] as? String) ?? ""),
+                "priority": .number(Double((r["priority"] as? Int64) ?? 0)),
+            ]
+        })}
+    }
+
+    public func upsertInformationProcessor(
+        id: String,
+        moduleID: String,
+        capability: String,
+        priority: Int,
+        record: JSONValue
+    ) throws {
+        let encoded = String(data: try ProtocolCoding.encode(record), encoding: .utf8) ?? "{}"
+        try database.execute("""
+        INSERT INTO information_processors(id, module_id, capability, priority, record_json)
+        VALUES (?, ?, ?, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET
+            module_id = excluded.module_id,
+            capability = excluded.capability,
+            priority = excluded.priority,
+            record_json = excluded.record_json;
+        """, [id, moduleID, capability, priority, encoded])
+    }
+
+    // MARK: - Deliveries
+
+    public func listDeliveries(subscriptionID: String? = nil, limit: Int = 50) throws -> [JSONValue] {
+        let rows: [[String: Any?]]
+        if let subscriptionID {
+            rows = try database.query(
+                """
+                SELECT id, subscription_id, revision_id, state, record_json FROM deliveries
+                WHERE subscription_id = ? ORDER BY id ASC LIMIT ?;
+                """,
+                [subscriptionID, limit]
+            )
+        } else {
+            rows = try database.query(
+                """
+                SELECT id, subscription_id, revision_id, state, record_json FROM deliveries
+                ORDER BY id ASC LIMIT ?;
+                """,
+                [limit]
+            )
+        }
+        return rows.compactMap { row in Self.decodeRecordRow(row, idKey: "id", extra: { r in
+            [
+                "subscriptionID": .string((r["subscription_id"] as? String) ?? ""),
+                "revisionID": .string((r["revision_id"] as? String) ?? ""),
+                "state": .string((r["state"] as? String) ?? "unknown"),
+            ]
+        })}
+    }
+
+    public func upsertDelivery(
+        id: String,
+        subscriptionID: String,
+        revisionID: String,
+        state: String,
+        record: JSONValue
+    ) throws {
+        let encoded = String(data: try ProtocolCoding.encode(record), encoding: .utf8) ?? "{}"
+        try database.execute("""
+        INSERT INTO deliveries(id, subscription_id, revision_id, state, record_json)
+        VALUES (?, ?, ?, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET
+            subscription_id = excluded.subscription_id,
+            revision_id = excluded.revision_id,
+            state = excluded.state,
+            record_json = excluded.record_json;
+        """, [id, subscriptionID, revisionID, state, encoded])
+    }
+
+    // MARK: - Situations
+
+    public func listSituations(limit: Int = 50) throws -> [JSONValue] {
+        try database.query(
+            "SELECT id, updated_at, record_json FROM situations ORDER BY updated_at DESC LIMIT ?;",
+            [limit]
+        ).compactMap { row in Self.decodeRecordRow(row, idKey: "id", extra: { r in
+            [
+                "updatedAt": .string(ISO8601.string(from: Date(timeIntervalSince1970: (r["updated_at"] as? Double) ?? 0))),
+            ]
+        })}
+    }
+
+    public func upsertSituation(id: String, record: JSONValue) throws {
+        let encoded = String(data: try ProtocolCoding.encode(record), encoding: .utf8) ?? "{}"
+        let now = Date().timeIntervalSince1970
+        try database.execute("""
+        INSERT INTO situations(id, updated_at, record_json)
+        VALUES (?, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET
+            updated_at = excluded.updated_at,
+            record_json = excluded.record_json;
+        """, [id, now, encoded])
+    }
+
+    // MARK: - Self-healing events
+
+    public func listSelfHealingEvents(limit: Int = 50) throws -> [JSONValue] {
+        try database.query(
+            """
+            SELECT id, kind, created_at, record_json FROM self_healing_events
+            ORDER BY created_at DESC LIMIT ?;
+            """,
+            [limit]
+        ).compactMap { row in Self.decodeRecordRow(row, idKey: "id", extra: { r in
+            [
+                "kind": .string((r["kind"] as? String) ?? ""),
+                "createdAt": .string(ISO8601.string(from: Date(timeIntervalSince1970: (r["created_at"] as? Double) ?? 0))),
+            ]
+        })}
+    }
+
+    public func appendSelfHealingEvent(id: String? = nil, kind: String, record: JSONValue = .object([:])) throws {
+        let eventID = (id?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false)
+            ? id!.trimmingCharacters(in: .whitespacesAndNewlines)
+            : UUID().uuidString
+        let encoded = String(data: try ProtocolCoding.encode(record), encoding: .utf8) ?? "{}"
+        let now = Date().timeIntervalSince1970
+        try database.execute("""
+        INSERT INTO self_healing_events(id, kind, created_at, record_json)
+        VALUES (?, ?, ?, ?);
+        """, [eventID, kind, now, encoded])
+    }
+
     public func statistics() throws -> (sessions: Int, turns: Int, tools: Int) {
         (
             try database.scalarInt("SELECT COUNT(*) FROM sessions;"),
             try database.scalarInt("SELECT COUNT(*) FROM turns;"),
             try database.scalarInt("SELECT COUNT(*) FROM tool_invocations;")
         )
+    }
+
+    /// Row counts for every known lucas.store table (demo / parity).
+    public func tableCounts() throws -> [String: Int] {
+        let tables = [
+            "metadata", "configurations", "sessions", "turns", "permission_grants",
+            "tool_invocations", "configuration_history", "custom_model_routes", "speech_profiles",
+            "memories", "agent_tasks", "alarms", "mcp_events", "modules", "runs",
+            "knowledge_documents", "subscriptions", "context_snapshots", "cancellations",
+            "capability_delegations", "information_revisions", "generated_tool_artifacts",
+            "persistence_migrations", "information_types", "information_heads",
+            "information_processors", "deliveries", "situations", "self_healing_events",
+        ]
+        var result: [String: Int] = [:]
+        for table in tables {
+            result[table] = try database.scalarInt("SELECT COUNT(*) FROM \(table);")
+        }
+        return result
     }
 }
 

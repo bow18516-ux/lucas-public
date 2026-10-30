@@ -85,6 +85,8 @@ final class AppModel: ObservableObject {
     @Published var alarms: [AlarmItem] = []
     @Published var knowledgeDocuments: [KnowledgeDocument] = []
     @Published var mcpEvents: [MCPEventItem] = []
+    @Published var storeTableCounts: [(name: String, count: Int)] = []
+    @Published var lastSelfHealingEvent: SelfHealingEventSummary?
 
     struct KnowledgeDocument: Identifiable, Equatable {
         var id: String
@@ -98,6 +100,13 @@ final class AppModel: ObservableObject {
         var serverID: String
         var event: String
         var createdAt: Date
+    }
+
+    struct SelfHealingEventSummary: Equatable {
+        var id: String
+        var kind: String
+        var createdAt: Date
+        var detail: String
     }
 
     struct AlarmItem: Identifiable, Equatable {
@@ -520,6 +529,35 @@ final class AppModel: ObservableObject {
             }
         } catch {
             // Soft-fail.
+        }
+    }
+
+    func loadStoreStats() async {
+        do {
+            let result = try await client.callAsync(.kernelStoreStats, arguments: .object([:]))
+            let tables = result["tables"]?.objectValue ?? [:]
+            storeTableCounts = tables.compactMap { key, value -> (name: String, count: Int)? in
+                let count = value.intValue ?? value.doubleValue.map { Int($0) }
+                guard let count else { return nil }
+                return (name: key, count: count)
+            }.sorted { $0.name < $1.name }
+
+            let events = try await client.callAsync(
+                .selfHealingEventsList,
+                arguments: .object(["limit": .number(1)])
+            )
+            lastSelfHealingEvent = (events.arrayValue ?? []).compactMap { item -> SelfHealingEventSummary? in
+                guard let id = item["id"]?.stringValue else { return nil }
+                let created = item["createdAt"]?.stringValue.flatMap(ISO8601.date(from:)) ?? Date()
+                let kind = item["kind"]?.stringValue ?? ""
+                let detail = item["record"]?["storePath"]?.stringValue
+                    ?? item["record"]?["socketPath"]?.stringValue
+                    ?? item["record"]?["at"]?.stringValue
+                    ?? ""
+                return SelfHealingEventSummary(id: id, kind: kind, createdAt: created, detail: detail)
+            }.first
+        } catch {
+            // Soft-fail when kernel offline.
         }
     }
 

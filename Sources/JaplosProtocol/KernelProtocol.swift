@@ -95,6 +95,21 @@ public extension KernelOperation {
     static let toolArtifactsList = KernelOperation("tool.artifacts.list")
     static let toolArtifactsUpsert = KernelOperation("tool.artifacts.upsert")
 
+    // Information plane / deliveries / situations / self-healing (store v5)
+    static let informationTypesList = KernelOperation("information.types.list")
+    static let informationTypesUpsert = KernelOperation("information.types.upsert")
+    static let informationHeadsList = KernelOperation("information.heads.list")
+    static let informationHeadsSet = KernelOperation("information.heads.set")
+    static let informationProcessorsList = KernelOperation("information.processors.list")
+    static let informationProcessorsUpsert = KernelOperation("information.processors.upsert")
+    static let deliveriesList = KernelOperation("deliveries.list")
+    static let deliveriesUpsert = KernelOperation("deliveries.upsert")
+    static let situationsList = KernelOperation("situations.list")
+    static let situationsUpsert = KernelOperation("situations.upsert")
+    static let selfHealingEventsList = KernelOperation("selfhealing.events.list")
+    static let selfHealingEventsAppend = KernelOperation("selfhealing.events.append")
+    static let kernelStoreStats = KernelOperation("kernel.store.stats")
+
     // Model
     static let modelTest = KernelOperation("model.test")
     static let modelCatalog = KernelOperation("model.catalog")

@@ -182,8 +182,204 @@ public struct NetworkInfoTool: KernelTool {
     }
 }
 
+// MARK: - Hostname
+
+public struct HostnameTool: KernelTool {
+    public init() {}
+
+    public var definition: ToolDefinition {
+        ToolDefinition(
+            name: "system.hostname",
+            title: "主机名",
+            summary: "返回本机 hostname（Host.current().localizedName / ProcessInfo）。",
+            inputSchema: .object([
+                "type": "object",
+                "properties": .object([:]),
+                "additionalProperties": false,
+            ]),
+            capability: Capability.systemRead,
+            risk: .low
+        )
+    }
+
+    public func invoke(arguments: JSONValue, context: ToolContext) async throws -> JSONValue {
+        let localized = Host.current().localizedName ?? ""
+        let name = ProcessInfo.processInfo.hostName
+        return .object([
+            "hostname": .string(name),
+            "localizedName": .string(localized),
+        ])
+    }
+}
+
+// MARK: - OS version
+
+public struct OSVersionTool: KernelTool {
+    public init() {}
+
+    public var definition: ToolDefinition {
+        ToolDefinition(
+            name: "system.os.version",
+            title: "系统版本",
+            summary: "返回 macOS 版本号与操作系统名称。",
+            inputSchema: .object([
+                "type": "object",
+                "properties": .object([:]),
+                "additionalProperties": false,
+            ]),
+            capability: Capability.systemRead,
+            risk: .low
+        )
+    }
+
+    public func invoke(arguments: JSONValue, context: ToolContext) async throws -> JSONValue {
+        let info = ProcessInfo.processInfo
+        let v = info.operatingSystemVersion
+        return .object([
+            "name": .string(info.operatingSystemVersionString),
+            "major": .number(Double(v.majorVersion)),
+            "minor": .number(Double(v.minorVersion)),
+            "patch": .number(Double(v.patchVersion)),
+        ])
+    }
+}
+
+// MARK: - App support paths
+
+public struct AppSupportPathsTool: KernelTool {
+    public init() {}
+
+    public var definition: ToolDefinition {
+        ToolDefinition(
+            name: "system.app.support.paths",
+            title: "Lucas 数据路径",
+            summary: "返回 Lucas Application Support / Logs / self-healing 等本机目录。",
+            inputSchema: .object([
+                "type": "object",
+                "properties": .object([:]),
+                "additionalProperties": false,
+            ]),
+            capability: Capability.systemRead,
+            risk: .low
+        )
+    }
+
+    public func invoke(arguments: JSONValue, context: ToolContext) async throws -> JSONValue {
+        let home: URL
+        if let override = ProcessInfo.processInfo.environment["LUCAS_CLONE_HOME"], !override.isEmpty {
+            home = URL(fileURLWithPath: (override as NSString).expandingTildeInPath, isDirectory: true)
+        } else {
+            home = FileManager.default.homeDirectoryForCurrentUser
+                .appendingPathComponent("Library/Application Support/Lucas", isDirectory: true)
+        }
+        let logs = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/Logs/Lucas", isDirectory: true)
+        return .object([
+            "applicationSupport": .string(home.path),
+            "store": .string(home.appendingPathComponent("kernel.sqlite3").path),
+            "socket": .string(home.appendingPathComponent("kernel.sock").path),
+            "selfHealing": .string(home.appendingPathComponent("self-healing", isDirectory: true).path),
+            "logs": .string(logs.path),
+        ])
+    }
+}
+
+// MARK: - Lucas UserDefaults (scoped)
+
+public struct UserDefaultsTool: KernelTool {
+    public init() {}
+
+    private static let allowedPrefixes = ["lucas.", "LUCAS_", "onboarding", "speech", "update", "voice"]
+
+    public var definition: ToolDefinition {
+        ToolDefinition(
+            name: "system.user.defaults",
+            title: "Lucas 偏好",
+            summary: "读取或写入仅限 Lucas 相关键的 UserDefaults（suite=com.lucas.app）。action=get|set。",
+            inputSchema: .object([
+                "type": "object",
+                "properties": .object([
+                    "action": .object(["type": "string", "enum": .array(["get", "set"])]),
+                    "key": .object(["type": "string"]),
+                    "value": .object([:]),
+                ]),
+                "required": .array(["action", "key"]),
+                "additionalProperties": false,
+            ]),
+            capability: Capability.systemRead,
+            risk: .low
+        )
+    }
+
+    public func invoke(arguments: JSONValue, context: ToolContext) async throws -> JSONValue {
+        guard let action = arguments["action"]?.stringValue else {
+            throw ToolError.invalidArguments("action is required")
+        }
+        guard let key = arguments["key"]?.stringValue, !key.isEmpty else {
+            throw ToolError.invalidArguments("key is required")
+        }
+        guard Self.isAllowed(key) else {
+            throw ToolError.invalidArguments("key must be Lucas-scoped (lucas.* / onboarding / speech / voice / update)")
+        }
+        let defaults = UserDefaults(suiteName: "com.lucas.app") ?? .standard
+        switch action {
+        case "get":
+            if let value = defaults.object(forKey: key) {
+                return .object(["key": .string(key), "value": Self.json(from: value)])
+            }
+            return .object(["key": .string(key), "value": .null])
+        case "set":
+            guard let json = arguments["value"] else {
+                throw ToolError.invalidArguments("value is required for set")
+            }
+            defaults.set(Self.plist(from: json), forKey: key)
+            return .object(["key": .string(key), "saved": .bool(true)])
+        default:
+            throw ToolError.invalidArguments("Unknown action \(action)")
+        }
+    }
+
+    private static func isAllowed(_ key: String) -> Bool {
+        let lower = key.lowercased()
+        if lower.hasPrefix("lucas.") || lower.hasPrefix("com.lucas.") { return true }
+        return allowedPrefixes.contains { lower.hasPrefix($0.lowercased()) }
+    }
+
+    private static func json(from value: Any) -> JSONValue {
+        switch value {
+        case let s as String: return .string(s)
+        case let n as NSNumber:
+            if CFGetTypeID(n) == CFBooleanGetTypeID() { return .bool(n.boolValue) }
+            return .number(n.doubleValue)
+        case let arr as [Any]: return .array(arr.map(json(from:)))
+        case let dict as [String: Any]:
+            return .object(dict.mapValues { json(from: $0) })
+        default: return .string(String(describing: value))
+        }
+    }
+
+    private static func plist(from value: JSONValue) -> Any {
+        switch value {
+        case .null: return NSNull()
+        case .bool(let b): return b
+        case .number(let n): return n
+        case .string(let s): return s
+        case .array(let items): return items.map(plist(from:))
+        case .object(let obj): return obj.mapValues { plist(from: $0) }
+        }
+    }
+}
+
 public enum SystemInfoTools {
     public static func all() -> [any KernelTool] {
-        [WindowListTool(), ProcessListTool(), NetworkInfoTool()]
+        [
+            WindowListTool(),
+            ProcessListTool(),
+            NetworkInfoTool(),
+            HostnameTool(),
+            OSVersionTool(),
+            AppSupportPathsTool(),
+            UserDefaultsTool(),
+        ]
     }
 }

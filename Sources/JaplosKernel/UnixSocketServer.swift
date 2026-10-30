@@ -38,6 +38,8 @@ public final class UnixSocketServer: @unchecked Sendable {
     private let lock = NSLock()
     private var listenFD: Int32 = -1
     private var running = false
+    /// Set when start() had to unlink + rebind after an initial bind failure.
+    public private(set) var recoveredFromBindFailure = false
 
     public init(
         path: String,
@@ -75,15 +77,28 @@ public final class UnixSocketServer: @unchecked Sendable {
             raw.copyBytes(from: pathBytes)
         }
 
-        let bindResult = withUnsafePointer(to: &address) { pointer in
+        recoveredFromBindFailure = false
+        var bindResult = withUnsafePointer(to: &address) { pointer in
             pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) { sockaddrPointer in
                 bind(fd, sockaddrPointer, socklen_t(MemoryLayout<sockaddr_un>.size))
             }
         }
-        guard bindResult == 0 else {
-            let code = errno
-            close(fd)
-            throw ServerError.cannotBind(path, code)
+        if bindResult != 0 {
+            let firstCode = errno
+            // Best-effort self-heal: drop stale socket path and retry once.
+            unlink(path)
+            bindResult = withUnsafePointer(to: &address) { pointer in
+                pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) { sockaddrPointer in
+                    bind(fd, sockaddrPointer, socklen_t(MemoryLayout<sockaddr_un>.size))
+                }
+            }
+            if bindResult == 0 {
+                recoveredFromBindFailure = true
+            } else {
+                let code = errno
+                close(fd)
+                throw ServerError.cannotBind(path, firstCode != 0 ? firstCode : code)
+            }
         }
 
         chmod(path, 0o600)

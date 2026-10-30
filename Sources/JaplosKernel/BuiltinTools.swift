@@ -410,11 +410,11 @@ public struct ClipboardTool: KernelTool {
         ToolDefinition(
             name: "system.clipboard",
             title: "剪贴板",
-            summary: "读取或写入系统剪贴板文本。action=get|set。",
+            summary: "读取或写入系统剪贴板。action=get|set|types。types 返回可用类型并检测是否含图片。",
             inputSchema: .object([
                 "type": "object",
                 "properties": .object([
-                    "action": .object(["type": "string", "enum": .array(["get", "set"])]),
+                    "action": .object(["type": "string", "enum": .array(["get", "set", "types"])]),
                     "text": .object(["type": "string"]),
                 ]),
                 "required": .array(["action"]),
@@ -432,7 +432,10 @@ public struct ClipboardTool: KernelTool {
         let pasteboard = NSPasteboard.general
         switch action {
         case "get":
-            return .object(["text": .string(pasteboard.string(forType: .string) ?? "")])
+            return .object([
+                "text": .string(pasteboard.string(forType: .string) ?? ""),
+                "hasImage": .bool(Self.pasteboardHasImage(pasteboard)),
+            ])
         case "set":
             guard let text = arguments["text"]?.stringValue else {
                 throw ToolError.invalidArguments("text is required for set")
@@ -440,9 +443,22 @@ public struct ClipboardTool: KernelTool {
             pasteboard.clearContents()
             pasteboard.setString(text, forType: .string)
             return .object(["written": .number(Double(text.count))])
+        case "types":
+            let types = (pasteboard.types ?? []).map { JSONValue.string($0.rawValue) }
+            return .object([
+                "types": .array(types),
+                "hasString": .bool(pasteboard.string(forType: .string) != nil),
+                "hasImage": .bool(Self.pasteboardHasImage(pasteboard)),
+            ])
         default:
             throw ToolError.invalidArguments("Unknown action \(action)")
         }
+    }
+
+    private static func pasteboardHasImage(_ pasteboard: NSPasteboard) -> Bool {
+        if pasteboard.canReadObject(forClasses: [NSImage.self], options: nil) { return true }
+        let imageTypes: [NSPasteboard.PasteboardType] = [.png, .tiff, .pdf]
+        return imageTypes.contains { pasteboard.data(forType: $0) != nil }
     }
 }
 

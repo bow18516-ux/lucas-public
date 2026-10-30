@@ -98,7 +98,17 @@ do {
         },
         handler: { request in await core.handle(request) }
     )
+    core.recordBootSelfHealing(supportDirectory: support)
+
     try server.start()
+    if server.recoveredFromBindFailure {
+        log("self-healing: recovered from socket bind failure at \(options.socketPath)")
+        core.recordSelfHealing(
+            kind: "socket.bind.recover",
+            detail: ["socketPath": .string(options.socketPath)],
+            supportDirectory: support
+        )
+    }
 
     Task {
         await core.reloadMCP()
