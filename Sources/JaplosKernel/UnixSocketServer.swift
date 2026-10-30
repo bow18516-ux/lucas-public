@@ -274,13 +274,8 @@ public final class UnixSocketServer: @unchecked Sendable {
 
         // The connection doubles as the approval channel while the turn runs.
         // Also poll WeChat inbound for 同意/拒绝 replies (no-op without live iLink).
-        var inboundPollCounter = 0
         while true {
             if done.wait(timeout: .now() + 0.15) == .success { break }
-            inboundPollCounter += 1
-            if inboundPollCounter % 4 == 0 {
-                _ = broker.pollWeChatInbound()
-            }
             guard pollReadable(client, timeoutMilliseconds: 100) else { continue }
             do {
                 let payload = try FrameCodec.readFrame(from: client, timeout: 10)
@@ -365,8 +360,9 @@ public final class UnixSocketServer: @unchecked Sendable {
             timeout: TimeInterval
         ) async -> Bool {
             let shortId = WeChatApprovalBridge.makeShortId(for: call.id)
-            let attemptPush = bridge?.shouldAttemptPush() == true
-            let effectiveTimeout = bridge?.preferredTimeout(attemptingWeChatPush: attemptPush) ?? timeout
+            // WeChat push is disabled until iLink can actually deliver: the
+            // approval is decided on the desktop card alone.
+            let effectiveTimeout = timeout
 
             return await withCheckedContinuation { continuation in
                 lock.lock()
@@ -392,15 +388,9 @@ public final class UnixSocketServer: @unchecked Sendable {
                     "title": .string(definition.title),
                     "risk": .string(definition.risk.rawValue),
                     "arguments": call.arguments,
-                    "wechatPushAttempted": .bool(attemptPush),
+                    "wechatPushAttempted": .bool(false),
                     "approvalTimeoutSec": .number(effectiveTimeout),
                 ]), requestID: call.id))
-
-                // Side channel: push to WeChat when enabled + appears connected.
-                // Never blocks the desktop card; failures are non-fatal.
-                if attemptPush || bridge?.isPushEnabled() == true {
-                    _ = bridge?.notifyApproval(call: call, definition: definition, shortId: shortId)
-                }
 
                 DispatchQueue.global().asyncAfter(deadline: .now() + effectiveTimeout) { [weak self] in
                     self?.resolve(callID: call.id, approved: false, source: "timeout")
@@ -432,11 +422,6 @@ public final class UnixSocketServer: @unchecked Sendable {
                 "source": .string(source),
             ]), requestID: callID))
             continuation.resume(returning: approved)
-        }
-
-        @discardableResult
-        func pollWeChatInbound() -> Int {
-            bridge?.pollInboundOnce() ?? 0
         }
 
         func cancelAll() {
