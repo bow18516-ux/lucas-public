@@ -116,10 +116,33 @@ public final class KernelClient: @unchecked Sendable {
     }
 
     public func ping(timeout: TimeInterval = 1.5) -> Bool {
-        (try? call(.kernelPing, arguments: .object([:]), timeout: timeout)) != nil
+        (try? perform(.kernelPing, arguments: .object([:]), timeout: timeout)) != nil
+    }
+
+    public func daemonVersion(timeout: TimeInterval = 1.5) -> String? {
+        (try? perform(.kernelStatus, arguments: .object([:]), timeout: timeout))?["version"]?.stringValue
     }
 
     public func call(
+        _ operation: KernelOperation,
+        arguments: JSONValue = .object([:]),
+        timeout: TimeInterval = 300,
+        resource: String? = nil
+    ) throws -> JSONValue {
+        do {
+            return try perform(operation, arguments: arguments, timeout: timeout, resource: resource)
+        } catch let error as ClientError {
+            switch error {
+            case .cannotConnect, .transport:
+                try DaemonController.ensureRunning(client: self)
+                return try perform(operation, arguments: arguments, timeout: timeout, resource: resource)
+            case .kernel:
+                throw error
+            }
+        }
+    }
+
+    fileprivate func perform(
         _ operation: KernelOperation,
         arguments: JSONValue = .object([:]),
         timeout: TimeInterval = 300,
@@ -268,7 +291,11 @@ public enum DaemonController {
         client: KernelClient,
         logURL: URL? = nil
     ) throws {
-        if client.ping() { return }
+        if client.ping() {
+            if client.daemonVersion() == ProductVersion.marketing { return }
+            _ = try? client.perform(.kernelShutdown, arguments: .object([:]), timeout: 2)
+            usleep(300_000)
+        }
 
         guard let executable = locateDaemon() else {
             throw ClientError.cannotConnect("找不到 lucasd（可设置 LUCASD_PATH）")
@@ -287,7 +314,9 @@ public enum DaemonController {
             if !FileManager.default.fileExists(atPath: logURL.path) {
                 FileManager.default.createFile(atPath: logURL.path, contents: nil)
             }
-            if let handle = try? FileHandle(forWritingTo: logURL) {
+            let fd = open(logURL.path, O_WRONLY | O_CREAT | O_APPEND, 0o644)
+            if fd >= 0 {
+                let handle = FileHandle(fileDescriptor: fd, closeOnDealloc: true)
                 process.standardError = handle
                 process.standardOutput = handle
             }
@@ -315,8 +344,8 @@ public enum DaemonController {
             candidates.append(bundleURL.appendingPathComponent("lucasd"))
         }
         let cwd = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
-        candidates.append(cwd.appendingPathComponent(".build/debug/lucasd"))
         candidates.append(cwd.appendingPathComponent(".build/release/lucasd"))
+        candidates.append(cwd.appendingPathComponent(".build/debug/lucasd"))
         candidates.append(cwd.appendingPathComponent("clone/.build/debug/lucasd"))
         candidates.append(cwd.appendingPathComponent("clone/.build/release/lucasd"))
 

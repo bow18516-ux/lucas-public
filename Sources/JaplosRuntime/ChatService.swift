@@ -325,14 +325,7 @@ public final class ChatService: @unchecked Sendable {
     }
 
     private func catalog(_ request: KernelRequest) async -> KernelResponse {
-        let stored = (try? core.store.resolvedModelConnection()) ?? nil
-        let requestKey = request.arguments["apiKey"]?.stringValue ?? ""
-        let connection = ModelConnection(
-            baseURL: request.arguments["baseURL"]?.stringValue ?? stored?.baseURL ?? "",
-            model: request.arguments["model"]?.stringValue ?? stored?.model ?? "",
-            apiKey: requestKey.isEmpty ? (stored?.apiKey ?? "") : requestKey,
-            temperature: 0
-        )
+        let connection = probeConnection(request)
         guard connection.isConfigured else {
             return .failure(.invalidArgument("模型连接不完整"), requestID: request.id)
         }
@@ -350,14 +343,7 @@ public final class ChatService: @unchecked Sendable {
     // MARK: - Model test
 
     private func testConnection(_ request: KernelRequest) async -> KernelResponse {
-        let stored = (try? core.store.resolvedModelConnection()) ?? nil
-        let requestKey = request.arguments["apiKey"]?.stringValue ?? ""
-        let connection = ModelConnection(
-            baseURL: request.arguments["baseURL"]?.stringValue ?? stored?.baseURL ?? "",
-            model: request.arguments["model"]?.stringValue ?? stored?.model ?? "",
-            apiKey: requestKey.isEmpty ? (stored?.apiKey ?? "") : requestKey,
-            temperature: 0
-        )
+        let connection = probeConnection(request)
         guard connection.isConfigured else {
             return .failure(.invalidArgument("模型连接不完整"), requestID: request.id)
         }
@@ -382,6 +368,23 @@ public final class ChatService: @unchecked Sendable {
     }
 
     // MARK: - Helpers
+
+    private func probeConnection(_ request: KernelRequest) -> ModelConnection {
+        let stored = (try? core.store.resolvedModelConnection()) ?? nil
+        let requestedURL = request.arguments["baseURL"]?.stringValue ?? ""
+        let requestKey = request.arguments["apiKey"]?.stringValue ?? ""
+        return ModelConnection(
+            baseURL: requestedURL.isEmpty ? (stored?.baseURL ?? "") : requestedURL,
+            model: request.arguments["model"]?.stringValue ?? stored?.model ?? "",
+            apiKey: ModelProbeKey.apiKey(
+                storedBaseURL: stored?.baseURL,
+                storedKey: stored?.apiKey,
+                requestedBaseURL: requestedURL,
+                requestedKey: requestKey
+            ),
+            temperature: 0
+        )
+    }
 
     private func resolveSession(request: KernelRequest, text: String) throws -> ChatSession {
         if let id = request.arguments["sessionID"]?.stringValue, let existing = try core.store.session(id) {

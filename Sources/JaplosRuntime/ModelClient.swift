@@ -1,6 +1,32 @@
 import Foundation
 import JaplosProtocol
 
+/// Stored API keys stay on the saved base URL. A probe to a different URL
+/// must not attach that key unless the request supplies its own.
+public enum ModelProbeKey {
+    public static func apiKey(
+        storedBaseURL: String?,
+        storedKey: String?,
+        requestedBaseURL: String,
+        requestedKey: String
+    ) -> String {
+        let supplied = requestedKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !supplied.isEmpty { return supplied }
+        let requested = normalize(requestedBaseURL)
+        let stored = normalize(storedBaseURL ?? "")
+        if !requested.isEmpty, !stored.isEmpty, requested != stored {
+            return ""
+        }
+        return storedKey ?? ""
+    }
+
+    public static func normalize(_ url: String) -> String {
+        var value = url.trimmingCharacters(in: .whitespacesAndNewlines)
+        while value.hasSuffix("/") { value.removeLast() }
+        return value.lowercased()
+    }
+}
+
 public enum ModelMessage: Sendable {
     case system(String)
     case user(String)
@@ -197,6 +223,7 @@ public final class ModelClient {
         var partialCalls: [Int: PartialToolCall] = [:]
 
         for try await line in bytes.lines {
+            try Task.checkCancellation()
             guard line.hasPrefix("data:") else { continue }
             let payload = line.dropFirst(5).trimmingCharacters(in: .whitespaces)
             if payload.isEmpty { continue }

@@ -26,7 +26,8 @@ private struct MailStatusTool: KernelTool {
                 "additionalProperties": false,
             ]),
             capability: Capability.channelRead,
-            risk: .low
+            risk: .low,
+            approval: .never
         )
     }
 
@@ -53,7 +54,8 @@ private struct MailListTool: KernelTool {
                 "additionalProperties": false,
             ]),
             capability: Capability.channelRead,
-            risk: .low
+            risk: .low,
+            approval: .never
         )
     }
 
@@ -93,7 +95,8 @@ private struct MailReadTool: KernelTool {
                 "additionalProperties": false,
             ]),
             capability: Capability.channelRead,
-            risk: .low
+            risk: .low,
+            approval: .never
         )
     }
 

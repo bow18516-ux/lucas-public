@@ -122,13 +122,8 @@ public final class WeChatChannel: @unchecked Sendable {
 
     /// Start QR login. Attempts iLink get_bot_qrcode; on network/API failure returns structured awaiting/needs path — never crashes, never fakes connected.
     public func connect() async throws -> JSONValue {
-        lock.lock()
-        defer { lock.unlock() }
-
         let session = UUID().uuidString
-        loginSessionID = session
-        pendingVerification = false
-        lastError = nil
+        beginLogin(session: session)
 
         // Persist a login-started ledger row (credential-free).
         _ = try? store.upsertWeChatConnection(
@@ -142,7 +137,22 @@ public final class WeChatChannel: @unchecked Sendable {
         )
 
         // Try live QR fetch (may fail without ClawBot enrollment / network).
+        // The lock is not held across this await.
         let qrResult = await fetchBotQRCode(loginSessionID: session)
+        return finishLogin(session: session, qrResult: qrResult)
+    }
+
+    private func beginLogin(session: String) {
+        lock.lock()
+        loginSessionID = session
+        pendingVerification = false
+        lastError = nil
+        lock.unlock()
+    }
+
+    private func finishLogin(session: String, qrResult: QRFetchResult) -> JSONValue {
+        lock.lock()
+        defer { lock.unlock() }
         if let path = qrResult.imagePath {
             qrImagePath = path
             // Best-effort: open QR image for the user (Japlos presents a local PNG).

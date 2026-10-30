@@ -7,22 +7,22 @@
     <key>ProgramArguments</key>
     <array>
         <string>/bin/bash</string>
-        <string>/Users/w/Library/Application Support/Lucas/bin/check-updates.sh</string>
+        <string>__HOME__/Library/Application Support/Lucas/bin/check-updates.sh</string>
     </array>
     <key>EnvironmentVariables</key>
     <dict>
         <key>LUCAS_CHECK_RESOLVE</key>
         <string>43.132.224.242</string>
         <key>LUCAS_PUBLIC_KEY_FILE</key>
-        <string>/Users/w/Library/Application Support/Lucas/sparkle_public_key.txt</string>
+        <string>__HOME__/Library/Application Support/Lucas/sparkle_public_key.txt</string>
     </dict>
     <key>RunAtLoad</key>
     <true/>
     <key>StartInterval</key>
     <integer>21600</integer>
     <key>StandardOutPath</key>
-    <string>/Users/w/Library/Logs/Lucas/updates-monitor.log</string>
+    <string>__HOME__/Library/Logs/Lucas/updates-monitor.log</string>
     <key>StandardErrorPath</key>
-    <string>/Users/w/Library/Logs/Lucas/updates-monitor.log</string>
+    <string>__HOME__/Library/Logs/Lucas/updates-monitor.log</string>
 </dict>
 </plist>

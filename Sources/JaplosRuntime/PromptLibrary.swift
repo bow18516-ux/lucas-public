@@ -89,13 +89,11 @@ public enum PromptLibrary {
     public static func load(_ path: String) -> String? {
         let relative = normalize(path)
         let overrideURL = overrideRoot().appendingPathComponent(relative)
-        if let text = readMarkdown(overrideURL) {
-            return localizeProductName(text)
-        }
-        if let root = bundledPromptsRoot() {
-            let bundledURL = root.appendingPathComponent(relative)
-            if let text = readMarkdown(bundledURL) {
-                return localizeProductName(text)
+        let bundledURL = bundledPromptsRoot()?.appendingPathComponent(relative)
+        if let raw = SeededOverride.text(override: overrideURL, bundled: bundledURL) {
+            let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmed.isEmpty {
+                return localizeProductName(trimmed)
             }
         }
         let legacyID = (relative as NSString).deletingPathExtension
@@ -195,6 +193,10 @@ public enum PromptLibrary {
             do {
                 try fm.createDirectory(at: target.deletingLastPathComponent(), withIntermediateDirectories: true)
                 try fm.copyItem(at: fileURL, to: target)
+                if let data = try? Data(contentsOf: target) {
+                    let hash = SeededOverride.sha256Hex(data)
+                    try? Data(hash.utf8).write(to: SeededOverride.sidecar(for: target), options: .atomic)
+                }
                 created += 1
             } catch {
                 continue

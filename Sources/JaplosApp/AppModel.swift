@@ -1790,8 +1790,6 @@ final class AppModel: ObservableObject {
     }
 
     static func approvalSummary(_ arguments: JSONValue?) -> String {
-        guard let arguments else { return "" }
-        let text = (try? arguments.encodedString()) ?? ""
-        return String(text.prefix(400))
+        ApprovalPresentation.summary(arguments)
     }
 }

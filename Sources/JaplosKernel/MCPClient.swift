@@ -32,6 +32,8 @@ public struct MCPServerConfig: Codable, Sendable, Equatable, Identifiable {
     public var oauthClientID: String
     public var oauthToken: String
     public var oauthAuthURL: String
+    /// When true, tools that advertise `readOnlyHint` skip approval. Default off.
+    public var trustReadOnly: Bool
 
     public init(
         id: String,
@@ -43,7 +45,8 @@ public struct MCPServerConfig: Codable, Sendable, Equatable, Identifiable {
         headers: [String: String]? = nil,
         oauthClientID: String = "",
         oauthToken: String = "",
-        oauthAuthURL: String = ""
+        oauthAuthURL: String = "",
+        trustReadOnly: Bool = false
     ) {
         self.id = id
         self.name = name
@@ -55,6 +58,7 @@ public struct MCPServerConfig: Codable, Sendable, Equatable, Identifiable {
         self.oauthClientID = oauthClientID
         self.oauthToken = oauthToken
         self.oauthAuthURL = oauthAuthURL
+        self.trustReadOnly = trustReadOnly
     }
 
     public var isHTTP: Bool {
@@ -64,7 +68,7 @@ public struct MCPServerConfig: Codable, Sendable, Equatable, Identifiable {
 
     private enum CodingKeys: String, CodingKey {
         case id, name, command, args, enabled, url, headers
-        case oauthClientID, oauthToken, oauthAuthURL
+        case oauthClientID, oauthToken, oauthAuthURL, trustReadOnly
     }
 
     public init(from decoder: Decoder) throws {
@@ -79,6 +83,7 @@ public struct MCPServerConfig: Codable, Sendable, Equatable, Identifiable {
         oauthClientID = try container.decodeIfPresent(String.self, forKey: .oauthClientID) ?? ""
         oauthToken = try container.decodeIfPresent(String.self, forKey: .oauthToken) ?? ""
         oauthAuthURL = try container.decodeIfPresent(String.self, forKey: .oauthAuthURL) ?? ""
+        trustReadOnly = try container.decodeIfPresent(Bool.self, forKey: .trustReadOnly) ?? false
     }
 }
 
@@ -86,6 +91,28 @@ public struct MCPToolInfo: Sendable {
     public var name: String
     public var summary: String
     public var inputSchema: JSONValue
+    public var readOnlyHint: Bool
+
+    public init(name: String, summary: String, inputSchema: JSONValue, readOnlyHint: Bool = false) {
+        self.name = name
+        self.summary = summary
+        self.inputSchema = inputSchema
+        self.readOnlyHint = readOnlyHint
+    }
+
+    public static func approval(readOnlyHint: Bool, trustReadOnly: Bool) -> ToolApproval {
+        (readOnlyHint && trustReadOnly) ? .never : .always
+    }
+
+    static func from(listItem item: JSONValue) -> MCPToolInfo? {
+        guard let name = item["name"]?.stringValue else { return nil }
+        return MCPToolInfo(
+            name: name,
+            summary: item["description"]?.stringValue ?? "",
+            inputSchema: item["inputSchema"] ?? .object(["type": .string("object")]),
+            readOnlyHint: item["annotations"]?["readOnlyHint"]?.boolValue ?? false
+        )
+    }
 }
 
 public protocol MCPClientProtocol: AnyObject {
@@ -137,21 +164,14 @@ public final class MCPStdioClient: MCPClientProtocol, @unchecked Sendable {
             "capabilities": .object([:]),
             "clientInfo": .object([
                 "name": .string("Lucas Agent"),
-                "version": .string("0.4.0"),
+                "version": .string(ProductVersion.marketing),
             ]),
         ]), timeout: 20)
 
         sendNotification("notifications/initialized")
 
         let listed = try await request("tools/list", params: .object([:]), timeout: 20)
-        cachedTools = (listed["tools"]?.arrayValue ?? []).compactMap { item in
-            guard let name = item["name"]?.stringValue else { return nil }
-            return MCPToolInfo(
-                name: name,
-                summary: item["description"]?.stringValue ?? "",
-                inputSchema: item["inputSchema"] ?? .object(["type": .string("object")])
-            )
-        }
+        cachedTools = (listed["tools"]?.arrayValue ?? []).compactMap(MCPToolInfo.from(listItem:))
     }
 
     public func callTool(_ name: String, arguments: JSONValue) async throws -> JSONValue {
@@ -326,21 +346,14 @@ public final class MCPHTTPClient: MCPClientProtocol, @unchecked Sendable {
             "capabilities": .object([:]),
             "clientInfo": .object([
                 "name": .string("Lucas Agent"),
-                "version": .string("0.4.0"),
+                "version": .string(ProductVersion.marketing),
             ]),
         ]), expectsResponse: true)
 
         _ = try await rpc("notifications/initialized", params: .object([:]), expectsResponse: false)
 
         let listed = try await rpc("tools/list", params: .object([:]), expectsResponse: true)
-        cachedTools = (listed?["tools"]?.arrayValue ?? []).compactMap { item in
-            guard let name = item["name"]?.stringValue else { return nil }
-            return MCPToolInfo(
-                name: name,
-                summary: item["description"]?.stringValue ?? "",
-                inputSchema: item["inputSchema"] ?? .object(["type": .string("object")])
-            )
-        }
+        cachedTools = (listed?["tools"]?.arrayValue ?? []).compactMap(MCPToolInfo.from(listItem:))
     }
 
     public func callTool(_ name: String, arguments: JSONValue) async throws -> JSONValue {
@@ -473,6 +486,22 @@ public final class MCPManager: @unchecked Sendable {
         definitions.first { $0.name == name }
     }
 
+    private func resetCaches() {
+        lock.lock()
+        clients.removeAll()
+        definitionsCache.removeAll()
+        statusCache.removeAll()
+        lock.unlock()
+    }
+
+    private func remember(id: String, client: any MCPClientProtocol, definitions: [ToolDefinition], status: JSONValue) {
+        lock.lock()
+        clients[id] = client
+        definitionsCache.append(contentsOf: definitions)
+        statusCache.append(status)
+        lock.unlock()
+    }
+
     public func reload() async {
         let existing: [any MCPClientProtocol] = {
             lock.lock()
@@ -481,11 +510,7 @@ public final class MCPManager: @unchecked Sendable {
         }()
         for client in existing { client.stop() }
 
-        lock.lock()
-        clients.removeAll()
-        definitionsCache.removeAll()
-        statusCache.removeAll()
-        lock.unlock()
+        resetCaches()
 
         try? store.appendMCPEvent(
             serverID: "*",
@@ -519,20 +544,25 @@ public final class MCPManager: @unchecked Sendable {
                         inputSchema: tool.inputSchema,
                         capability: Capability.toolInvoke,
                         risk: .medium,
-                        provider: "mcp:\(config.id)"
+                        provider: "mcp:\(config.id)",
+                        approval: MCPToolInfo.approval(
+                            readOnlyHint: tool.readOnlyHint,
+                            trustReadOnly: config.trustReadOnly
+                        )
                     )
                 }
-                lock.lock()
-                clients[config.id] = client
-                definitionsCache.append(contentsOf: definitions)
-                statusCache.append(.object([
-                    "id": .string(config.id),
-                    "name": .string(config.name),
-                    "transport": .string(config.isHTTP ? "http" : "stdio"),
-                    "state": .string("ready"),
-                    "toolCount": .number(Double(definitions.count)),
-                ]))
-                lock.unlock()
+                remember(
+                    id: config.id,
+                    client: client,
+                    definitions: definitions,
+                    status: .object([
+                        "id": .string(config.id),
+                        "name": .string(config.name),
+                        "transport": .string(config.isHTTP ? "http" : "stdio"),
+                        "state": .string("ready"),
+                        "toolCount": .number(Double(definitions.count)),
+                    ])
+                )
                 try? store.appendMCPEvent(
                     serverID: config.id,
                     event: "connect.success",
@@ -570,13 +600,30 @@ public final class MCPManager: @unchecked Sendable {
         )
     }
 
+    /// `mcp.<serverID>.<tool>` where serverID itself may contain dots. Longest known id wins.
+    static func splitToolName(_ name: String, serverIDs: [String]) -> (serverID: String, toolName: String)? {
+        guard name.hasPrefix("mcp.") else { return nil }
+        let rest = String(name.dropFirst(4))
+        guard let serverID = serverIDs
+            .filter({ rest == $0 || rest.hasPrefix($0 + ".") })
+            .max(by: { $0.count < $1.count })
+        else { return nil }
+        let toolName = String(rest.dropFirst(serverID.count + 1))
+        guard !toolName.isEmpty else { return nil }
+        return (serverID, toolName)
+    }
+
     public func invoke(_ call: ToolCall) async -> ToolExecution {
-        let parts = call.name.split(separator: ".", maxSplits: 2).map(String.init)
-        guard parts.count == 3, parts[0] == "mcp" else {
+        let serverIDs: [String] = {
+            lock.lock()
+            defer { lock.unlock() }
+            return Array(clients.keys)
+        }()
+        guard let split = Self.splitToolName(call.name, serverIDs: serverIDs) else {
             return ToolExecution(call: call, ok: false, output: .null, error: "Invalid MCP tool name")
         }
-        let serverID = parts[1]
-        let toolName = parts[2]
+        let serverID = split.serverID
+        let toolName = split.toolName
 
         let client: (any MCPClientProtocol)? = {
             lock.lock()

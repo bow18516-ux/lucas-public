@@ -52,10 +52,24 @@ for _ in range(3):
     frames += 1
     assert "result" in frame, frame
 print(f"   received {frames} delta frames, closing socket")
+store = os.environ.get("LUCAS_STORE") or os.path.join(os.path.dirname(SOCKET), "kernel.sqlite3")
+
+def tool_rows():
+    import sqlite3
+    con = sqlite3.connect(f"file:{store}?mode=ro", uri=True)
+    try:
+        return con.execute("SELECT COUNT(*) FROM tool_invocations").fetchone()[0]
+    finally:
+        con.close()
+
+before = tool_rows()
 slow.close()
 
-# Give the daemon a moment to notice the broken pipe, then verify it is healthy.
-time.sleep(1.5)
+# The daemon must cancel the turn and not record more tool rows after the socket closes.
+time.sleep(5)
+after = tool_rows()
+assert after == before, f"tool_invocations grew after stop: {before} -> {after}"
+print(f"   tool_invocations stable at {after}")
 health = connect()
 send(health, "kernel.ping", {})
 pong = recv_frame(health)

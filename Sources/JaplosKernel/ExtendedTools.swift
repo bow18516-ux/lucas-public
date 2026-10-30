@@ -24,7 +24,8 @@ public struct MusicTool: KernelTool {
                 "additionalProperties": false,
             ]),
             capability: Capability.musicControl,
-            risk: .low
+            risk: .low,
+            approval: .whenArgument(key: "action", isOneOf: ["play", "pause", "toggle", "next", "previous"])
         )
     }
 
@@ -85,14 +86,17 @@ public struct MusicTool: KernelTool {
         } catch {
             throw ToolError.failed("osascript failed to launch: \(error)")
         }
-        process.waitUntilExit()
-        let output = stdout.fileHandleForReading.readDataToEndOfFile()
-        let errorOutput = stderr.fileHandleForReading.readDataToEndOfFile()
+        let captured = ProcessPipes.drain(
+            process: process,
+            stdout: stdout.fileHandleForReading,
+            stderr: stderr.fileHandleForReading,
+            limit: 64 * 1024
+        )
         guard process.terminationStatus == 0 else {
-            let message = String(decoding: errorOutput, as: UTF8.self)
+            let message = String(decoding: captured.stderr, as: UTF8.self)
             throw ToolError.failed("Apple Music 控制失败（可能未授予自动化权限）：\(message.prefix(200))")
         }
-        return String(decoding: output, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
+        return String(decoding: captured.stdout, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
     }
 }
 
@@ -116,7 +120,8 @@ public struct AudioTool: KernelTool {
                 "additionalProperties": false,
             ]),
             capability: Capability.audioControl,
-            risk: .low
+            risk: .low,
+            approval: .whenArgument(key: "action", isOneOf: ["set"])
         )
     }
 
@@ -149,12 +154,17 @@ public struct AudioTool: KernelTool {
         process.standardOutput = stdout
         process.standardError = stderr
         try process.run()
-        process.waitUntilExit()
+        let captured = ProcessPipes.drain(
+            process: process,
+            stdout: stdout.fileHandleForReading,
+            stderr: stderr.fileHandleForReading,
+            limit: 64 * 1024
+        )
         guard process.terminationStatus == 0 else {
-            let message = String(decoding: stderr.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+            let message = String(decoding: captured.stderr, as: UTF8.self)
             throw ToolError.failed("音量控制失败：\(message)")
         }
-        return String(decoding: stdout.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+        return String(decoding: captured.stdout, as: UTF8.self)
             .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 }

@@ -86,12 +86,55 @@ public final class SQLiteDatabase {
         return rows
     }
 
+    public func userVersion() throws -> Int {
+        let rows = try query("PRAGMA user_version;")
+        guard let value = rows.first?["user_version"] else { return 0 }
+        if let int = value as? Int64 { return Int(int) }
+        if let int = value as? Int { return int }
+        return 0
+    }
+
+    public func setUserVersion(_ version: Int) throws {
+        try execute("PRAGMA user_version = \(version);")
+    }
+
+    /// Copies the database outside any transaction. Destination must not exist.
+    public func vacuum(into destination: String) throws {
+        let escaped = destination.replacingOccurrences(of: "'", with: "''")
+        try execute("VACUUM INTO '\(escaped)';")
+    }
+
+    public func transaction(_ body: () throws -> Void) throws {
+        lock.lock()
+        defer { lock.unlock() }
+        try stepUnlocked("BEGIN IMMEDIATE;")
+        do {
+            try body()
+            try stepUnlocked("COMMIT;")
+        } catch {
+            try? stepUnlocked("ROLLBACK;")
+            throw error
+        }
+    }
+
     public func scalarInt(_ sql: String, _ bindings: [Any?] = []) throws -> Int {
         let rows = try query(sql, bindings)
         guard let first = rows.first, let value = first.values.first ?? nil else { return 0 }
         if let int = value as? Int64 { return Int(int) }
         if let string = value as? String { return Int(string) ?? 0 }
         return 0
+    }
+
+    private func stepUnlocked(_ sql: String) throws {
+        var statement: OpaquePointer?
+        guard sqlite3_prepare_v2(handle, sql, -1, &statement, nil) == SQLITE_OK else {
+            throw SQLiteError(message: "Cannot prepare statement: \(lastErrorMessage)")
+        }
+        defer { sqlite3_finalize(statement) }
+        let step = sqlite3_step(statement)
+        guard step == SQLITE_DONE || step == SQLITE_ROW else {
+            throw SQLiteError(message: "SQLite step failed (\(step)): \(lastErrorMessage)")
+        }
     }
 
     private func prepare(_ sql: String, _ bindings: [Any?]) throws -> OpaquePointer? {

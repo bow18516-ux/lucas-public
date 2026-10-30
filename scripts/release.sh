@@ -114,13 +114,15 @@ echo "dmg:      $UPDATES/Lucas-$VERSION.dmg"
 
 if [ -n "${LUCAS_DEPLOY_TARGET:-}" ]; then
     echo "uploading to $LUCAS_DEPLOY_TARGET"
-    RSYNC_SSH="ssh -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=$ROOT/.secrets/known_hosts"
+    KNOWN_HOSTS="${LUCAS_KNOWN_HOSTS:-$HOME/Library/Application Support/Lucas/known_hosts}"
+    mkdir -p "$(dirname "$KNOWN_HOSTS")"
+    RSYNC_SSH="ssh -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=$KNOWN_HOSTS"
     if [ -n "${LUCAS_SSH_KEY:-}" ]; then
         RSYNC_SSH="$RSYNC_SSH -i $LUCAS_SSH_KEY"
     fi
-    rsync -av --delete -e "$RSYNC_SSH" "$UPDATES/" "$LUCAS_DEPLOY_TARGET/"
+    rsync -av -e "$RSYNC_SSH" "$UPDATES/" "$LUCAS_DEPLOY_TARGET/"
     echo "deployed"
 else
     echo "upload manually, e.g.:"
-    echo "  rsync -av --delete \"$UPDATES/\" user@server:/var/www/updates/lucas/"
+    echo "  rsync -av \"$UPDATES/\" user@server:/var/www/updates/lucas/"
 fi

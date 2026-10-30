@@ -13,7 +13,15 @@ CONFIG="${1:-release}"
 APP="$ROOT/build/Lucas.app"
 CONTENTS="$APP/Contents"
 
-VERSION="${LUCAS_VERSION:-0.4.0}"
+if [ -n "${LUCAS_VERSION:-}" ]; then
+    VERSION="$LUCAS_VERSION"
+else
+    VERSION="$(sed -n 's/.*static let marketing = "\([^"]*\)".*/\1/p' "$ROOT/Sources/JaplosProtocol/ProductVersion.swift")"
+fi
+if [ -z "$VERSION" ]; then
+    echo "cannot read ProductVersion.marketing" >&2
+    exit 1
+fi
 BUILD_NUMBER="${LUCAS_BUILD:-$(date +%Y%m%d%H%M)}"
 # Local ./scripts/build-app.sh often runs without publish.sh; still pick up the
 # real feed from Config/release.env so 检查更新 does not hit example.com.
@@ -168,15 +176,40 @@ if [[ "$FEED_URL" == http://* ]]; then
     /usr/libexec/PlistBuddy -c "Add :NSAppTransportSecurity:NSAllowsArbitraryLoads bool true" "$CONTENTS/Info.plist" 2>/dev/null || true
 fi
 
+sign_inside_out() {
+    local identity="$1"
+    local entitlements="${2:-}"
+    local flags=(--force --sign "$identity")
+    if [ "$identity" != "-" ]; then
+        flags+=(--options runtime --timestamp)
+    fi
+    local extra=()
+    if [ -n "$entitlements" ]; then
+        extra=(--entitlements "$entitlements")
+    fi
+    # Sign nested code first. --deep is not a substitute for this order.
+    if [ -d "$CONTENTS/Frameworks" ]; then
+        while IFS= read -r -d '' item; do
+            codesign "${flags[@]}" "$item"
+        done < <(find "$CONTENTS/Frameworks" -depth \( -name '*.framework' -o -name '*.dylib' -o -type f -perm +111 \) -print0)
+    fi
+    if [ -d "$CONTENTS/MacOS" ]; then
+        while IFS= read -r -d '' item; do
+            [ "$item" = "$CONTENTS/MacOS/Lucas" ] && continue
+            [ "$item" = "$CONTENTS/MacOS/JaplosApp" ] && continue
+            codesign "${flags[@]}" "$item"
+        done < <(find "$CONTENTS/MacOS" -type f -perm +111 -print0)
+    fi
+    codesign "${flags[@]}" "${extra[@]}" "$APP"
+}
+
 if [ -n "${LUCAS_SIGN_IDENTITY:-}" ]; then
     echo "signing with: $LUCAS_SIGN_IDENTITY"
-    codesign --force --deep --options runtime --timestamp \
-        --entitlements "$ROOT/Config/Lucas.entitlements" \
-        --sign "$LUCAS_SIGN_IDENTITY" "$APP" >/dev/null
-    codesign --verify --deep --strict --verbose=2 "$APP"
+    sign_inside_out "$LUCAS_SIGN_IDENTITY" "$ROOT/Config/Lucas.entitlements"
+    codesign --verify --strict --verbose=2 "$APP"
 else
     echo "warning: ad-hoc signing; Sparkle updates will not install until the app is signed with a Developer ID" >&2
-    codesign --force --deep --entitlements "$ROOT/Config/Lucas.entitlements" --sign - "$APP" >/dev/null 2>&1 || true
+    sign_inside_out - "$ROOT/Config/Lucas.entitlements" >/dev/null 2>&1 || true
 fi
 
 # Rebuilding replaces the bundle inode; refresh LaunchServices so Finder and

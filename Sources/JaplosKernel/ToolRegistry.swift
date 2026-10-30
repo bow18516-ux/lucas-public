@@ -60,12 +60,14 @@ public final class ToolRegistry: @unchecked Sendable {
         return tools[name]?.definition
     }
 
-    public func invoke(_ call: ToolCall, context: ToolContext) async -> ToolExecution {
+    private func tool(named name: String) -> (any KernelTool)? {
         lock.lock()
-        let tool = tools[call.name]
-        lock.unlock()
+        defer { lock.unlock() }
+        return tools[name]
+    }
 
-        guard let tool else {
+    public func invoke(_ call: ToolCall, context: ToolContext) async -> ToolExecution {
+        guard let tool = tool(named: call.name) else {
             return ToolExecution(
                 call: call,
                 ok: false,

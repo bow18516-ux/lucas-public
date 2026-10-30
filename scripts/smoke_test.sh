@@ -41,19 +41,40 @@ done
 
 export LUCAS_SOCKET="$WORK/kernel.sock"
 
-echo "1. kernel.status"
-python3 scripts/kernel_rpc.py kernel.status '{}' | grep -q '"tools": 15'
+echo "1. required tools are registered"
+python3 - <<'PY'
+import sys
+sys.path.insert(0, "scripts")
+import kernel_rpc
+response = kernel_rpc.call("tool.list", {})
+names = {item["name"] for item in response["result"]}
+required = [
+    "system.time",
+    "system.command.shell.execute",
+    "system.filesystem",
+    "system.document.pdf.create",
+    "mail.send",
+    "memory.search",
+    "knowledge.search",
+]
+missing = [name for name in required if name not in names]
+assert not missing, missing
+assert len(names) >= len(required)
+print(f"   {len(names)} tools, required set present")
+PY
 
 echo "2. tool.invoke system.time"
 python3 scripts/kernel_rpc.py tool.invoke '{"name":"system.time","arguments":{}}' | grep -q '"ok": true'
 
-echo "3. policy denial for unknown principal"
+echo "3. client-supplied principal is ignored"
 python3 - "$WORK" <<'PY'
-import json, sys
+import sys
 sys.path.insert(0, "scripts")
 import kernel_rpc
 response = kernel_rpc.call("kernel.status", {}, principal="intruder")
-assert response["failure"]["code"] == "permission_denied", response
+assert response.get("failure") in (None, {}), response
+assert response["result"]["version"], response
+print("   spoofed principal still served as the socket user")
 PY
 
 echo "4. configure mock model"
@@ -110,24 +131,24 @@ python3 scripts/kernel_rpc.py tool.invoke '{"name":"system.window.list","argumen
 python3 scripts/kernel_rpc.py tool.invoke '{"name":"system.process.list","arguments":{"limit":3}}' | grep -q '"ok": true'
 python3 scripts/kernel_rpc.py tool.invoke '{"name":"system.network.info","arguments":{}}' | grep -q '"ok": true'
 
-echo "13. PDF generation"
-rm -f /tmp/lucas-smoke.pdf
+echo "13. PDF create requires approval and does not clobber"
+printf 'keep-me\n' > /tmp/lucas-smoke-victim.txt
 python3 scripts/kernel_rpc.py tool.invoke \
-  '{"name":"system.document.pdf.create","arguments":{"text":"Japlos smoke test","path":"/tmp/lucas-smoke.pdf"}}' \
-  | grep -q '"ok": true'
-test -s /tmp/lucas-smoke.pdf
+  '{"name":"system.document.pdf.create","arguments":{"text":"Japlos smoke test","path":"/tmp/lucas-smoke-victim.txt"}}' \
+  | grep -q 'approval_required'
+head -c 7 /tmp/lucas-smoke-victim.txt | grep -q 'keep-me'
 
 echo "14. MCP stdio server"
 python3 scripts/kernel_rpc.py configuration.set \
   "{\"path\":\"mcp.servers\",\"value\":[{\"id\":\"echo\",\"name\":\"Echo\",\"command\":\"python3\",\"args\":[\"$ROOT/scripts/mcp_echo_server.py\"],\"enabled\":true}]}" >/dev/null
 python3 scripts/kernel_rpc.py mcp.refresh '{}' | grep -q '"toolCount": 2'
-python3 scripts/kernel_rpc.py tool.invoke '{"name":"mcp.echo.echo","arguments":{"text":"smoke"}}' | grep -q 'echo: smoke'
+python3 scripts/kernel_rpc.py tool.invoke '{"name":"mcp.echo.echo","arguments":{"text":"smoke"}}' | grep -q 'approval_required'
 
 echo "15. MCP HTTP server"
 python3 scripts/kernel_rpc.py configuration.set \
   "{\"path\":\"mcp.servers\",\"value\":[{\"id\":\"echo\",\"name\":\"Echo\",\"command\":\"python3\",\"args\":[\"$ROOT/scripts/mcp_echo_server.py\"],\"enabled\":true},{\"id\":\"http\",\"name\":\"HTTP Echo\",\"url\":\"http://127.0.0.1:$HTTP_PORT/mcp\",\"enabled\":true}]}" >/dev/null
 python3 scripts/kernel_rpc.py mcp.refresh '{}' | grep -q '"toolCount": 4'
-python3 scripts/kernel_rpc.py tool.invoke '{"name":"mcp.http.echo","arguments":{"text":"smoke"}}' | grep -q 'http-echo: smoke'
+python3 scripts/kernel_rpc.py tool.invoke '{"name":"mcp.http.echo","arguments":{"text":"smoke"}}' | grep -q 'approval_required'
 
 echo "16. model catalog"
 python3 scripts/kernel_rpc.py model.catalog '{}' | grep -q 'mock-model'

@@ -46,11 +46,33 @@ public enum SceneRouter {
         var promptFiles: [String]?
     }
 
+    private static let cacheLock = NSLock()
+    private static var cachedScenes: [Scene]?
+    private static var cachedToken: String?
+
     public static var scenes: [Scene] {
-        if let loaded = loadFromDisk(), !loaded.isEmpty {
-            return loaded
+        let token = scenesCacheToken()
+        cacheLock.lock()
+        if cachedToken == token, let cachedScenes {
+            cacheLock.unlock()
+            return cachedScenes
         }
-        return builtInScenes
+        cacheLock.unlock()
+        let loaded = loadFromDisk()
+        let value = (loaded?.isEmpty == false) ? loaded! : builtInScenes
+        cacheLock.lock()
+        cachedScenes = value
+        cachedToken = token
+        cacheLock.unlock()
+        return value
+    }
+
+    private static func scenesCacheToken() -> String {
+        let url = scenesFileOverrideURL()
+        let attrs = try? FileManager.default.attributesOfItem(atPath: url.path)
+        let modified = (attrs?[.modificationDate] as? Date)?.timeIntervalSince1970 ?? 0
+        let size = (attrs?[.size] as? NSNumber)?.int64Value ?? -1
+        return "\(modified)|\(size)"
     }
 
     public static func match(_ text: String) -> Scene? {
@@ -88,25 +110,35 @@ public enum SceneRouter {
 
     // MARK: - Loading
 
+    private static func decodeScenes(_ data: Data) -> [Scene]? {
+        guard let root = try? JSONDecoder().decode(FileRoot.self, from: data) else { return nil }
+        let mapped = root.scenes.map { item in
+            Scene(
+                id: item.id,
+                name: item.name,
+                pattern: item.pattern,
+                extraPrompt: item.responsePrompt ?? "",
+                tools: item.tools ?? [],
+                promptFiles: item.promptFiles ?? [],
+                enabled: item.enabled ?? true
+            )
+        }
+        return mapped.isEmpty ? nil : mapped
+    }
+
     private static func loadFromDisk() -> [Scene]? {
-        let candidates = [scenesFileOverrideURL(), bundledScenesURL()].compactMap { $0 }
+        if let text = SeededOverride.text(override: scenesFileOverrideURL(), bundled: bundledScenesURL()),
+           let data = text.data(using: .utf8),
+           let mapped = decodeScenes(data) {
+            return mapped
+        }
+        let candidates = [bundledScenesURL()].compactMap { $0 }
         for url in candidates {
             guard let data = try? Data(contentsOf: url),
-                  let root = try? JSONDecoder().decode(FileRoot.self, from: data) else {
+                  let mapped = decodeScenes(data) else {
                 continue
             }
-            let mapped = root.scenes.map { item in
-                Scene(
-                    id: item.id,
-                    name: item.name,
-                    pattern: item.pattern,
-                    extraPrompt: item.responsePrompt ?? "",
-                    tools: item.tools ?? [],
-                    promptFiles: item.promptFiles ?? [],
-                    enabled: item.enabled ?? true
-                )
-            }
-            if !mapped.isEmpty { return mapped }
+            return mapped
         }
         return nil
     }

@@ -13,7 +13,7 @@ public struct PDFCreateTool: KernelTool {
         ToolDefinition(
             name: "system.document.pdf.create",
             title: "生成 PDF",
-            summary: "把纯文本渲染成多页 PDF 并保存到指定路径。返回页数与文件大小。",
+            summary: "把纯文本渲染成多页 PDF。默认写到 ~/Downloads，已存在的文件不会被覆盖。",
             inputSchema: .object([
                 "type": "object",
                 "properties": .object([
@@ -24,7 +24,7 @@ public struct PDFCreateTool: KernelTool {
                 "additionalProperties": false,
             ]),
             capability: Capability.filesystemWrite,
-            risk: .low
+            risk: .high
         )
     }
 
@@ -44,7 +44,14 @@ public struct PDFCreateTool: KernelTool {
             path = FileManager.default.homeDirectoryForCurrentUser
                 .appendingPathComponent("Downloads/japlos-\(stamp).pdf").path
         }
+        try SensitivePaths.reject(path)
         let url = URL(fileURLWithPath: path)
+        if let values = try? url.resourceValues(forKeys: [.isSymbolicLinkKey]), values.isSymbolicLink == true {
+            throw ToolError.denied("拒绝通过符号链接写入 PDF：\(path)")
+        }
+        if FileManager.default.fileExists(atPath: path) {
+            throw ToolError.denied("拒绝覆盖已有文件：\(path)")
+        }
         try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
 
         let pages = try render(text: text, to: url)
@@ -135,6 +142,9 @@ public struct DownloadFetchTool: KernelTool {
         }
 
         let limit = 200 * 1024 * 1024
+        if let advertised = try? await Self.advertisedByteCount(remote), advertised > limit {
+            throw ToolError.failed("文件超过 200 MB 上限")
+        }
         let (temporary, response) = try await URLSession.shared.download(from: remote)
         defer { try? FileManager.default.removeItem(at: temporary) }
 
@@ -156,6 +166,7 @@ public struct DownloadFetchTool: KernelTool {
                 path: FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Downloads/\(name)").path
             )
         }
+        try SensitivePaths.reject(destination.path)
         try FileManager.default.createDirectory(at: destination.deletingLastPathComponent(), withIntermediateDirectories: true)
         if FileManager.default.fileExists(atPath: destination.path) {
             try FileManager.default.removeItem(at: destination)
@@ -165,6 +176,16 @@ public struct DownloadFetchTool: KernelTool {
             "path": .string(destination.path),
             "bytes": .number(Double(size)),
         ])
+    }
+
+    private static func advertisedByteCount(_ url: URL) async throws -> Int? {
+        var request = URLRequest(url: url)
+        request.httpMethod = "HEAD"
+        let (_, response) = try await URLSession.shared.data(for: request)
+        guard let http = response as? HTTPURLResponse,
+              let raw = http.value(forHTTPHeaderField: "Content-Length")
+        else { return nil }
+        return Int(raw)
     }
 }
 
@@ -209,9 +230,14 @@ public struct NotificationTool: KernelTool {
         let stderr = Pipe()
         process.standardError = stderr
         try process.run()
-        process.waitUntilExit()
+        let captured = ProcessPipes.drain(
+            process: process,
+            stdout: nil,
+            stderr: stderr.fileHandleForReading,
+            limit: 64 * 1024
+        )
         guard process.terminationStatus == 0 else {
-            let message = String(decoding: stderr.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+            let message = String(decoding: captured.stderr, as: UTF8.self)
             throw ToolError.failed("通知发送失败：\(message)")
         }
         return .object(["delivered": .bool(true)])

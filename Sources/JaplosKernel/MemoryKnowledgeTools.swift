@@ -76,7 +76,8 @@ private struct MemorySearchTool: KernelTool {
                 "additionalProperties": false,
             ]),
             capability: Capability.chatRead,
-            risk: .low
+            risk: .low,
+            approval: .never
         )
     }
 
@@ -113,7 +114,8 @@ private struct KnowledgeSearchTool: KernelTool {
                 "additionalProperties": false,
             ]),
             capability: Capability.chatRead,
-            risk: .low
+            risk: .low,
+            approval: .never
         )
     }
 
@@ -160,7 +162,8 @@ private struct KnowledgeReadTool: KernelTool {
                 "additionalProperties": false,
             ]),
             capability: Capability.chatRead,
-            risk: .low
+            risk: .low,
+            approval: .never
         )
     }
 

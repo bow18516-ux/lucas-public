@@ -1,7 +1,7 @@
 import Foundation
 import JaplosProtocol
 
-public final class KernelStore {
+public final class KernelStore: @unchecked Sendable {
     public static let modelConnectionPath = "agents.default.model.connection"
     public static let modelSecretAccount = "agents.default.model.connection"
     public static let speechVolcengineAppIDAccount = "speech.volcengine.appId"
@@ -28,9 +28,39 @@ public final class KernelStore {
         migratePlaintextModelSecret()
     }
 
+    static let schemaVersion = 9
+
     // MARK: - Schema
 
     private func migrate() throws {
+        var current = try database.userVersion()
+        if current >= Self.schemaVersion { return }
+        if current < 8 {
+            try backupBeforeSchemaChange()
+            try database.transaction {
+                try applyLegacySchema()
+                try database.setUserVersion(8)
+            }
+            current = 8
+        }
+        if current < 9 {
+            // knowledge_vectors already exists as an empty ledger (id, updated_at, record_json).
+            // Version 9 starts writing embeddings into that table. Do not rebuild it.
+            try database.transaction {
+                try database.setUserVersion(9)
+            }
+        }
+    }
+
+    private func backupBeforeSchemaChange() throws {
+        let backup = path + ".pre-migrate.bak"
+        if FileManager.default.fileExists(atPath: backup) {
+            try FileManager.default.removeItem(atPath: backup)
+        }
+        try database.vacuum(into: backup)
+    }
+
+    private func applyLegacySchema() throws {
         try database.execute("""
         CREATE TABLE IF NOT EXISTS metadata (
             key TEXT PRIMARY KEY NOT NULL,
@@ -668,7 +698,11 @@ public final class KernelStore {
             !key.isEmpty
         else { return }
 
-        try? secrets.setSecret(key, for: Self.modelSecretAccount)
+        let retained = PlaintextKeyMigration.retainedPlaintext(original: key) { secret in
+            try self.secrets.setSecret(secret, for: Self.modelSecretAccount)
+            return self.secrets.secret(for: Self.modelSecretAccount)
+        }
+        guard retained.isEmpty else { return }
         object["apiKey"] = .string("")
         try? setConfiguration(path: Self.modelConnectionPath, value: .object(object), updatedBy: "migration")
         FileHandle.standardError.write(Data("lucasd: migrated plaintext model key to \(secrets.backend.rawValue) backend\n".utf8))
@@ -853,7 +887,9 @@ public final class KernelStore {
         error: String?
     ) throws {
         func encode(_ value: JSONValue) -> String {
-            (try? JSONCoding.encodeToString(value)) ?? "null"
+            let text = (try? JSONCoding.encodeToString(value)) ?? "null"
+            guard text.count > 8_192 else { return text }
+            return String(text.prefix(8_192)) + "…[truncated]"
         }
         try database.execute("""
         INSERT INTO tool_invocations(id, session_id, tool, ok, duration_ms, arguments_json, output_json, error, created_at)
@@ -1156,12 +1192,16 @@ public final class KernelStore {
         try database.query(
             "SELECT id, title, updated_at, record_json FROM knowledge_documents ORDER BY updated_at DESC LIMIT ?;",
             [limit]
-        ).compactMap { row in Self.decodeRecordRow(row, idKey: "id", extra: { r in
+        ).compactMap(mapKnowledgeRow)
+    }
+
+    private func mapKnowledgeRow(_ row: [String: Any?]) -> JSONValue? {
+        Self.decodeRecordRow(row, idKey: "id", extra: { r in
             [
                 "title": .string((r["title"] as? String) ?? ""),
                 "updatedAt": .string(ISO8601.string(from: Date(timeIntervalSince1970: (r["updated_at"] as? Double) ?? 0))),
             ]
-        })}
+        })
     }
 
     public func upsertKnowledgeDocument(id: String, title: String, record: JSONValue) throws {
@@ -1177,11 +1217,13 @@ public final class KernelStore {
         """, [id, title, now, encoded])
         let body = record["body"]?.stringValue ?? record["text"]?.stringValue ?? ""
         try syncKnowledgeFTS(id: id, title: title, body: body)
+        try storeKnowledgeVector(id: id, title: title, body: body)
     }
 
     public func deleteKnowledgeDocument(id: String) throws {
         try database.execute("DELETE FROM knowledge_documents WHERE id = ?;", [id])
         try? database.execute("DELETE FROM knowledge_fts WHERE doc_id = ?;", [id])
+        try? database.execute("DELETE FROM knowledge_vectors WHERE id = ?;", [id])
     }
 
     private func syncKnowledgeFTS(id: String, title: String, body: String) throws {
@@ -1192,6 +1234,53 @@ public final class KernelStore {
             "INSERT INTO knowledge_fts(doc_id, title, body) VALUES (?, ?, ?);",
             [id, title, capped]
         )
+    }
+
+    private func storeKnowledgeVector(id: String, title: String, body: String) throws {
+        let text = title + "\n" + String(body.prefix(800))
+        guard let vector = LocalEmbedding.vector(for: text), !vector.isEmpty else {
+            try? database.execute("DELETE FROM knowledge_vectors WHERE id = ?;", [id])
+            return
+        }
+        let record = JSONValue.object([
+            "dim": .number(Double(vector.count)),
+            "vector": .array(vector.map(JSONValue.number)),
+        ])
+        let encoded = String(data: try ProtocolCoding.encode(record), encoding: .utf8) ?? "{}"
+        try database.execute("""
+        INSERT INTO knowledge_vectors(id, updated_at, record_json)
+        VALUES (?, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET
+            updated_at = excluded.updated_at,
+            record_json = excluded.record_json;
+        """, [id, Date().timeIntervalSince1970, encoded])
+    }
+
+    private func knowledgeVectors(ids: [String]) throws -> [String: [Double]] {
+        guard !ids.isEmpty else { return [:] }
+        var result: [String: [Double]] = [:]
+        var index = 0
+        while index < ids.count {
+            let slice = Array(ids[index..<min(index + 80, ids.count)])
+            index += slice.count
+            let placeholders = Array(repeating: "?", count: slice.count).joined(separator: ",")
+            let rows = try database.query(
+                "SELECT id, record_json FROM knowledge_vectors WHERE id IN (\(placeholders));",
+                slice
+            )
+            for row in rows {
+                guard
+                    let id = row["id"] as? String,
+                    let raw = row["record_json"] as? String,
+                    let data = raw.data(using: .utf8),
+                    let record = try? ProtocolCoding.decode(JSONValue.self, from: data),
+                    let nums = record["vector"]?.arrayValue?.compactMap(\.doubleValue),
+                    !nums.isEmpty
+                else { continue }
+                result[id] = nums
+            }
+        }
+        return result
     }
 
 
@@ -1212,22 +1301,42 @@ public final class KernelStore {
         }
     }
 
-    /// Hybrid retrieval: keyword/substring (+ FTS5 boost) + offline NLEmbedding cosine when available.
+    public func knowledgeDocument(id: String) throws -> JSONValue? {
+        try database.query(
+            "SELECT id, title, updated_at, record_json FROM knowledge_documents WHERE id = ? LIMIT 1;",
+            [id]
+        ).compactMap(mapKnowledgeRow).first
+    }
+
+    /// FTS recalls candidates first (including documents outside the recent window), then keyword and stored vectors rerank.
     public func searchKnowledgeDocuments(
         query: String,
         library: String? = nil,
         limit: Int = 8
     ) throws -> [JSONValue] {
         let lim = max(1, min(limit, 40))
-        let docs = try listKnowledgeDocuments(limit: 300)
         let q = query.trimmingCharacters(in: .whitespacesAndNewlines)
         if q.isEmpty {
-            return Array(docs.prefix(lim))
+            return Array((try listKnowledgeDocuments(limit: lim)).prefix(lim))
         }
 
-        let ftsIDs = (try? knowledgeFTSMatchIDs(query: q, limit: 40)) ?? []
+        let ftsIDs = (try? knowledgeFTSMatchIDs(query: q, limit: 80)) ?? []
+        let ftsSet = Set(ftsIDs)
         let ftsBoost = Dictionary(uniqueKeysWithValues: ftsIDs.enumerated().map { ($0.element, 8 - min($0.offset, 7)) })
 
+        var docs: [JSONValue] = []
+        var seen = Set<String>()
+        for id in ftsIDs {
+            guard let doc = try knowledgeDocument(id: id) else { continue }
+            let key = doc["id"]?.stringValue ?? id
+            if seen.insert(key).inserted { docs.append(doc) }
+        }
+        for doc in try listKnowledgeDocuments(limit: 300) {
+            let key = doc["id"]?.stringValue ?? ""
+            if seen.insert(key).inserted { docs.append(doc) }
+        }
+
+        let storedVectors = (try? knowledgeVectors(ids: Array(seen))) ?? [:]
         let queryVector = LocalEmbedding.vector(for: q)
         let useEmbed = queryVector != nil
 
@@ -1254,15 +1363,13 @@ public final class KernelStore {
 
             var semantic = 0.0
             if let qv = queryVector {
-                let embedText = title + "\n" + String(body.prefix(800))
-                if let dv = LocalEmbedding.vector(for: embedText) {
-                    // Cosine in [-1,1] → [0,1], then scale.
+                let dv = storedVectors[id] ?? (ftsSet.contains(id) ? LocalEmbedding.vector(for: title + "\n" + String(body.prefix(800))) : nil)
+                if let dv {
                     semantic = max(0, LocalEmbedding.cosineSimilarity(qv, dv)) * 20.0
                 }
             }
 
             let score = keyword + fts + semantic
-            // Keep weak semantic-only hits only when similarity is meaningful.
             if score <= 0 { continue }
             if keyword == 0 && fts == 0 && semantic < 8 { continue }
             hits.append(Hit(score: score, doc: doc))

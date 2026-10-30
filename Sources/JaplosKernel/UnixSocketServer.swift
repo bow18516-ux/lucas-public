@@ -189,7 +189,8 @@ public final class UnixSocketServer: @unchecked Sendable {
 
         do {
             let payload = try FrameCodec.readFrame(from: client, timeout: 600)
-            let request = try ProtocolCoding.decode(KernelRequest.self, from: payload)
+            var request = try ProtocolCoding.decode(KernelRequest.self, from: payload)
+            request.principal = Principal.localUser
 
             let wantsStream = request.operation == .chatSend
                 && request.arguments["stream"]?.boolValue == true
@@ -250,6 +251,9 @@ public final class UnixSocketServer: @unchecked Sendable {
                 let approved = message.arguments["approved"]?.boolValue ?? false
                 broker.resolve(callID: callID, approved: approved, source: "desktop")
             } catch {
+                writer.close()
+                cancellation.cancel()
+                _ = done.wait(timeout: .now() + 5)
                 break
             }
         }
@@ -415,6 +419,7 @@ public final class UnixSocketServer: @unchecked Sendable {
         private let client: Int32
         private let lock = NSLock()
         private var failed = false
+        private var closed = false
         private var wroteAny = false
         var onFailure: (() -> Void)?
 
@@ -422,10 +427,19 @@ public final class UnixSocketServer: @unchecked Sendable {
             self.client = client
         }
 
+        func close() {
+            lock.lock()
+            let already = closed
+            closed = true
+            failed = true
+            lock.unlock()
+            if !already { onFailure?() }
+        }
+
         func write(_ response: KernelResponse) {
             lock.lock()
             defer { lock.unlock() }
-            guard !failed else { return }
+            guard !failed, !closed else { return }
             do {
                 let data = try ProtocolCoding.encode(response)
                 try FrameCodec.writeFrame(data, to: client, timeout: 30)
@@ -456,20 +470,33 @@ public final class UnixSocketServer: @unchecked Sendable {
         return credential.cr_uid == getuid()
     }
 
-    /// Optional codesign Team-ID gate. Off unless `LUCAS_REQUIRE_TEAM_ID` is set
-    /// (comma-separated Team IDs; use `adhoc` to allow ad-hoc signed clients).
-    /// Default off so local debug builds keep working.
+    /// Team-ID gate. A signed daemon requires the client's Team ID to match its
+    /// own unless `LUCAS_REQUIRE_TEAM_ID` overrides the list. `off` disables it.
+    /// Unsigned debug builds stay open so local smoke tests keep working.
     private func peerTeamIDDenialReason(_ client: Int32) -> String? {
         let raw = ProcessInfo.processInfo.environment["LUCAS_REQUIRE_TEAM_ID"]?
             .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        guard !raw.isEmpty else { return nil }
-        let allowed = Set(
-            raw.split(separator: ",")
-                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-                .filter { !$0.isEmpty }
-        )
+        if raw == "off" || raw == "0" { return nil }
+        let allowed: Set<String>
+        if raw.isEmpty {
+            guard let own = Self.ownTeamID(), own != "adhoc" else { return nil }
+            allowed = [own]
+        } else {
+            allowed = Set(
+                raw.split(separator: ",")
+                    .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                    .filter { !$0.isEmpty }
+            )
+        }
         guard !allowed.isEmpty else { return nil }
+        return teamDenial(client: client, allowed: allowed)
+    }
 
+    private static func ownTeamID() -> String? {
+        teamIdentifier(of: Bundle.main.executableURL?.path ?? CommandLine.arguments[0])
+    }
+
+    private func teamDenial(client: Int32, allowed: Set<String>) -> String? {
         var pid: pid_t = 0
         var length = socklen_t(MemoryLayout<pid_t>.size)
         // LOCAL_PEERPID = 0x002 on Darwin
@@ -484,35 +511,36 @@ public final class UnixSocketServer: @unchecked Sendable {
             return "Cannot resolve executable path for pid \(pid)"
         }
         let exePath = String(cString: pathBuffer)
+        let resolved = Self.teamIdentifier(of: exePath) ?? "adhoc"
+        if allowed.contains(resolved) || allowed.contains("*") {
+            return nil
+        }
+        return "Kernel client Team ID \(resolved) is not allowed"
+    }
 
+    private static func teamIdentifier(of path: String) -> String? {
         let task = Process()
         task.executableURL = URL(fileURLWithPath: "/usr/bin/codesign")
-        task.arguments = ["-dv", "--verbose=2", exePath]
+        task.arguments = ["-dv", "--verbose=2", path]
         let pipe = Pipe()
         task.standardError = pipe
         task.standardOutput = pipe
         do {
             try task.run()
-            task.waitUntilExit()
         } catch {
-            return "codesign probe failed for pid \(pid)"
+            return nil
         }
-
-        let data = pipe.fileHandleForReading.readDataToEndOfFile()
-        let text = String(data: data, encoding: .utf8) ?? ""
-        var team: String?
+        let captured = ProcessPipes.drain(process: task, stdout: nil, stderr: pipe.fileHandleForReading, limit: 64 * 1024)
+        let text = String(decoding: captured.stderr, as: UTF8.self)
         for line in text.split(whereSeparator: \.isNewline) {
             let s = String(line)
             if s.hasPrefix("TeamIdentifier=") {
-                team = String(s.dropFirst("TeamIdentifier=".count))
+                let team = String(s.dropFirst("TeamIdentifier=".count))
                     .trimmingCharacters(in: .whitespacesAndNewlines)
-                break
+                if team.isEmpty || team == "not set" { return "adhoc" }
+                return team
             }
         }
-        let resolved = (team == nil || team == "not set") ? "adhoc" : (team ?? "unknown")
-        if allowed.contains(resolved) || allowed.contains("*") {
-            return nil
-        }
-        return "Kernel client Team ID \(resolved) not in LUCAS_REQUIRE_TEAM_ID allow-list"
+        return "adhoc"
     }
 }

@@ -108,7 +108,8 @@ final class JaplosProtocolTests: XCTestCase {
             summary: "s",
             inputSchema: .object([:]),
             capability: Capability.filesystemWrite,
-            risk: .medium
+            risk: .medium,
+            approval: .whenArgument(key: "action", isOneOf: ["write"])
         )
         let write = ToolCall(name: definition.name, arguments: .object([
             "action": .string("write"),
@@ -136,6 +137,53 @@ final class JaplosProtocolTests: XCTestCase {
             let call = ToolCall(name: name, arguments: .object([:]))
             XCTAssertTrue(ToolApprovalGate.requiresApproval(call: call, definition: definition), name)
         }
+    }
+
+    func testDefaultApprovalIsAlwaysEvenWhenRiskIsLow() {
+        let definition = ToolDefinition(
+            name: "system.document.pdf.create",
+            title: "pdf",
+            summary: "s",
+            inputSchema: .object([:]),
+            capability: Capability.filesystemWrite,
+            risk: .low
+        )
+        let call = ToolCall(name: definition.name, arguments: .object(["text": .string("x")]))
+        XCTAssertEqual(definition.approval, .always)
+        XCTAssertTrue(ToolApprovalGate.requiresApproval(call: call, definition: definition))
+    }
+
+    func testMissingApprovalDecodesAsAlways() throws {
+        let json = """
+        {"name":"t","title":"t","summary":"s","inputSchema":{},"capability":"cap"}
+        """.data(using: .utf8)!
+        let definition = try ProtocolCoding.decode(ToolDefinition.self, from: json)
+        XCTAssertEqual(definition.approval, .always)
+        XCTAssertEqual(definition.risk, .low)
+    }
+
+    func testApprovalSummaryKeepsCommandAndMailFields() {
+        let command = "echo " + String(repeating: "safe ", count: 80)
+        let summary = ApprovalPresentation.summary(.object([
+            "command": .string(command),
+            "workingDirectory": .string("/tmp/work"),
+            "note": .string(String(repeating: "n", count: 800)),
+        ]))
+        XCTAssertTrue(summary.contains(command))
+        XCTAssertTrue(summary.contains("/tmp/work"))
+
+        let mail = ApprovalPresentation.summary(.object([
+            "body": .string(String(repeating: "b", count: 2000)),
+            "to": .string("a@b.com"),
+            "subject": .string("hi"),
+            "confirm": .bool(true),
+            "draft_only": .bool(false),
+        ]))
+        XCTAssertTrue(mail.contains("a@b.com"))
+        XCTAssertTrue(mail.contains("主题：hi"))
+        XCTAssertTrue(mail.contains("confirm：true"))
+        XCTAssertTrue(mail.contains("draft_only：false"))
+        XCTAssertFalse(mail.contains(String(repeating: "b", count: 40)))
     }
 
 }

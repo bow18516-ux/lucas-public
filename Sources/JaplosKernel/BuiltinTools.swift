@@ -18,7 +18,8 @@ public struct TimeTool: KernelTool {
                 "additionalProperties": false,
             ]),
             capability: Capability.root,
-            risk: .low
+            risk: .low,
+            approval: .never
         )
     }
 
@@ -46,7 +47,7 @@ public struct ShellTool: KernelTool {
         ToolDefinition(
             name: "system.command.shell.execute",
             title: "执行 Shell 命令",
-            summary: "以当前用户身份用 /bin/zsh -lc 执行命令并返回 stdout/stderr/退出码。会真实改变系统状态，执行前确认命令安全。",
+            summary: "以当前用户身份用 /bin/zsh -lc 执行命令并返回 stdout/stderr/退出码。危险模式词表只是提示，不能代替审批；确认卡会显示完整命令和工作目录。",
             inputSchema: .object([
                 "type": "object",
                 "properties": .object([
@@ -67,12 +68,11 @@ public struct ShellTool: KernelTool {
             throw ToolError.invalidArguments("command is required")
         }
         if let reason = DangerousCommand.blockReason(for: command) {
-            throw ToolError.denied("命令被安全策略拒绝：\(reason)。如确需执行，请拆分命令或改用其他工具。")
+            throw ToolError.denied("命令命中灾难性模式，已拒绝：\(reason)。审批不能放行这一小类命令。")
         }
         let timeout = min(max(arguments["timeoutSeconds"]?.doubleValue ?? 30, 1), 120)
         // Trust-root policy: cwd must be inside allowed roots (default = home).
-        // Absolute path tokens in the command must also stay inside roots.
-        // Approval does not override this hard deny (same class as DangerousCommand).
+        // Literal path tokens outside those roots are refused. This is not a sandbox.
         let workingDirectory = arguments["workingDirectory"]?.stringValue
         let cwdURL = try TrustRoots.allowedURL(path: workingDirectory ?? NSHomeDirectory())
         if let pathReason = TrustRoots.blockedAbsolutePaths(inShellCommand: command) {
@@ -87,37 +87,79 @@ public struct ShellTool: KernelTool {
         let stderr = Pipe()
         process.standardOutput = stdout
         process.standardError = stderr
+        let limit = 32 * 1024
+        let bucket = ProcessPipes.Bucket(limit: limit)
+        let group = DispatchGroup()
 
         try process.run()
+        let outHandle = stdout.fileHandleForReading
+        let errHandle = stderr.fileHandleForReading
+        group.enter()
+        DispatchQueue.global(qos: .userInitiated).async {
+            defer { group.leave() }
+            while true {
+                let chunk = outHandle.readData(ofLength: 16 * 1024)
+                if chunk.isEmpty { break }
+                bucket.append(chunk, stdout: true)
+            }
+        }
+        group.enter()
+        DispatchQueue.global(qos: .userInitiated).async {
+            defer { group.leave() }
+            while true {
+                let chunk = errHandle.readData(ofLength: 16 * 1024)
+                if chunk.isEmpty { break }
+                bucket.append(chunk, stdout: false)
+            }
+        }
 
         let deadline = Date().addingTimeInterval(timeout)
         var timedOut = false
+        var cancelled = false
         while process.isRunning && Date() < deadline {
-            usleep(40_000)
+            if Task.isCancelled {
+                cancelled = true
+                break
+            }
+            do {
+                try await Task.sleep(nanoseconds: 40_000_000)
+            } catch {
+                cancelled = true
+                break
+            }
         }
         if process.isRunning {
-            timedOut = true
+            if !cancelled { timedOut = true }
             process.terminate()
-            usleep(250_000)
+            let killDeadline = Date().addingTimeInterval(1)
+            while process.isRunning && Date() < killDeadline {
+                try? await Task.sleep(nanoseconds: 40_000_000)
+            }
             if process.isRunning {
                 kill(process.processIdentifier, SIGKILL)
             }
         }
         process.waitUntilExit()
+        waitForOutput(group)
+        if cancelled {
+            throw CancellationError()
+        }
 
-        let outData = stdout.fileHandleForReading.readDataToEndOfFile()
-        let errData = stderr.fileHandleForReading.readDataToEndOfFile()
-        let limit = 32 * 1024
-        let outText = String(decoding: outData.prefix(limit), as: UTF8.self)
-        let errText = String(decoding: errData.prefix(limit), as: UTF8.self)
+        let captured = bucket.snapshot()
+        let outText = String(decoding: captured.stdout, as: UTF8.self)
+        let errText = String(decoding: captured.stderr, as: UTF8.self)
 
         return .object([
             "exitCode": .number(Double(process.terminationStatus)),
             "stdout": .string(outText),
             "stderr": .string(errText),
             "timedOut": .bool(timedOut),
-            "truncated": .bool(outData.count > limit || errData.count > limit),
+            "truncated": .bool(captured.truncated),
         ])
+    }
+
+    private func waitForOutput(_ group: DispatchGroup) {
+        group.wait()
     }
 }
 
@@ -141,7 +183,8 @@ public struct ApplicationTool: KernelTool {
                 "additionalProperties": false,
             ]),
             capability: Capability.applicationsControl,
-            risk: .medium
+            risk: .medium,
+            approval: .whenArgument(key: "action", isOneOf: ["open", "quit"])
         )
     }
 
@@ -251,6 +294,47 @@ public struct ApplicationTool: KernelTool {
     }
 }
 
+/// Hard deny for credential and browser-profile paths. Approval cannot widen this.
+public enum SensitivePaths {
+    public static func reject(_ path: String) throws {
+        let expanded = (path as NSString).expandingTildeInPath
+        let candidates = [
+            URL(fileURLWithPath: expanded).standardizedFileURL.path,
+            (expanded as NSString).resolvingSymlinksInPath,
+        ]
+        for candidate in candidates {
+            if let reason = reason(for: candidate) {
+                throw ToolError.denied(reason)
+            }
+        }
+    }
+
+    private static func reason(for path: String) -> String? {
+        let home = URL(fileURLWithPath: NSHomeDirectory()).standardizedFileURL.path
+        let roots = [
+            ".ssh",
+            ".aws",
+            ".gnupg",
+            "Library/Keychains",
+            "Library/Application Support/Lucas",
+            "Library/Application Support/Google/Chrome",
+            "Library/Application Support/Chromium",
+            "Library/Application Support/Microsoft Edge",
+            "Library/Application Support/BraveSoftware",
+            "Library/Application Support/Arc",
+            "Library/Application Support/Firefox",
+            "Library/Safari",
+            "Library/Cookies",
+        ].map { (home as NSString).appendingPathComponent($0) }
+        for root in roots {
+            if path == root || path.hasPrefix(root + "/") {
+                return "拒绝读取或写入敏感路径：\(root)"
+            }
+        }
+        return nil
+    }
+}
+
 // MARK: - Filesystem
 
 public struct FilesystemTool: KernelTool {
@@ -260,7 +344,7 @@ public struct FilesystemTool: KernelTool {
         ToolDefinition(
             name: "system.filesystem",
             title: "文件读写",
-            summary: "读取/写入/列目录。只允许访问用户主目录、/tmp 与 /Users/Shared。action=read|write|list。",
+            summary: "读取/写入/列目录。只允许访问用户主目录、/tmp 与 /Users/Shared。action=read|write|list。~/.ssh、钥匙串、浏览器配置和 Lucas 数据目录会被拒绝。",
             inputSchema: .object([
                 "type": "object",
                 "properties": .object([
@@ -272,7 +356,8 @@ public struct FilesystemTool: KernelTool {
                 "additionalProperties": false,
             ]),
             capability: Capability.filesystemWrite,
-            risk: .medium
+            risk: .medium,
+            approval: .whenArgument(key: "action", isOneOf: ["write"])
         )
     }
 
@@ -284,6 +369,7 @@ public struct FilesystemTool: KernelTool {
             throw ToolError.invalidArguments("action and path are required")
         }
         let url = try Self.allowedURL(path: rawPath)
+        try SensitivePaths.reject(url.path)
         let fileManager = FileManager.default
 
         switch action {
@@ -381,10 +467,15 @@ public struct ScreenshotTool: KernelTool {
         let stderr = Pipe()
         process.standardError = stderr
         try process.run()
-        process.waitUntilExit()
+        let captured = ProcessPipes.drain(
+            process: process,
+            stdout: nil,
+            stderr: stderr.fileHandleForReading,
+            limit: 64 * 1024
+        )
 
         guard process.terminationStatus == 0, FileManager.default.fileExists(atPath: path) else {
-            let message = String(decoding: stderr.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+            let message = String(decoding: captured.stderr, as: UTF8.self)
             throw ToolError.failed("screencapture failed (\(process.terminationStatus)): \(message)")
         }
         let size = (try? FileManager.default.attributesOfItem(atPath: path)[.size] as? NSNumber)?.intValue ?? 0
@@ -503,14 +594,15 @@ public enum TrustRoots {
             if systemExecutablePrefixes.contains(where: { resolved == String($0.dropLast()) || resolved.hasPrefix($0) }) {
                 continue
             }
-            return "命令引用了信任根之外的路径：\(token)。Shell 与 filesystem 共用 ~/、/tmp、/Users/Shared；系统可执行前缀（/bin、/usr/bin…）除外。越界硬拒绝（审批也不能放行）。"
+            return "命令引用了信任根之外的路径：\(token)。Shell 与 filesystem 共用 ~/、/tmp、/Users/Shared；系统可执行前缀（/bin、/usr/bin…）除外。这只检查字面路径，不能代替审批。"
         }
         return nil
     }
 }
 
-/// Always-on guard for catastrophic shell operations. This is deliberately
-/// conservative: it blocks the command, never silently rewrites it.
+/// Advisory deny-list for a few catastrophic shell patterns (`rm -rf /`,
+/// `curl | bash`). It is not a sandbox: split flags, `find -delete`, and
+/// encoded commands pass through and must be judged on the approval card.
 public enum DangerousCommand {
     private static let rules: [(pattern: String, reason: String)] = [
         (#"(?i)\brm\s+(-[a-zA-Z]*r[a-zA-Z]*f|-[a-zA-Z]*f[a-zA-Z]*r)\s+(/|~|\$HOME)(\s|$|/)"#, "递归删除根目录或主目录"),

@@ -38,6 +38,8 @@ public final class WeChatApprovalBridge: @unchecked Sendable {
     private var callIDByShortId: [String: String] = [:]
     private var settledByCallID: [String: Settled] = [:]
     private var settledByShortId: [String: Settled] = [:]
+    private var pushedAtByShortId: [String: Date] = [:]
+    private var seenCursors: Set<String> = []
     private var lastPushNote: String?
 
     public init(store: KernelStore, wechat: WeChatChannel) {
@@ -113,12 +115,24 @@ public final class WeChatApprovalBridge: @unchecked Sendable {
 
     // MARK: - Registry
 
+    public static let senderPath = "channels.wechat.approvalSender"
+
     public static func makeShortId(for callID: String) -> String {
         let hex = callID.replacingOccurrences(of: "-", with: "").uppercased()
-        if hex.count >= 4 {
-            return String(hex.prefix(4))
+        if hex.count >= 6 {
+            return String(hex.prefix(6))
         }
-        return String(UUID().uuidString.replacingOccurrences(of: "-", with: "").prefix(4)).uppercased()
+        return String(UUID().uuidString.replacingOccurrences(of: "-", with: "").prefix(6)).uppercased()
+    }
+
+    /// Account allowed to approve over WeChat. Unset means inbound text never approves.
+    public func boundApprovalSender() -> String? {
+        guard let value = try? store.configurationValue(Self.senderPath) else { return nil }
+        if let text = value.stringValue, !text.isEmpty { return text }
+        if let object = value.objectValue, let text = object["sender"]?.stringValue, !text.isEmpty {
+            return text
+        }
+        return nil
     }
 
     public func register(
@@ -137,6 +151,7 @@ public final class WeChatApprovalBridge: @unchecked Sendable {
         }
         byCallID[callID] = Entry(shortId: sid, title: title, name: name, resolve: onResolve)
         callIDByShortId[sid] = callID
+        pushedAtByShortId[sid.uppercased()] = Date()
     }
 
     /// Remove without invoking the resolve callback (socket path already resumed).
@@ -315,38 +330,36 @@ public final class WeChatApprovalBridge: @unchecked Sendable {
 
     // MARK: - Inbound
 
-    /// Parse approve/deny from WeChat (or test) text. Bare 同意/拒绝 resolves the
-    /// sole pending item; with multiple pending, shortId is required.
-    /// Late replies for an already-settled shortId get a brief WeChat ack and
-    /// do **not** flip or re-fire the decision.
+    /// Parse approve/deny from WeChat. Requires the bound sender, a message time
+    /// at or after the push, a fresh cursor, and a 6-character approval id.
     @discardableResult
-    public func handleInboundText(_ text: String) -> Bool {
-        guard let decision = Self.parseDecision(text) else { return false }
-
-        if let shortId = decision.shortId {
-            if resolve(shortId: shortId, approved: decision.approved) {
-                return true
-            }
-            return ackIfAlreadySettled(shortId: shortId)
-        }
-
-        lock.lock()
-        let ids = Array(byCallID.keys)
-        lock.unlock()
-        if ids.count == 1, let only = ids.first {
-            return resolve(callID: only, approved: decision.approved)
-        }
-        if ids.isEmpty {
-            // No pending: if exactly one recent settled, treat bare 同意/拒绝 as late ack.
+    public func handleInboundText(
+        _ text: String,
+        sender: String? = nil,
+        sentAt: Date? = nil,
+        cursor: String? = nil
+    ) -> Bool {
+        guard let bound = boundApprovalSender(), !bound.isEmpty else { return false }
+        guard let sender, sender == bound else { return false }
+        if let cursor {
             lock.lock()
-            let recent = settledByCallID.values.sorted { $0.at > $1.at }
+            let seen = seenCursors.contains(cursor)
             lock.unlock()
-            if recent.count == 1, let only = recent.first {
-                sendAlreadyDecidedAck(only, lateReply: true)
-                return true
-            }
+            if seen { return false }
         }
-        return false
+        guard let decision = Self.parseDecision(text), let shortId = decision.shortId else { return false }
+        lock.lock()
+        let pushed = pushedAtByShortId[shortId.uppercased()]
+        lock.unlock()
+        guard let sentAt, let pushed, sentAt >= pushed else { return false }
+        let accepted = resolve(shortId: shortId, approved: decision.approved)
+            || ackIfAlreadySettled(shortId: shortId)
+        if accepted, let cursor {
+            lock.lock()
+            seenCursors.insert(cursor)
+            lock.unlock()
+        }
+        return accepted
     }
 
     /// Returns true when the shortId was already decided (message consumed).
@@ -380,8 +393,8 @@ public final class WeChatApprovalBridge: @unchecked Sendable {
         public let shortId: String?
     }
 
-    /// Accepts: 同意 / 拒绝 / 批准 / 允许 / yes / no / approve / deny,
-    /// optional shortId: `同意 AB12`, `拒绝:ab12`, `approve ab12`.
+    /// Accepts 同意 / 拒绝 / 批准 / 允许 / approve / deny only when followed by
+    /// a 6-character hex id. `ok`, `y`, `yes`, `no` and a bare 同意 are ignored.
     public static func parseDecision(_ raw: String) -> Decision? {
         let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return nil }
@@ -392,38 +405,32 @@ public final class WeChatApprovalBridge: @unchecked Sendable {
             .replacingOccurrences(of: "　", with: " ")
         let lower = normalized.lowercased()
 
-        let approveTokens = ["同意", "批准", "允许", "approve", "yes", "y", "ok", "允许执行"]
-        let denyTokens = ["拒绝", "否", "deny", "no", "n", "不允许"]
+        let approveTokens = ["允许执行", "同意", "批准", "允许", "approve"]
+        let denyTokens = ["不允许", "拒绝", "deny"]
 
-        func match(tokens: [String]) -> (matched: Bool, shortId: String?) {
+        func match(tokens: [String]) -> String? {
             for token in tokens {
                 let t = token.lowercased()
-                if lower == t {
-                    return (true, nil)
-                }
+                let rest: String
                 if lower.hasPrefix(t + " ") {
-                    let rest = normalized.dropFirst(token.count).trimmingCharacters(in: .whitespacesAndNewlines)
-                    let sid = extractShortId(from: String(rest))
-                    return (true, sid)
+                    rest = normalized.dropFirst(token.count).trimmingCharacters(in: .whitespacesAndNewlines)
+                } else if token.count >= 2, lower.hasPrefix(t), lower.count > t.count {
+                    rest = String(normalized.dropFirst(token.count))
+                } else {
+                    continue
                 }
-                // Chinese without space: 同意AB12
-                if token.count >= 2, lower.hasPrefix(t), lower.count > t.count {
-                    let rest = String(normalized.dropFirst(token.count))
-                    if let sid = extractShortId(from: rest) {
-                        return (true, sid)
-                    }
+                if let sid = extractShortId(from: rest) {
+                    return sid
                 }
             }
-            return (false, nil)
+            return nil
         }
 
-        let approve = match(tokens: approveTokens)
-        if approve.matched {
-            return Decision(approved: true, shortId: approve.shortId)
+        if let shortId = match(tokens: denyTokens) {
+            return Decision(approved: false, shortId: shortId)
         }
-        let deny = match(tokens: denyTokens)
-        if deny.matched {
-            return Decision(approved: false, shortId: deny.shortId)
+        if let shortId = match(tokens: approveTokens) {
+            return Decision(approved: true, shortId: shortId)
         }
         return nil
     }
@@ -432,8 +439,8 @@ public final class WeChatApprovalBridge: @unchecked Sendable {
         let hex = rest.trimmingCharacters(in: .whitespacesAndNewlines)
             .replacingOccurrences(of: "-", with: "")
             .uppercased()
-        guard hex.count >= 4 else { return nil }
-        let candidate = String(hex.prefix(4))
+        guard hex.count >= 6 else { return nil }
+        let candidate = String(hex.prefix(6))
         guard candidate.unicodeScalars.allSatisfy({ CharacterSet(charactersIn: "0123456789ABCDEF").contains($0) }) else {
             return nil
         }

@@ -406,6 +406,16 @@ public final class MailChannel: @unchecked Sendable {
         let subjectTrim = subject.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !toTrim.isEmpty else { throw MailError.invalidArgument("to is required") }
         guard !subjectTrim.isEmpty else { throw MailError.invalidArgument("subject is required") }
+        let toParts = toTrim.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+        for recipient in toParts {
+            try MailHeader.requireAddress(recipient, field: "to")
+        }
+        try MailHeader.rejectLineBreak(subjectTrim, field: "subject")
+        if let cc, !cc.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            for recipient in cc.split(separator: ",").map({ $0.trimmingCharacters(in: .whitespaces) }).filter({ !$0.isEmpty }) {
+                try MailHeader.requireAddress(recipient, field: "cc")
+            }
+        }
 
         let account = loadAccount()
         let from = account.email

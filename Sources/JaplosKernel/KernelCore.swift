@@ -14,7 +14,7 @@ public final class KernelCore: @unchecked Sendable {
     /// WeChat side-channel for tool approvals (desktop card remains primary).
     public let wechatApprovalBridge: WeChatApprovalBridge
     public let startedAt = Date()
-    public let version = "1.0.0"
+    public let version = ProductVersion.marketing
     public let workspace: URL
 
     private let lock = NSLock()
@@ -118,7 +118,7 @@ public final class KernelCore: @unchecked Sendable {
     public func handleStreaming(
         _ request: KernelRequest,
         emit: @escaping (KernelResponse) -> Void,
-        approval: @escaping StreamApprovalProvider = { _, _ in true }
+        approval: @escaping StreamApprovalProvider
     ) async {
         guard request.operation == .chatSend,
               let handler = lock.withLock({ _streamingChatHandler }) else {
@@ -178,6 +178,12 @@ public final class KernelCore: @unchecked Sendable {
         }
 
         do {
+            if KernelRetiredOperations.all.contains(request.operation) {
+                return .failure(
+                    .notFound("disabled operation \(request.operation.rawValue)"),
+                    requestID: requestID
+                )
+            }
             switch request.operation {
             case .kernelStatus:
                 let stats = try store.statistics()
@@ -308,19 +314,6 @@ public final class KernelCore: @unchecked Sendable {
                 let limit = request.arguments["limit"]?.intValue ?? 200
                 let turns = try store.history(sessionID: sessionID, limit: limit)
                 return .success(.array(turns.map { Self.encode(turn: $0) }), requestID: requestID)
-
-            case .chatTurnAppend:
-                guard
-                    let sessionID = request.arguments["sessionID"]?.stringValue,
-                    let text = request.arguments["text"]?.stringValue
-                else {
-                    return .failure(.invalidArgument("sessionID and text are required"), requestID: requestID)
-                }
-                let role = ChatRole(rawValue: request.arguments["role"]?.stringValue ?? "user") ?? .user
-                let turn = ChatTurn(sessionID: sessionID, role: role, text: text)
-                try store.appendTurn(turn)
-                try store.touchSession(sessionID)
-                return .success(Self.encode(turn: turn), requestID: requestID)
 
             case .toolList:
                 let all = tools.definitions() + mcp.definitions
@@ -585,42 +578,6 @@ public final class KernelCore: @unchecked Sendable {
                 )
                 return .success(.object(["id": .string(delegationID), "saved": .bool(true)]), requestID: requestID)
 
-            case .informationRevisionsList:
-                let informationID = request.arguments["informationID"]?.stringValue
-                let limit = request.arguments["limit"]?.intValue ?? 50
-                return .success(.array(try store.listInformationRevisions(informationID: informationID, limit: limit)), requestID: requestID)
-
-            case .informationRevisionsUpsert:
-                let rawID = request.arguments["revisionID"]?.stringValue
-                    ?? request.arguments["id"]?.stringValue
-                let trimmed = rawID?.trimmingCharacters(in: .whitespacesAndNewlines)
-                let revisionID = (trimmed?.isEmpty == false) ? trimmed! : UUID().uuidString
-                guard let informationID = request.arguments["informationID"]?.stringValue, !informationID.isEmpty else {
-                    return .failure(.invalidArgument("informationID is required"), requestID: requestID)
-                }
-                let type = request.arguments["type"]?.stringValue ?? "note"
-                let namespace = request.arguments["namespace"]?.stringValue ?? "default"
-                let owner = request.arguments["owner"]?.stringValue ?? request.principal
-                let observedAt: Date
-                if let iso = request.arguments["observedAt"]?.stringValue, let parsed = ISO8601.date(from: iso) {
-                    observedAt = parsed
-                } else if let epoch = request.arguments["observedAtEpoch"]?.doubleValue {
-                    observedAt = Date(timeIntervalSince1970: epoch)
-                } else {
-                    observedAt = Date()
-                }
-                let record = request.arguments["record"] ?? .object([:])
-                try store.upsertInformationRevision(
-                    revisionID: revisionID,
-                    informationID: informationID,
-                    type: type,
-                    namespace: namespace,
-                    owner: owner,
-                    observedAt: observedAt,
-                    record: record
-                )
-                return .success(.object(["revisionID": .string(revisionID), "saved": .bool(true)]), requestID: requestID)
-
             case .toolArtifactsList:
                 let projectID = request.arguments["projectID"]?.stringValue
                 let limit = request.arguments["limit"]?.intValue ?? 50
@@ -648,62 +605,6 @@ public final class KernelCore: @unchecked Sendable {
                     record: record
                 )
                 return .success(.object(["id": .string(artifactID), "saved": .bool(true)]), requestID: requestID)
-
-            case .informationTypesList:
-                let limit = request.arguments["limit"]?.intValue ?? 100
-                return .success(.array(try store.listInformationTypes(limit: limit)), requestID: requestID)
-
-            case .informationTypesUpsert:
-                guard let typeID = request.arguments["typeID"]?.stringValue?.trimmingCharacters(in: .whitespacesAndNewlines),
-                      !typeID.isEmpty else {
-                    return .failure(.invalidArgument("typeID is required"), requestID: requestID)
-                }
-                let schemaVersion = request.arguments["schemaVersion"]?.intValue ?? 1
-                let record = request.arguments["record"] ?? .object([:])
-                try store.upsertInformationType(typeID: typeID, schemaVersion: schemaVersion, record: record)
-                return .success(.object([
-                    "typeID": .string(typeID),
-                    "schemaVersion": .number(Double(schemaVersion)),
-                    "saved": .bool(true),
-                ]), requestID: requestID)
-
-            case .informationHeadsList:
-                let limit = request.arguments["limit"]?.intValue ?? 100
-                return .success(.array(try store.listInformationHeads(limit: limit)), requestID: requestID)
-
-            case .informationHeadsSet:
-                guard let informationID = request.arguments["informationID"]?.stringValue, !informationID.isEmpty else {
-                    return .failure(.invalidArgument("informationID is required"), requestID: requestID)
-                }
-                guard let revisionID = request.arguments["revisionID"]?.stringValue, !revisionID.isEmpty else {
-                    return .failure(.invalidArgument("revisionID is required"), requestID: requestID)
-                }
-                try store.setInformationHead(informationID: informationID, revisionID: revisionID)
-                return .success(.object([
-                    "informationID": .string(informationID),
-                    "revisionID": .string(revisionID),
-                    "saved": .bool(true),
-                ]), requestID: requestID)
-
-            case .informationProcessorsList:
-                let limit = request.arguments["limit"]?.intValue ?? 100
-                return .success(.array(try store.listInformationProcessors(limit: limit)), requestID: requestID)
-
-            case .informationProcessorsUpsert:
-                let raw = request.arguments["id"]?.stringValue?.trimmingCharacters(in: .whitespacesAndNewlines)
-                let processorID = (raw?.isEmpty == false) ? raw! : UUID().uuidString
-                let moduleID = request.arguments["moduleID"]?.stringValue ?? "default"
-                let capability = request.arguments["capability"]?.stringValue ?? "*"
-                let priority = request.arguments["priority"]?.intValue ?? 0
-                let record = request.arguments["record"] ?? .object([:])
-                try store.upsertInformationProcessor(
-                    id: processorID,
-                    moduleID: moduleID,
-                    capability: capability,
-                    priority: priority,
-                    record: record
-                )
-                return .success(.object(["id": .string(processorID), "saved": .bool(true)]), requestID: requestID)
 
             case .deliveriesList:
                 let subscriptionID = request.arguments["subscriptionID"]?.stringValue
@@ -759,70 +660,21 @@ public final class KernelCore: @unchecked Sendable {
                     "tableCount": .number(Double(counts.count)),
                 ]), requestID: requestID)
 
-            case .runtimeLedgerTables:
-                return .success(.array(KernelStore.runtimeLedgerTables.map { .string($0) }), requestID: requestID)
-
-            case .runtimeLedgerList:
-                guard let table = request.arguments["table"]?.stringValue, !table.isEmpty else {
-                    return .failure(.invalidArgument("table is required"), requestID: requestID)
-                }
-                let limit = request.arguments["limit"]?.intValue ?? 50
-                return .success(.array(try store.listRuntimeLedger(table: table, limit: limit)), requestID: requestID)
-
-            case .runtimeLedgerUpsert:
-                guard let table = request.arguments["table"]?.stringValue, !table.isEmpty else {
-                    return .failure(.invalidArgument("table is required"), requestID: requestID)
-                }
-                let id = request.arguments["id"]?.stringValue
-                let record = request.arguments["record"] ?? .object([:])
-                let saved = try store.upsertRuntimeLedger(table: table, id: id, record: record)
-                return .success(.object([
-                    "table": .string(table),
-                    "id": .string(saved),
-                    "saved": .bool(true),
-                ]), requestID: requestID)
-
-            case .runtimeLedgerDelete:
-                guard let table = request.arguments["table"]?.stringValue, !table.isEmpty else {
-                    return .failure(.invalidArgument("table is required"), requestID: requestID)
-                }
-                guard let id = request.arguments["id"]?.stringValue, !id.isEmpty else {
-                    return .failure(.invalidArgument("id is required"), requestID: requestID)
-                }
-                try store.deleteRuntimeLedger(table: table, id: id)
-                return .success(.object([
-                    "table": .string(table),
-                    "id": .string(id),
-                    "deleted": .bool(true),
-                ]), requestID: requestID)
-
             // MARK: WeChat
-            case .runtimeWeChatStatus, .wechatLoginStatus, .wechatConnectionRead, .wechatConnections:
+            case .runtimeWeChatStatus:
                 return .success(enrichedWeChatStatus(), requestID: requestID)
 
-            case .runtimeWeChatConnect, .wechatLoginStart:
+            case .runtimeWeChatConnect:
                 return .success(try await wechat.connect(), requestID: requestID)
 
             case .runtimeWeChatDisconnect:
                 return .success(try wechat.disconnect(), requestID: requestID)
 
-            case .runtimeWeChatVerify, .wechatLoginVerify:
+            case .runtimeWeChatVerify:
                 let code = request.arguments["code"]?.stringValue
                     ?? request.arguments["verificationCode"]?.stringValue
                     ?? ""
                 return .success(try wechat.verify(code: code), requestID: requestID)
-
-            case .runtimeWeChatSendText:
-                let text = request.arguments["text"]?.stringValue ?? ""
-                let suppress = request.arguments["suppressAck"]?.boolValue ?? false
-                return .success(try wechat.sendText(text: text, suppressAck: suppress), requestID: requestID)
-
-            case .runtimeWeChatSendFile:
-                let path = request.arguments["path"]?.stringValue
-                    ?? request.arguments["filePath"]?.stringValue
-                    ?? ""
-                let suppress = request.arguments["suppressTextReplyOnSuccess"]?.boolValue ?? false
-                return .success(try wechat.sendFile(path: path, suppressTextReplyOnSuccess: suppress), requestID: requestID)
 
             case .wechatConnectionList:
                 return .success(try wechat.listConnections(), requestID: requestID)
@@ -833,23 +685,14 @@ public final class KernelCore: @unchecked Sendable {
                     ?? ""
                 return .success(try wechat.removeConnection(id: id), requestID: requestID)
 
-            case .wechatConnectionManage, .wechatLoginEvents:
-                // Manage/events: status + connections summary (credential-free).
-                let status = enrichedWeChatStatus()
-                let list = try wechat.listConnections()
-                return .success(.object([
-                    "status": status,
-                    "connections": list["connections"] ?? .array([]),
-                ]), requestID: requestID)
-
             // MARK: Feishu
-            case .runtimeFeishuStatus, .feishuConnectionStatus, .feishuConnectionRead:
+            case .runtimeFeishuStatus:
                 return .success(try feishu.status(), requestID: requestID)
 
             case .runtimeFeishuConnect:
                 return .success(try await feishu.connect(), requestID: requestID)
 
-            case .runtimeFeishuDisconnect, .feishuConnectionDisconnect:
+            case .runtimeFeishuDisconnect:
                 return .success(try feishu.disconnect(), requestID: requestID)
 
             case .runtimeFeishuSession:
@@ -873,7 +716,7 @@ public final class KernelCore: @unchecked Sendable {
             case .feishuConfigurationCancel:
                 return .success(try feishu.cancelConfiguration(), requestID: requestID)
 
-            case .feishuConnectionConfigure, .feishuConnectionManage:
+            case .feishuConnectionConfigure:
                 return .success(try feishu.configure(
                     appID: request.arguments["appId"]?.stringValue ?? request.arguments["app_id"]?.stringValue,
                     appSecret: request.arguments["appSecret"]?.stringValue ?? request.arguments["app_secret"]?.stringValue,
@@ -881,14 +724,11 @@ public final class KernelCore: @unchecked Sendable {
                         ?? request.arguments["verification_token"]?.stringValue
                 ), requestID: requestID)
 
-            case .runtimeKnowledgeImportFeishu:
-                return .success(feishu.importKnowledgeStub(), requestID: requestID)
-
             // MARK: Mail
-            case .runtimeMailStatus, .mailConnectionStatus:
+            case .runtimeMailStatus:
                 return .success(try mail.status(), requestID: requestID)
 
-            case .runtimeMailConfigure, .mailConnectionConfigure:
+            case .runtimeMailConfigure:
                 let imapPort = request.arguments["imapPort"]?.intValue
                     ?? request.arguments["imap_port"]?.intValue
                 let smtpPort = request.arguments["smtpPort"]?.intValue
@@ -909,10 +749,10 @@ public final class KernelCore: @unchecked Sendable {
                     smtpPort: smtpPort
                 ), requestID: requestID)
 
-            case .runtimeMailConnect, .mailConnectionConnect:
+            case .runtimeMailConnect:
                 return .success(try await mail.connect(), requestID: requestID)
 
-            case .runtimeMailDisconnect, .mailConnectionDisconnect:
+            case .runtimeMailDisconnect:
                 return .success(try mail.disconnect(), requestID: requestID)
 
             case .runtimeMailClearSecrets:

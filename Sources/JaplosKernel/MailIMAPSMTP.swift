@@ -1,6 +1,31 @@
 import Foundation
 import JaplosProtocol
 
+enum MailHeader {
+    static func rejectLineBreak(_ value: String, field: String) throws {
+        if value.contains(where: { $0 == "\r" || $0 == "\n" || $0 == "\0" }) {
+            throw MailError.invalidArgument("\(field) contains a line break")
+        }
+    }
+
+    static func requireAddress(_ value: String, field: String) throws {
+        try rejectLineBreak(value, field: field)
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        let address: String
+        if let open = trimmed.lastIndex(of: "<"), trimmed.hasSuffix(">"), open < trimmed.index(before: trimmed.endIndex) {
+            let start = trimmed.index(after: open)
+            let end = trimmed.index(before: trimmed.endIndex)
+            address = String(trimmed[start..<end])
+        } else {
+            address = trimmed
+        }
+        let pattern = #"^[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}$"#
+        guard address.range(of: pattern, options: .regularExpression) != nil else {
+            throw MailError.invalidArgument("\(field) is not an email address")
+        }
+    }
+}
+
 /// Thin IMAP client over MailTLSClient.
 final class IMAPSession {
     private let client: MailTLSClient
@@ -27,7 +52,8 @@ final class IMAPSession {
         return "A\(tagCounter)"
     }
 
-    private static func quoted(_ s: String) -> String {
+    private static func quoted(_ s: String) throws -> String {
+        try MailHeader.rejectLineBreak(s, field: "IMAP")
         let escaped = s
             .replacingOccurrences(of: "\\", with: "\\\\")
             .replacingOccurrences(of: "\"", with: "\\\"")
@@ -36,7 +62,7 @@ final class IMAPSession {
 
     func login(user: String, password: String) throws {
         let tag = nextTag()
-        try client.writeLine("\(tag) LOGIN \(Self.quoted(user)) \(Self.quoted(password))")
+        try client.writeLine("\(tag) LOGIN \(try Self.quoted(user)) \(try Self.quoted(password))")
         let lines = try client.readUntil { $0.hasPrefix(tag + " ") }
         guard let last = lines.last, last.uppercased().contains("\(tag) OK") else {
             throw MailError.protocolFailure("IMAP LOGIN failed: \(lines.last ?? "")")
@@ -45,7 +71,7 @@ final class IMAPSession {
 
     func select(mailbox: String) throws {
         let tag = nextTag()
-        try client.writeLine("\(tag) SELECT \(Self.quoted(mailbox))")
+        try client.writeLine("\(tag) SELECT \(try Self.quoted(mailbox))")
         let lines = try client.readUntil { $0.hasPrefix(tag + " ") }
         guard let last = lines.last, last.uppercased().contains("\(tag) OK") else {
             throw MailError.protocolFailure("IMAP SELECT failed: \(lines.last ?? "")")
@@ -153,6 +179,12 @@ enum SMTPClient {
         data: Data,
         timeout: TimeInterval
     ) throws {
+        try MailHeader.requireAddress(from, field: "from")
+        for rcpt in recipients {
+            let trimmed = rcpt.trimmingCharacters(in: .whitespacesAndNewlines)
+            if trimmed.isEmpty { continue }
+            try MailHeader.requireAddress(trimmed, field: "to")
+        }
         let client = try MailTLSClient(host: host, port: port, timeout: timeout)
         defer { client.close() }
 

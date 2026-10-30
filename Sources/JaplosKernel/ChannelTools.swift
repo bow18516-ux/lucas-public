@@ -9,8 +9,6 @@ public enum ChannelTools {
             WeChatConnectTool(channel: wechat),
             WeChatDisconnectTool(channel: wechat),
             WeChatVerifyTool(channel: wechat),
-            WeChatSendTextTool(channel: wechat),
-            WeChatSendFileTool(channel: wechat),
             FeishuStatusTool(channel: feishu),
             FeishuConnectTool(channel: feishu),
             FeishuDisconnectTool(channel: feishu),
@@ -34,7 +32,8 @@ private struct WeChatStatusTool: KernelTool {
                 "additionalProperties": false,
             ]),
             capability: Capability.channelRead,
-            risk: .low
+            risk: .low,
+            approval: .never
         )
     }
     func invoke(arguments: JSONValue, context: ToolContext) async throws -> JSONValue {
@@ -109,6 +108,7 @@ private struct WeChatVerifyTool: KernelTool {
     }
 }
 
+// Unregistered until iLink can deliver. The RPC names are retired in KernelRetiredOperations.
 private struct WeChatSendTextTool: KernelTool {
     let channel: WeChatChannel
     var definition: ToolDefinition {
@@ -176,7 +176,8 @@ private struct FeishuStatusTool: KernelTool {
                 "additionalProperties": false,
             ]),
             capability: Capability.channelRead,
-            risk: .low
+            risk: .low,
+            approval: .never
         )
     }
     func invoke(arguments: JSONValue, context: ToolContext) async throws -> JSONValue {

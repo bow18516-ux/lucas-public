@@ -19,7 +19,8 @@ public struct WindowListTool: KernelTool {
                 "additionalProperties": false,
             ]),
             capability: Capability.systemRead,
-            risk: .low
+            risk: .low,
+            approval: .never
         )
     }
 
@@ -65,7 +66,8 @@ public struct ProcessListTool: KernelTool {
                 "additionalProperties": false,
             ]),
             capability: Capability.systemRead,
-            risk: .low
+            risk: .low,
+            approval: .never
         )
     }
 
@@ -140,7 +142,8 @@ public struct NetworkInfoTool: KernelTool {
                 "additionalProperties": false,
             ]),
             capability: Capability.systemRead,
-            risk: .low
+            risk: .low,
+            approval: .never
         )
     }
 
@@ -198,7 +201,8 @@ public struct HostnameTool: KernelTool {
                 "additionalProperties": false,
             ]),
             capability: Capability.systemRead,
-            risk: .low
+            risk: .low,
+            approval: .never
         )
     }
 
@@ -228,7 +232,8 @@ public struct OSVersionTool: KernelTool {
                 "additionalProperties": false,
             ]),
             capability: Capability.systemRead,
-            risk: .low
+            risk: .low,
+            approval: .never
         )
     }
 
@@ -260,7 +265,8 @@ public struct AppSupportPathsTool: KernelTool {
                 "additionalProperties": false,
             ]),
             capability: Capability.systemRead,
-            risk: .low
+            risk: .low,
+            approval: .never
         )
     }
 
@@ -318,7 +324,8 @@ public struct UserDefaultsTool: KernelTool {
                 "additionalProperties": false,
             ]),
             capability: Capability.systemRead,
-            risk: .low
+            risk: .low,
+            approval: .whenArgument(key: "action", isOneOf: ["set"])
         )
     }
 
@@ -398,7 +405,8 @@ public struct SystemUptimeTool: KernelTool {
                 "additionalProperties": false,
             ]),
             capability: Capability.systemRead,
-            risk: .low
+            risk: .low,
+            approval: .never
         )
     }
 

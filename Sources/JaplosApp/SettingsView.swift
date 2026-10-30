@@ -3003,10 +3003,11 @@ struct MCPServerDraft: Identifiable, Codable, Equatable {
     var oauthClientID: String
     var oauthToken: String
     var oauthAuthURL: String
+    var trustReadOnly: Bool
 
     private enum CodingKeys: String, CodingKey {
         case id, name, command, args, enabled, url
-        case oauthClientID, oauthToken, oauthAuthURL
+        case oauthClientID, oauthToken, oauthAuthURL, trustReadOnly
     }
 
     init(
@@ -3018,7 +3019,8 @@ struct MCPServerDraft: Identifiable, Codable, Equatable {
         url: String?,
         oauthClientID: String = "",
         oauthToken: String = "",
-        oauthAuthURL: String = ""
+        oauthAuthURL: String = "",
+        trustReadOnly: Bool = false
     ) {
         self.id = id
         self.name = name
@@ -3029,6 +3031,7 @@ struct MCPServerDraft: Identifiable, Codable, Equatable {
         self.oauthClientID = oauthClientID
         self.oauthToken = oauthToken
         self.oauthAuthURL = oauthAuthURL
+        self.trustReadOnly = trustReadOnly
     }
 
     init(from decoder: Decoder) throws {
@@ -3042,6 +3045,7 @@ struct MCPServerDraft: Identifiable, Codable, Equatable {
         oauthClientID = try container.decodeIfPresent(String.self, forKey: .oauthClientID) ?? ""
         oauthToken = try container.decodeIfPresent(String.self, forKey: .oauthToken) ?? ""
         oauthAuthURL = try container.decodeIfPresent(String.self, forKey: .oauthAuthURL) ?? ""
+        trustReadOnly = try container.decodeIfPresent(Bool.self, forKey: .trustReadOnly) ?? false
     }
 
     var isHTTP: Bool {
@@ -3314,6 +3318,10 @@ struct MCPSettingsPane: View {
                                     .toggleStyle(.switch)
                                     .tint(Theme.accent)
                                     .controlSize(.mini)
+                                Toggle("信任只读", isOn: bindingTrustReadOnly(for: server))
+                                    .font(.system(size: SettingsMetrics.captionSize))
+                                    .toggleStyle(.checkbox)
+                                    .help("仅当该服务的工具声明 readOnlyHint 时才免审批。默认仍要审批。")
                                 Text(statusLabel(server.id))
                                     .font(.system(size: SettingsMetrics.captionSize))
                                     .foregroundStyle(Theme.textSecondary)
@@ -3459,6 +3467,18 @@ struct MCPSettingsPane: View {
             set: { value in
                 if let idx = servers.firstIndex(where: { $0.id == id }) {
                     servers[idx][keyPath: keyPath] = value
+                }
+            }
+        )
+    }
+
+    private func bindingTrustReadOnly(for server: MCPServerDraft) -> Binding<Bool> {
+        Binding(
+            get: { servers.first(where: { $0.id == server.id })?.trustReadOnly ?? false },
+            set: { value in
+                if let idx = servers.firstIndex(where: { $0.id == server.id }) {
+                    servers[idx].trustReadOnly = value
+                    Task { await persist() }
                 }
             }
         )
