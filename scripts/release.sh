@@ -83,7 +83,7 @@ if [ -n "${LUCAS_NOTARY_PROFILE:-}" ]; then
     # which the user session already unlocked: no password on the command line.
     xcrun notarytool submit "/tmp/Lucas-$VERSION.zip" \
         --keychain-profile "$LUCAS_NOTARY_PROFILE" \
-        "${NOTARY_KEYCHAIN_ARGS[@]}" --wait
+        ${NOTARY_KEYCHAIN_ARGS[@]+"${NOTARY_KEYCHAIN_ARGS[@]}"} --wait
 
     # Staple a clean extraction of the submitted zip. Stapling the build
     # directory occasionally fails with "Error 73" after repeated rebuilds.
@@ -130,7 +130,7 @@ if [ -n "${LUCAS_NOTARY_PROFILE:-}" ]; then
     echo "notarizing dmg…"
     xcrun notarytool submit "$UPDATES/Lucas-$VERSION.dmg" \
         --keychain-profile "$LUCAS_NOTARY_PROFILE" \
-        "${NOTARY_KEYCHAIN_ARGS[@]}" --wait
+        ${NOTARY_KEYCHAIN_ARGS[@]+"${NOTARY_KEYCHAIN_ARGS[@]}"} --wait
     xcrun stapler staple "$UPDATES/Lucas-$VERSION.dmg"
     xcrun stapler validate "$UPDATES/Lucas-$VERSION.dmg"
     # Keep build/ in sync with the stapled DMG source app already stapled above.
