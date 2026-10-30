@@ -453,34 +453,38 @@ public final class KernelStore: @unchecked Sendable {
         }
         let encoded = String(data: try ProtocolCoding.encode(value), encoding: .utf8) ?? "null"
         let now = Date().timeIntervalSince1970
-        try database.execute("""
-        INSERT INTO configurations(path, scope, value_json, revision, updated_at, updated_by)
-        VALUES (?, 'user', ?, 1, ?, ?)
-        ON CONFLICT(path) DO UPDATE SET
-            value_json = excluded.value_json,
-            revision = configurations.revision + 1,
-            updated_at = excluded.updated_at,
-            updated_by = excluded.updated_by;
-        """, [path, encoded, now, updatedBy])
+        // Upsert, read the new revision, append history: one transaction, or two
+        // writers can read the same revision and one history row is lost.
+        try database.transaction {
+            try database.execute("""
+            INSERT INTO configurations(path, scope, value_json, revision, updated_at, updated_by)
+            VALUES (?, 'user', ?, 1, ?, ?)
+            ON CONFLICT(path) DO UPDATE SET
+                value_json = excluded.value_json,
+                revision = configurations.revision + 1,
+                updated_at = excluded.updated_at,
+                updated_by = excluded.updated_by;
+            """, [path, encoded, now, updatedBy])
 
-        let revisionRows = try database.query(
-            "SELECT revision FROM configurations WHERE path = ? LIMIT 1;",
-            [path]
-        )
-        let revision = (revisionRows.first?["revision"] as? Int64) ?? 1
-        let record = JSONValue.object([
-            "path": .string(path),
-            "revision": .number(Double(revision)),
-            "scope": .string("user"),
-            "updatedAt": .string(ISO8601.string(from: Date(timeIntervalSince1970: now))),
-            "updatedBy": .string(updatedBy),
-            "value": value,
-        ])
-        let recordJSON = String(data: try ProtocolCoding.encode(record), encoding: .utf8) ?? "{}"
-        try database.execute("""
-        INSERT OR REPLACE INTO configuration_history(scope, path, revision, record_json)
-        VALUES ('user', ?, ?, ?);
-        """, [path, revision, recordJSON])
+            let revisionRows = try database.query(
+                "SELECT revision FROM configurations WHERE path = ? LIMIT 1;",
+                [path]
+            )
+            let revision = (revisionRows.first?["revision"] as? Int64) ?? 1
+            let record = JSONValue.object([
+                "path": .string(path),
+                "revision": .number(Double(revision)),
+                "scope": .string("user"),
+                "updatedAt": .string(ISO8601.string(from: Date(timeIntervalSince1970: now))),
+                "updatedBy": .string(updatedBy),
+                "value": value,
+            ])
+            let recordJSON = String(data: try ProtocolCoding.encode(record), encoding: .utf8) ?? "{}"
+            try database.execute("""
+            INSERT OR REPLACE INTO configuration_history(scope, path, revision, record_json)
+            VALUES ('user', ?, ?, ?);
+            """, [path, revision, recordJSON])
+        }
     }
 
     public func configurationHistory(path: String? = nil, limit: Int = 50) throws -> [JSONValue] {
@@ -614,19 +618,23 @@ public final class KernelStore: @unchecked Sendable {
         }
         let encoded = String(data: try ProtocolCoding.encode(sanitized), encoding: .utf8) ?? "{}"
         let now = Date().timeIntervalSince1970
-        if isDefault {
-            try database.execute("UPDATE speech_profiles SET is_default = 0;")
+        // Clear-then-insert must be atomic, or two profiles can both end up
+        // marked as the default.
+        try database.transaction {
+            if isDefault {
+                try database.execute("UPDATE speech_profiles SET is_default = 0;")
+            }
+            try database.execute("""
+            INSERT INTO speech_profiles(profile_id, provider_id, is_default, revision, updated_at, record_json)
+            VALUES (?, ?, ?, 1, ?, ?)
+            ON CONFLICT(profile_id) DO UPDATE SET
+                provider_id = excluded.provider_id,
+                is_default = excluded.is_default,
+                revision = speech_profiles.revision + 1,
+                updated_at = excluded.updated_at,
+                record_json = excluded.record_json;
+            """, [profileID, providerID, isDefault ? 1 : 0, now, encoded])
         }
-        try database.execute("""
-        INSERT INTO speech_profiles(profile_id, provider_id, is_default, revision, updated_at, record_json)
-        VALUES (?, ?, ?, 1, ?, ?)
-        ON CONFLICT(profile_id) DO UPDATE SET
-            provider_id = excluded.provider_id,
-            is_default = excluded.is_default,
-            revision = speech_profiles.revision + 1,
-            updated_at = excluded.updated_at,
-            record_json = excluded.record_json;
-        """, [profileID, providerID, isDefault ? 1 : 0, now, encoded])
     }
 
     public func resolvedVolcengineCredentials() -> (appID: String, token: String)? {

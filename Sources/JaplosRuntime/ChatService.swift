@@ -106,8 +106,13 @@ public final class ChatService: @unchecked Sendable {
             )
 
             let userTurn = ChatTurn(sessionID: session.id, role: .user, text: text)
-            try core.store.appendTurn(userTurn)
-            try core.store.touchSession(session.id, title: isFirstMessage ? Self.title(from: text) : nil)
+            let newTitle = isFirstMessage ? Self.title(from: text) : nil
+            // Turn + session touch are one write: a crash must not leave a turn
+            // that the session list does not know about.
+            try core.store.database.transaction {
+                try core.store.appendTurn(userTurn)
+                try core.store.touchSession(session.id, title: newTitle)
+            }
 
             let scene = SceneRouter.match(text)
             let tools = core.tools.definitions() + core.mcpDefinitions
@@ -164,11 +169,18 @@ public final class ChatService: @unchecked Sendable {
                     toolCalls: reply.toolCalls,
                     metadata: .object(["model": .string(connection.model)])
                 )
-                try core.store.appendTurn(assistantTurn)
                 messages.append(.assistant(text: reply.text, toolCalls: reply.toolCalls))
 
+                // The reply and (when this turn ends) the session bump land
+                // together; a turn with tool calls keeps looping.
+                try core.store.database.transaction {
+                    try core.store.appendTurn(assistantTurn)
+                    if reply.toolCalls.isEmpty {
+                        try core.store.touchSession(session.id)
+                    }
+                }
+
                 guard !reply.toolCalls.isEmpty else {
-                    try core.store.touchSession(session.id)
                     try? core.store.upsertRun(
                         id: runID,
                         agentID: "default",
@@ -244,8 +256,10 @@ public final class ChatService: @unchecked Sendable {
 
             let fallback = "工具调用次数已达上限（\(maximumToolRounds) 轮），我把目前掌握的信息整理给你。"
             let finalTurn = ChatTurn(sessionID: session.id, role: .assistant, text: fallback)
-            try core.store.appendTurn(finalTurn)
-            try core.store.touchSession(session.id)
+            try core.store.database.transaction {
+                try core.store.appendTurn(finalTurn)
+                try core.store.touchSession(session.id)
+            }
             try? core.store.upsertRun(
                 id: runID,
                 agentID: "default",
