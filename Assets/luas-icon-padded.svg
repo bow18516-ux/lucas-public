@@ -1,40 +1,36 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
-<!-- Full-bleed 1024 master; macOS applies continuous corner mask. Derived from Figma 824@100 crop→scale. -->
+<!-- White-trial AppIcon: full-bleed 1024, ghost scale(1.85) ≈78% canvas.
+     bg white · ghost black · eyes white. Dark backup: AppIcon-dark-1024.png / luas-icon-dark.svg -->
 <defs>
   <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
-    <stop offset="0" stop-color="#34353B"/>
-    <stop offset="1" stop-color="#111215"/>
+    <stop offset="0" stop-color="#FFFFFF"/>
+    <stop offset="1" stop-color="#F2F3F5"/>
   </linearGradient>
-  <radialGradient id="top" cx="380" cy="120" r="640" gradientUnits="userSpaceOnUse">
-    <stop offset="0" stop-color="#fff" stop-opacity=".16"/>
-    <stop offset="1" stop-color="#fff" stop-opacity="0"/>
+  <radialGradient id="top" cx="380" cy="80" r="720" gradientUnits="userSpaceOnUse">
+    <stop offset="0" stop-color="#000" stop-opacity=".04"/>
+    <stop offset="1" stop-color="#000" stop-opacity="0"/>
   </radialGradient>
-  <radialGradient id="glow" cx="512" cy="500" r="420" gradientUnits="userSpaceOnUse">
-    <stop offset="0" stop-color="#3D6DFF" stop-opacity=".32"/>
-    <stop offset=".6" stop-color="#3D6DFF" stop-opacity=".08"/>
+  <radialGradient id="glow" cx="512" cy="480" r="480" gradientUnits="userSpaceOnUse">
+    <stop offset="0" stop-color="#3D6DFF" stop-opacity=".10"/>
+    <stop offset=".55" stop-color="#3D6DFF" stop-opacity=".03"/>
     <stop offset="1" stop-color="#3D6DFF" stop-opacity="0"/>
   </radialGradient>
-  <linearGradient id="gh" x1="0" y1="180" x2="0" y2="860" gradientUnits="userSpaceOnUse">
-    <stop offset="0" stop-color="#FFFFFF"/>
-    <stop offset="1" stop-color="#C3C7D2"/>
+  <linearGradient id="gh" x1="0" y1="80" x2="0" y2="920" gradientUnits="userSpaceOnUse">
+    <stop offset="0" stop-color="#2A2B30"/>
+    <stop offset="1" stop-color="#111215"/>
   </linearGradient>
-  <radialGradient id="eg" cx=".4" cy=".3" r=".8">
-    <stop offset="0" stop-color="#fff" stop-opacity=".9"/>
-    <stop offset=".35" stop-color="#3D6DFF"/>
-    <stop offset="1" stop-color="#3D6DFF"/>
-  </radialGradient>
 </defs>
 <rect width="1024" height="1024" fill="url(#bg)"/>
-<!-- Map original Figma content (in 824 body coords +100 offset) onto full 1024: scale 1024/824 ≈ 1.2427 around center -->
-<g transform="translate(512 512) scale(1.242718) translate(-512 -512)">
+<rect width="1024" height="1024" fill="url(#top)"/>
+<rect width="1024" height="1024" fill="url(#glow)"/>
+<g transform="translate(512 512) scale(1.85) translate(-512 -512)">
   <g transform="translate(0,-10)">
-    <rect width="1024" height="1024" fill="url(#top)"/>
-    <rect width="1024" height="1024" fill="url(#glow)"/>
-    <ellipse cx="512" cy="790" rx="170" ry="22" fill="#000" opacity=".35"/>
+    <ellipse cx="512" cy="790" rx="170" ry="22" fill="#000" opacity=".18"/>
     <path d="M322 490 A190 190 0 0 1 702 490 L702 712 Q702 728 690.8 726 C662.9 688.1 617.2 688.1 589.3 726 Q575.3333333333334 736 561.3333333333334 726 C533.5 688.1 490.5 688.1 462.7 726 Q448.66666666666663 736 434.66666666666663 726 C406.8 688.1 361.1 688.1 333.2 726 Q322 728 322 712 Z" fill="url(#gh)"/>
-    <path d="M356 480 A158 158 0 0 1 560 334" stroke="#fff" stroke-opacity=".7" stroke-width="10" fill="none" stroke-linecap="round"/>
-    <rect x="412" y="418" width="62" height="112" rx="31" fill="url(#eg)"/>
-    <rect x="552" y="418" width="62" height="112" rx="31" fill="url(#eg)"/>
+    <path d="M356 480 A158 158 0 0 1 560 334" stroke="#fff" stroke-opacity=".22" stroke-width="10" fill="none" stroke-linecap="round"/>
+    <!-- White eyes on black ghost -->
+    <rect x="412" y="418" width="62" height="112" rx="31" fill="#FFFFFF"/>
+    <rect x="552" y="418" width="62" height="112" rx="31" fill="#FFFFFF"/>
   </g>
 </g>
 </svg>
