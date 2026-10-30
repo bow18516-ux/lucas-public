@@ -1541,18 +1541,35 @@ struct MCPServerDraft: Identifiable, Codable, Equatable {
     var args: [String]
     var enabled: Bool
     var url: String?
+    var oauthClientID: String
+    var oauthToken: String
+    var oauthAuthURL: String
 
     private enum CodingKeys: String, CodingKey {
         case id, name, command, args, enabled, url
+        case oauthClientID, oauthToken, oauthAuthURL
     }
 
-    init(id: String, name: String, command: String, args: [String], enabled: Bool, url: String?) {
+    init(
+        id: String,
+        name: String,
+        command: String,
+        args: [String],
+        enabled: Bool,
+        url: String?,
+        oauthClientID: String = "",
+        oauthToken: String = "",
+        oauthAuthURL: String = ""
+    ) {
         self.id = id
         self.name = name
         self.command = command
         self.args = args
         self.enabled = enabled
         self.url = url
+        self.oauthClientID = oauthClientID
+        self.oauthToken = oauthToken
+        self.oauthAuthURL = oauthAuthURL
     }
 
     init(from decoder: Decoder) throws {
@@ -1563,6 +1580,14 @@ struct MCPServerDraft: Identifiable, Codable, Equatable {
         args = try container.decodeIfPresent([String].self, forKey: .args) ?? []
         enabled = try container.decodeIfPresent(Bool.self, forKey: .enabled) ?? true
         url = try container.decodeIfPresent(String.self, forKey: .url)
+        oauthClientID = try container.decodeIfPresent(String.self, forKey: .oauthClientID) ?? ""
+        oauthToken = try container.decodeIfPresent(String.self, forKey: .oauthToken) ?? ""
+        oauthAuthURL = try container.decodeIfPresent(String.self, forKey: .oauthAuthURL) ?? ""
+    }
+
+    var isHTTP: Bool {
+        if let url, !url.isEmpty { return true }
+        return false
     }
 }
 
@@ -1574,8 +1599,12 @@ struct MCPSettingsPane: View {
     @State private var url = ""
     @State private var command = "python3"
     @State private var arguments = ""
+    @State private var oauthClientID = ""
+    @State private var oauthToken = ""
+    @State private var oauthAuthURL = ""
     @State private var busy = false
     @State private var message: String?
+    @State private var expandedServerID: String?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -1659,6 +1688,39 @@ struct MCPSettingsPane: View {
                 Spacer()
             }
 
+            if !url.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("HTTP OAuth（可选）")
+                        .font(.system(size: SettingsMetrics.captionSize, weight: .medium))
+                        .foregroundStyle(Theme.textSecondary)
+                    HStack(spacing: 10) {
+                        TextField("Client ID", text: $oauthClientID)
+                            .textFieldStyle(.plain)
+                            .font(.system(size: SettingsMetrics.cardSubtitleSize))
+                            .padding(7)
+                            .background(Color.white.opacity(0.04), in: RoundedRectangle(cornerRadius: 6))
+                            .frame(width: 160)
+                        TextField("授权页 URL", text: $oauthAuthURL)
+                            .textFieldStyle(.plain)
+                            .font(.system(size: SettingsMetrics.cardSubtitleSize, design: .monospaced))
+                            .padding(7)
+                            .background(Color.white.opacity(0.04), in: RoundedRectangle(cornerRadius: 6))
+                        Button("打开授权页") {
+                            openAuthURL(oauthAuthURL)
+                        }
+                        .buttonStyle(.borderless)
+                        .font(.system(size: SettingsMetrics.captionSize))
+                        .foregroundStyle(Theme.accent)
+                        .disabled(oauthAuthURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    }
+                    SecureField("Access Token", text: $oauthToken)
+                        .textFieldStyle(.plain)
+                        .font(.system(size: SettingsMetrics.cardSubtitleSize, design: .monospaced))
+                        .padding(7)
+                        .background(Color.white.opacity(0.04), in: RoundedRectangle(cornerRadius: 6))
+                }
+            }
+
             if let message {
                 Text(message)
                     .font(.system(size: SettingsMetrics.captionSize))
@@ -1709,45 +1771,64 @@ struct MCPSettingsPane: View {
             } else {
                 VStack(spacing: 8) {
                     ForEach(servers) { server in
-                        HStack(spacing: 10) {
-                            Circle()
-                                .fill(statusColor(server.id))
-                                .frame(width: 6, height: 6)
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(server.name)
-                                    .font(.system(size: SettingsMetrics.labelSize, weight: .medium))
-                                    .foregroundStyle(Theme.textPrimary)
-                                Text(serverSubtitle(server))
-                                    .font(.system(size: SettingsMetrics.captionSize, design: .monospaced))
-                                    .foregroundStyle(Theme.textSecondary)
-                                    .lineLimit(1)
-                            }
-                            Spacer()
-                            Toggle("", isOn: bindingEnabled(for: server))
-                                .labelsHidden()
-                                .toggleStyle(.switch)
-                                .tint(Theme.accent)
-                                .controlSize(.mini)
-                            Text(statusLabel(server.id))
-                                .font(.system(size: SettingsMetrics.captionSize))
-                                .foregroundStyle(Theme.textSecondary)
-                            Button {
-                                Task { await reconnect(server) }
-                            } label: {
-                                Image(systemName: "arrow.clockwise")
-                                    .font(.system(size: SettingsMetrics.captionSize))
-                                    .foregroundStyle(Theme.accent)
-                            }
-                            .buttonStyle(.borderless)
-                            .help("重新连接")
-                            Button {
-                                Task { await removeServer(server) }
-                            } label: {
-                                Image(systemName: "trash")
+                        VStack(alignment: .leading, spacing: 8) {
+                            HStack(spacing: 10) {
+                                Circle()
+                                    .fill(statusColor(server.id))
+                                    .frame(width: 6, height: 6)
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(server.name)
+                                        .font(.system(size: SettingsMetrics.labelSize, weight: .medium))
+                                        .foregroundStyle(Theme.textPrimary)
+                                    Text(serverSubtitle(server))
+                                        .font(.system(size: SettingsMetrics.captionSize, design: .monospaced))
+                                        .foregroundStyle(Theme.textSecondary)
+                                        .lineLimit(1)
+                                }
+                                Spacer()
+                                Toggle("", isOn: bindingEnabled(for: server))
+                                    .labelsHidden()
+                                    .toggleStyle(.switch)
+                                    .tint(Theme.accent)
+                                    .controlSize(.mini)
+                                Text(statusLabel(server.id))
                                     .font(.system(size: SettingsMetrics.captionSize))
                                     .foregroundStyle(Theme.textSecondary)
+                                if server.isHTTP {
+                                    Button {
+                                        withAnimation {
+                                            expandedServerID = expandedServerID == server.id ? nil : server.id
+                                        }
+                                    } label: {
+                                        Image(systemName: "key")
+                                            .font(.system(size: SettingsMetrics.captionSize))
+                                            .foregroundStyle(Theme.accent)
+                                    }
+                                    .buttonStyle(.borderless)
+                                    .help("OAuth")
+                                }
+                                Button {
+                                    Task { await reconnect(server) }
+                                } label: {
+                                    Image(systemName: "arrow.clockwise")
+                                        .font(.system(size: SettingsMetrics.captionSize))
+                                        .foregroundStyle(Theme.accent)
+                                }
+                                .buttonStyle(.borderless)
+                                .help("重新连接")
+                                Button {
+                                    Task { await removeServer(server) }
+                                } label: {
+                                    Image(systemName: "trash")
+                                        .font(.system(size: SettingsMetrics.captionSize))
+                                        .foregroundStyle(Theme.textSecondary)
+                                }
+                                .buttonStyle(.borderless)
                             }
-                            .buttonStyle(.borderless)
+
+                            if server.isHTTP, expandedServerID == server.id {
+                                oauthEditor(for: server)
+                            }
                         }
                         .padding(9)
                         .background(Color.white.opacity(0.025), in: RoundedRectangle(cornerRadius: 7))
@@ -1800,6 +1881,64 @@ struct MCPSettingsPane: View {
         command = ""
         arguments = ""
         message = "已填入 HTTP 示例；请先本地跑起 mcp_http_server.py 再添加"
+    }
+
+    private func openAuthURL(_ raw: String) {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let url = URL(string: trimmed), !trimmed.isEmpty else { return }
+        NSWorkspace.shared.open(url)
+    }
+
+    @ViewBuilder
+    private func oauthEditor(for server: MCPServerDraft) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("OAuth")
+                .font(.system(size: SettingsMetrics.captionSize, weight: .medium))
+                .foregroundStyle(Theme.textSecondary)
+            HStack(spacing: 8) {
+                TextField("Client ID", text: bindingOAuth(server.id, keyPath: \.oauthClientID))
+                    .textFieldStyle(.plain)
+                    .font(.system(size: SettingsMetrics.captionSize))
+                    .padding(6)
+                    .background(Color.white.opacity(0.04), in: RoundedRectangle(cornerRadius: 5))
+                TextField("授权页 URL", text: bindingOAuth(server.id, keyPath: \.oauthAuthURL))
+                    .textFieldStyle(.plain)
+                    .font(.system(size: SettingsMetrics.captionSize, design: .monospaced))
+                    .padding(6)
+                    .background(Color.white.opacity(0.04), in: RoundedRectangle(cornerRadius: 5))
+                Button("打开授权页") {
+                    if let idx = servers.firstIndex(where: { $0.id == server.id }) {
+                        openAuthURL(servers[idx].oauthAuthURL)
+                    }
+                }
+                .buttonStyle(.borderless)
+                .font(.system(size: SettingsMetrics.captionSize))
+                .foregroundStyle(Theme.accent)
+            }
+            SecureField("Access Token", text: bindingOAuth(server.id, keyPath: \.oauthToken))
+                .textFieldStyle(.plain)
+                .font(.system(size: SettingsMetrics.captionSize, design: .monospaced))
+                .padding(6)
+                .background(Color.white.opacity(0.04), in: RoundedRectangle(cornerRadius: 5))
+            Button("保存 OAuth") {
+                Task { await persist() }
+            }
+            .buttonStyle(.borderless)
+            .font(.system(size: SettingsMetrics.captionSize))
+            .foregroundStyle(Theme.accent)
+        }
+        .padding(.top, 2)
+    }
+
+    private func bindingOAuth(_ id: String, keyPath: WritableKeyPath<MCPServerDraft, String>) -> Binding<String> {
+        Binding(
+            get: { servers.first(where: { $0.id == id })?[keyPath: keyPath] ?? "" },
+            set: { value in
+                if let idx = servers.firstIndex(where: { $0.id == id }) {
+                    servers[idx][keyPath: keyPath] = value
+                }
+            }
+        )
     }
 
     private func bindingEnabled(for server: MCPServerDraft) -> Binding<Bool> {
@@ -1859,13 +1998,19 @@ struct MCPSettingsPane: View {
             command: isHTTP ? "" : command,
             args: isHTTP ? [] : arguments.split(separator: " ").map(String.init),
             enabled: true,
-            url: isHTTP ? url.trimmingCharacters(in: .whitespaces) : nil
+            url: isHTTP ? url.trimmingCharacters(in: .whitespaces) : nil,
+            oauthClientID: isHTTP ? oauthClientID : "",
+            oauthToken: isHTTP ? oauthToken : "",
+            oauthAuthURL: isHTTP ? oauthAuthURL : ""
         )
         servers.append(draft)
         await persist()
         name = ""
         arguments = ""
         url = ""
+        oauthClientID = ""
+        oauthToken = ""
+        oauthAuthURL = ""
     }
 
     private func removeServer(_ server: MCPServerDraft) async {

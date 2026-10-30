@@ -80,6 +80,23 @@ final class AppModel: ObservableObject {
     static let onboardingSkippedKey = "LucasOnboardingSkipped"
     @Published var isTestingModel = false
     @Published var testResult: String?
+    @Published var memoryNotes: [MemoryNote] = []
+    @Published var recentTasks: [PersistedTask] = []
+
+    struct MemoryNote: Identifiable, Equatable {
+        var id: String
+        var content: String
+        var kind: String
+        var sessionID: String
+    }
+
+    struct PersistedTask: Identifiable, Equatable {
+        var id: String
+        var title: String
+        var state: String
+        var sessionID: String
+        var updatedAt: Date
+    }
 
     let client: KernelClient
     let voice = SpeechOutput()
@@ -140,6 +157,8 @@ final class AppModel: ObservableObject {
         } else if let id = currentSessionID {
             await loadHistory(sessionID: id)
         }
+        await loadMemories()
+        await loadRecentTasks()
     }
 
     // MARK: - Sessions
@@ -166,6 +185,8 @@ final class AppModel: ObservableObject {
             currentSessionID = id
             messages = []
             await loadSessions()
+            await loadMemories()
+            await loadRecentTasks()
         } catch {
             errorText = String(describing: error)
         }
@@ -175,6 +196,8 @@ final class AppModel: ObservableObject {
         currentSessionID = id
         messages = []
         await loadHistory(sessionID: id)
+        await loadMemories()
+        await loadRecentTasks()
     }
 
     func loadHistory(sessionID: String) async {
@@ -330,7 +353,122 @@ final class AppModel: ObservableObject {
                 messages[index].text += "\n\n（中断：\(message)）"
             }
         }
+        if !messages[index].steps.isEmpty {
+            await persistAgentTask(
+                sessionID: sessionID,
+                steps: messages[index].steps,
+                preview: trimmed
+            )
+        }
+        await loadMemories()
+        await loadRecentTasks()
         isSending = false
+    }
+
+    func loadMemories(limit: Int = 40) async {
+        do {
+            var args: [String: JSONValue] = ["limit": .number(Double(limit))]
+            if let sessionID = currentSessionID {
+                args["sessionID"] = .string(sessionID)
+            }
+            let result = try await client.callAsync(.memoryList, arguments: .object(args))
+            memoryNotes = (result.arrayValue ?? []).compactMap { item in
+                guard let id = item["id"]?.stringValue else { return nil }
+                let content = item["content"]?.stringValue
+                    ?? item["record"]?["content"]?.stringValue
+                    ?? ""
+                guard !content.isEmpty else { return nil }
+                return MemoryNote(
+                    id: id,
+                    content: content,
+                    kind: item["kind"]?.stringValue ?? "note",
+                    sessionID: item["sessionID"]?.stringValue ?? ""
+                )
+            }
+        } catch {
+            // Keep session-title fallback in UI when kernel is offline.
+        }
+    }
+
+    func rememberNote(_ content: String) async {
+        let trimmed = content.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        do {
+            var args: [String: JSONValue] = [
+                "content": .string(trimmed),
+                "kind": .string("note"),
+            ]
+            if let sessionID = currentSessionID {
+                args["sessionID"] = .string(sessionID)
+            }
+            _ = try await client.callAsync(.memoryUpsert, arguments: .object(args))
+            await loadMemories()
+        } catch {
+            errorText = (error as? ClientError)?.description ?? String(describing: error)
+        }
+    }
+
+    func rememberLatestUserMessage() async {
+        guard let last = messages.last(where: { $0.role == "user" }) else { return }
+        await rememberNote(String(last.text.prefix(280)))
+    }
+
+    func loadRecentTasks(limit: Int = 20) async {
+        do {
+            var args: [String: JSONValue] = ["limit": .number(Double(limit))]
+            if let sessionID = currentSessionID {
+                args["sessionID"] = .string(sessionID)
+            }
+            let result = try await client.callAsync(.agentTasksList, arguments: .object(args))
+            recentTasks = (result.arrayValue ?? []).compactMap { item in
+                guard
+                    let id = item["id"]?.stringValue,
+                    let title = item["title"]?.stringValue
+                else { return nil }
+                let updated = item["updatedAt"]?.stringValue.flatMap(ISO8601.date(from:)) ?? Date()
+                return PersistedTask(
+                    id: id,
+                    title: title,
+                    state: item["state"]?.stringValue ?? "completed",
+                    sessionID: item["sessionID"]?.stringValue ?? "",
+                    updatedAt: updated
+                )
+            }
+        } catch {
+            // Soft-fail: task panel still shows in-memory steps.
+        }
+    }
+
+    private func persistAgentTask(sessionID: String, steps: [ToolStep], preview: String) async {
+        let names = steps.map(\.name)
+        let title: String
+        if names.isEmpty {
+            title = String(preview.prefix(48))
+        } else if names.count == 1 {
+            title = names[0]
+        } else {
+            title = "\(names[0]) +\(names.count - 1)"
+        }
+        let okCount = steps.filter(\.ok).count
+        let record = JSONValue.object([
+            "preview": .string(String(preview.prefix(160))),
+            "steps": .array(steps.map { step in
+                .object([
+                    "name": .string(step.name),
+                    "ok": .bool(step.ok),
+                    "detail": .string(step.detail),
+                ])
+            }),
+            "okCount": .number(Double(okCount)),
+            "stepCount": .number(Double(steps.count)),
+        ])
+        _ = try? await client.callAsync(.agentTasksUpsert, arguments: .object([
+            "id": .string(UUID().uuidString),
+            "sessionID": .string(sessionID),
+            "title": .string(title),
+            "state": .string(okCount == steps.count ? "completed" : "partial"),
+            "record": record,
+        ]))
     }
 
     func refreshModels() async {

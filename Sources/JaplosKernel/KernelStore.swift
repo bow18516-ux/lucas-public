@@ -115,6 +115,70 @@ public final class KernelStore {
             record_json TEXT NOT NULL
         );
         """)
+        try database.execute("""
+        CREATE TABLE IF NOT EXISTS memories (
+            id TEXT PRIMARY KEY NOT NULL,
+            session_id TEXT,
+            kind TEXT NOT NULL,
+            content TEXT NOT NULL,
+            created_at REAL NOT NULL,
+            record_json TEXT NOT NULL
+        );
+        """)
+        try database.execute("CREATE INDEX IF NOT EXISTS idx_memories_session_time ON memories(session_id, created_at);")
+        try database.execute("""
+        CREATE TABLE IF NOT EXISTS agent_tasks (
+            id TEXT PRIMARY KEY NOT NULL,
+            session_id TEXT,
+            title TEXT NOT NULL,
+            state TEXT NOT NULL,
+            updated_at REAL NOT NULL,
+            record_json TEXT NOT NULL
+        );
+        """)
+        try database.execute("CREATE INDEX IF NOT EXISTS idx_agent_tasks_updated ON agent_tasks(updated_at);")
+        try database.execute("""
+        CREATE TABLE IF NOT EXISTS alarms (
+            id TEXT PRIMARY KEY NOT NULL,
+            title TEXT NOT NULL,
+            fire_at REAL NOT NULL,
+            enabled INTEGER NOT NULL,
+            record_json TEXT NOT NULL
+        );
+        """)
+        try database.execute("CREATE INDEX IF NOT EXISTS idx_alarms_fire ON alarms(fire_at);")
+        try database.execute("""
+        CREATE TABLE IF NOT EXISTS mcp_events (
+            id TEXT PRIMARY KEY NOT NULL,
+            server_id TEXT NOT NULL,
+            event TEXT NOT NULL,
+            created_at REAL NOT NULL,
+            record_json TEXT NOT NULL
+        );
+        """)
+        try database.execute("CREATE INDEX IF NOT EXISTS idx_mcp_events_time ON mcp_events(created_at);")
+        try database.execute("""
+        CREATE TABLE IF NOT EXISTS persistence_migrations (
+            namespace TEXT NOT NULL,
+            version INTEGER NOT NULL,
+            applied_at REAL NOT NULL,
+            PRIMARY KEY(namespace, version)
+        );
+        """)
+        try recordPersistenceMigration(namespace: "lucas.store", version: 2)
+    }
+
+    private func recordPersistenceMigration(namespace: String, version: Int) throws {
+        let rows = try database.query(
+            "SELECT version FROM persistence_migrations WHERE namespace = ? AND version = ? LIMIT 1;",
+            [namespace, version]
+        )
+        if rows.isEmpty {
+            try database.execute(
+                "INSERT INTO persistence_migrations(namespace, version, applied_at) VALUES (?, ?, ?);",
+                [namespace, version, Date().timeIntervalSince1970]
+            )
+        }
     }
 
     // MARK: - Configuration
@@ -572,6 +636,216 @@ public final class KernelStore {
             UUID().uuidString, sessionID, tool, ok ? 1 : 0, durationMilliseconds,
             encode(arguments), encode(output), error, Date().timeIntervalSince1970,
         ])
+    }
+
+
+    // MARK: - Memories
+
+    public func listMemories(sessionID: String? = nil, limit: Int = 50) throws -> [JSONValue] {
+        let rows: [[String: Any]]
+        if let sessionID {
+            rows = try database.query(
+                """
+                SELECT id, session_id, kind, content, created_at, record_json FROM memories
+                WHERE session_id = ? ORDER BY created_at DESC LIMIT ?;
+                """,
+                [sessionID, limit]
+            )
+        } else {
+            rows = try database.query(
+                """
+                SELECT id, session_id, kind, content, created_at, record_json FROM memories
+                ORDER BY created_at DESC LIMIT ?;
+                """,
+                [limit]
+            )
+        }
+        return rows.compactMap { row in Self.decodeRecordRow(row, idKey: "id", extra: { r in
+            [
+                "sessionID": .string((r["session_id"] as? String) ?? ""),
+                "kind": .string((r["kind"] as? String) ?? "note"),
+                "content": .string((r["content"] as? String) ?? ""),
+                "createdAt": .string(ISO8601.string(from: Date(timeIntervalSince1970: (r["created_at"] as? Double) ?? 0))),
+            ]
+        })}
+    }
+
+    public func upsertMemory(
+        id: String,
+        sessionID: String?,
+        kind: String,
+        content: String,
+        record: JSONValue
+    ) throws {
+        let encoded = String(data: try ProtocolCoding.encode(record), encoding: .utf8) ?? "{}"
+        let now = Date().timeIntervalSince1970
+        try database.execute("""
+        INSERT INTO memories(id, session_id, kind, content, created_at, record_json)
+        VALUES (?, ?, ?, ?, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET
+            session_id = excluded.session_id,
+            kind = excluded.kind,
+            content = excluded.content,
+            record_json = excluded.record_json;
+        """, [id, sessionID, kind, content, now, encoded])
+    }
+
+    public func deleteMemory(id: String) throws {
+        try database.execute("DELETE FROM memories WHERE id = ?;", [id])
+    }
+
+    // MARK: - Agent tasks
+
+    public func listAgentTasks(sessionID: String? = nil, limit: Int = 50) throws -> [JSONValue] {
+        let rows: [[String: Any]]
+        if let sessionID {
+            rows = try database.query(
+                """
+                SELECT id, session_id, title, state, updated_at, record_json FROM agent_tasks
+                WHERE session_id = ? ORDER BY updated_at DESC LIMIT ?;
+                """,
+                [sessionID, limit]
+            )
+        } else {
+            rows = try database.query(
+                """
+                SELECT id, session_id, title, state, updated_at, record_json FROM agent_tasks
+                ORDER BY updated_at DESC LIMIT ?;
+                """,
+                [limit]
+            )
+        }
+        return rows.compactMap { row in Self.decodeRecordRow(row, idKey: "id", extra: { r in
+            [
+                "sessionID": .string((r["session_id"] as? String) ?? ""),
+                "title": .string((r["title"] as? String) ?? ""),
+                "state": .string((r["state"] as? String) ?? "unknown"),
+                "updatedAt": .string(ISO8601.string(from: Date(timeIntervalSince1970: (r["updated_at"] as? Double) ?? 0))),
+            ]
+        })}
+    }
+
+    public func upsertAgentTask(
+        id: String,
+        sessionID: String?,
+        title: String,
+        state: String,
+        record: JSONValue
+    ) throws {
+        let encoded = String(data: try ProtocolCoding.encode(record), encoding: .utf8) ?? "{}"
+        let now = Date().timeIntervalSince1970
+        try database.execute("""
+        INSERT INTO agent_tasks(id, session_id, title, state, updated_at, record_json)
+        VALUES (?, ?, ?, ?, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET
+            session_id = excluded.session_id,
+            title = excluded.title,
+            state = excluded.state,
+            updated_at = excluded.updated_at,
+            record_json = excluded.record_json;
+        """, [id, sessionID, title, state, now, encoded])
+    }
+
+    public func deleteAgentTask(id: String) throws {
+        try database.execute("DELETE FROM agent_tasks WHERE id = ?;", [id])
+    }
+
+    // MARK: - Alarms
+
+    public func listAlarms(limit: Int = 50) throws -> [JSONValue] {
+        try database.query(
+            "SELECT id, title, fire_at, enabled, record_json FROM alarms ORDER BY fire_at ASC LIMIT ?;",
+            [limit]
+        ).compactMap { row in Self.decodeRecordRow(row, idKey: "id", extra: { r in
+            [
+                "title": .string((r["title"] as? String) ?? ""),
+                "fireAt": .string(ISO8601.string(from: Date(timeIntervalSince1970: (r["fire_at"] as? Double) ?? 0))),
+                "enabled": .bool(((r["enabled"] as? Int64) ?? 0) != 0),
+            ]
+        })}
+    }
+
+    public func upsertAlarm(
+        id: String,
+        title: String,
+        fireAt: Date,
+        enabled: Bool,
+        record: JSONValue
+    ) throws {
+        let encoded = String(data: try ProtocolCoding.encode(record), encoding: .utf8) ?? "{}"
+        try database.execute("""
+        INSERT INTO alarms(id, title, fire_at, enabled, record_json)
+        VALUES (?, ?, ?, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET
+            title = excluded.title,
+            fire_at = excluded.fire_at,
+            enabled = excluded.enabled,
+            record_json = excluded.record_json;
+        """, [id, title, fireAt.timeIntervalSince1970, enabled ? 1 : 0, encoded])
+    }
+
+    public func deleteAlarm(id: String) throws {
+        try database.execute("DELETE FROM alarms WHERE id = ?;", [id])
+    }
+
+    // MARK: - MCP events
+
+    public func listMCPEvents(serverID: String? = nil, limit: Int = 100) throws -> [JSONValue] {
+        let rows: [[String: Any]]
+        if let serverID {
+            rows = try database.query(
+                """
+                SELECT id, server_id, event, created_at, record_json FROM mcp_events
+                WHERE server_id = ? ORDER BY created_at DESC LIMIT ?;
+                """,
+                [serverID, limit]
+            )
+        } else {
+            rows = try database.query(
+                """
+                SELECT id, server_id, event, created_at, record_json FROM mcp_events
+                ORDER BY created_at DESC LIMIT ?;
+                """,
+                [limit]
+            )
+        }
+        return rows.compactMap { row in Self.decodeRecordRow(row, idKey: "id", extra: { r in
+            [
+                "serverID": .string((r["server_id"] as? String) ?? ""),
+                "event": .string((r["event"] as? String) ?? ""),
+                "createdAt": .string(ISO8601.string(from: Date(timeIntervalSince1970: (r["created_at"] as? Double) ?? 0))),
+            ]
+        })}
+    }
+
+    public func appendMCPEvent(
+        id: String = UUID().uuidString,
+        serverID: String,
+        event: String,
+        record: JSONValue = .object([:])
+    ) throws {
+        let encoded = String(data: try ProtocolCoding.encode(record), encoding: .utf8) ?? "{}"
+        try database.execute("""
+        INSERT INTO mcp_events(id, server_id, event, created_at, record_json)
+        VALUES (?, ?, ?, ?, ?);
+        """, [id, serverID, event, Date().timeIntervalSince1970, encoded])
+    }
+
+    private static func decodeRecordRow(
+        _ row: [String: Any],
+        idKey: String,
+        extra: ([String: Any]) -> [String: JSONValue]
+    ) -> JSONValue? {
+        guard
+            let id = row[idKey] as? String,
+            let recordJSON = row["record_json"] as? String,
+            let data = recordJSON.data(using: .utf8),
+            let record = try? ProtocolCoding.decode(JSONValue.self, from: data)
+        else { return nil }
+        var object = extra(row)
+        object["id"] = .string(id)
+        object["record"] = record
+        return .object(object)
     }
 
     public func statistics() throws -> (sessions: Int, turns: Int, tools: Int) {

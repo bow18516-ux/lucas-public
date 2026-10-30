@@ -114,10 +114,15 @@ public enum CapabilityRouting {
             return Capability.toolInvoke
         case .toolApproval:
             return Capability.chatManage
-        case .mcpStatus:
+        case .mcpStatus, .mcpEventsList:
             return Capability.toolRead
         case .mcpRefresh:
             return Capability.toolManage
+        case .memoryList, .agentTasksList, .alarmList:
+            return Capability.chatRead
+        case .memoryUpsert, .memoryDelete, .agentTasksUpsert, .agentTasksDelete,
+             .alarmUpsert, .alarmDelete:
+            return Capability.chatManage
         case .modelTest, .modelCatalog, .modelRoutesList, .speechProfilesList:
             return Capability.modelInvoke
         case .modelRoutesSet, .modelRoutesDelete, .speechProfilesSet:

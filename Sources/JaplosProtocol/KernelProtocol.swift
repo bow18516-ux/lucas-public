@@ -58,6 +58,18 @@ public extension KernelOperation {
     // MCP
     static let mcpStatus = KernelOperation("mcp.status")
     static let mcpRefresh = KernelOperation("mcp.refresh")
+    static let mcpEventsList = KernelOperation("mcp.events.list")
+
+    // Memory / agent tasks / alarms (Japlos store clusters)
+    static let memoryList = KernelOperation("memory.list")
+    static let memoryUpsert = KernelOperation("memory.upsert")
+    static let memoryDelete = KernelOperation("memory.delete")
+    static let agentTasksList = KernelOperation("agent.tasks.list")
+    static let agentTasksUpsert = KernelOperation("agent.tasks.upsert")
+    static let agentTasksDelete = KernelOperation("agent.tasks.delete")
+    static let alarmList = KernelOperation("alarm.list")
+    static let alarmUpsert = KernelOperation("alarm.upsert")
+    static let alarmDelete = KernelOperation("alarm.delete")
 
     // Model
     static let modelTest = KernelOperation("model.test")

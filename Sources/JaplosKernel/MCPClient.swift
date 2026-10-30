@@ -29,6 +29,9 @@ public struct MCPServerConfig: Codable, Sendable, Equatable, Identifiable {
     public var enabled: Bool
     public var url: String?
     public var headers: [String: String]?
+    public var oauthClientID: String
+    public var oauthToken: String
+    public var oauthAuthURL: String
 
     public init(
         id: String,
@@ -37,7 +40,10 @@ public struct MCPServerConfig: Codable, Sendable, Equatable, Identifiable {
         args: [String] = [],
         enabled: Bool = true,
         url: String? = nil,
-        headers: [String: String]? = nil
+        headers: [String: String]? = nil,
+        oauthClientID: String = "",
+        oauthToken: String = "",
+        oauthAuthURL: String = ""
     ) {
         self.id = id
         self.name = name
@@ -46,6 +52,9 @@ public struct MCPServerConfig: Codable, Sendable, Equatable, Identifiable {
         self.enabled = enabled
         self.url = url
         self.headers = headers
+        self.oauthClientID = oauthClientID
+        self.oauthToken = oauthToken
+        self.oauthAuthURL = oauthAuthURL
     }
 
     public var isHTTP: Bool {
@@ -55,6 +64,7 @@ public struct MCPServerConfig: Codable, Sendable, Equatable, Identifiable {
 
     private enum CodingKeys: String, CodingKey {
         case id, name, command, args, enabled, url, headers
+        case oauthClientID, oauthToken, oauthAuthURL
     }
 
     public init(from decoder: Decoder) throws {
@@ -66,6 +76,9 @@ public struct MCPServerConfig: Codable, Sendable, Equatable, Identifiable {
         enabled = try container.decodeIfPresent(Bool.self, forKey: .enabled) ?? true
         url = try container.decodeIfPresent(String.self, forKey: .url)
         headers = try container.decodeIfPresent([String: String].self, forKey: .headers)
+        oauthClientID = try container.decodeIfPresent(String.self, forKey: .oauthClientID) ?? ""
+        oauthToken = try container.decodeIfPresent(String.self, forKey: .oauthToken) ?? ""
+        oauthAuthURL = try container.decodeIfPresent(String.self, forKey: .oauthAuthURL) ?? ""
     }
 }
 
@@ -370,6 +383,10 @@ public final class MCPHTTPClient: MCPClientProtocol, @unchecked Sendable {
                 request.setValue(value, forHTTPHeaderField: key)
             }
         }
+        let token = config.oauthToken.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !token.isEmpty, request.value(forHTTPHeaderField: "Authorization") == nil {
+            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        }
         request.httpBody = try ProtocolCoding.encode(JSONValue.object(payload))
 
         let data: Data
@@ -470,6 +487,12 @@ public final class MCPManager: @unchecked Sendable {
         statusCache.removeAll()
         lock.unlock()
 
+        try? store.appendMCPEvent(
+            serverID: "*",
+            event: "refresh",
+            record: .object(["phase": .string("start")])
+        )
+
         let configurations = loadConfigurations()
         guard !configurations.isEmpty else { return }
 
@@ -510,6 +533,15 @@ public final class MCPManager: @unchecked Sendable {
                     "toolCount": .number(Double(definitions.count)),
                 ]))
                 lock.unlock()
+                try? store.appendMCPEvent(
+                    serverID: config.id,
+                    event: "connect.success",
+                    record: .object([
+                        "name": .string(config.name),
+                        "transport": .string(config.isHTTP ? "http" : "stdio"),
+                        "toolCount": .number(Double(definitions.count)),
+                    ])
+                )
             } catch {
                 recordFailure(config: config, error: error)
             }
@@ -527,6 +559,15 @@ public final class MCPManager: @unchecked Sendable {
             "error": .string(String(describing: error)),
         ]))
         lock.unlock()
+        try? store.appendMCPEvent(
+            serverID: config.id,
+            event: "connect.failure",
+            record: .object([
+                "name": .string(config.name),
+                "transport": .string(config.isHTTP ? "http" : "stdio"),
+                "error": .string(String(describing: error)),
+            ])
+        )
     }
 
     public func invoke(_ call: ToolCall) async -> ToolExecution {
