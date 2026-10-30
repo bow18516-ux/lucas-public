@@ -2,7 +2,8 @@ import AppKit
 import Sparkle
 
 /// Shared Sparkle updater. Only starts inside a real app bundle that has a
-/// feed URL, so running the raw debug binary never shows modal errors.
+/// usable feed URL, so running the raw debug binary / placeholder builds
+/// never shows Sparkle's English "Update Error!" modal.
 @MainActor
 final class UpdateService: ObservableObject {
     static let shared = UpdateService()
@@ -18,18 +19,38 @@ final class UpdateService: ObservableObject {
     let build: String
     let feedURL: String
 
+    /// True when Info.plist still has the build-app.sh placeholder host.
+    let isPlaceholderFeed: Bool
+
     private var controller: SPUStandardUpdaterController?
 
     var isAvailable: Bool { controller != nil }
+
+    /// Short status for the Updates settings row when Sparkle is off.
+    var unavailableReason: String {
+        if ProcessInfo.processInfo.environment["LUCAS_DISABLE_UPDATER"] == "1" {
+            return "已禁用自动更新"
+        }
+        if feedURL.isEmpty {
+            return "当前包未写入更新地址"
+        }
+        if isPlaceholderFeed {
+            return "开发构建未配置更新服务器"
+        }
+        return "开发模式下不会检查更新"
+    }
 
     private init() {
         let info = Bundle.main.infoDictionary
         version = info?["CFBundleShortVersionString"] as? String ?? "0.0.0"
         build = info?["CFBundleVersion"] as? String ?? "0"
         feedURL = info?["SUFeedURL"] as? String ?? ""
+        isPlaceholderFeed = Self.isPlaceholder(feedURL)
 
         guard
             Bundle.main.object(forInfoDictionaryKey: "SUFeedURL") != nil,
+            !feedURL.isEmpty,
+            !isPlaceholderFeed,
             ProcessInfo.processInfo.environment["LUCAS_DISABLE_UPDATER"] != "1"
         else { return }
 
@@ -44,7 +65,11 @@ final class UpdateService: ObservableObject {
     }
 
     func checkForUpdates() {
-        controller?.checkForUpdates(nil)
+        guard let controller else {
+            presentUnavailableAlert()
+            return
+        }
+        controller.checkForUpdates(nil)
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
             self?.refresh()
         }
@@ -64,7 +89,7 @@ final class UpdateService: ObservableObject {
     /// Reads the appcast directly so the settings page can show the latest
     /// version and a badge without opening Sparkle's update dialog.
     func refreshFeed() async {
-        guard isAvailable, let url = URL(string: feedURL) else { return }
+        guard isAvailable, !isPlaceholderFeed, let url = URL(string: feedURL) else { return }
         isCheckingFeed = true
         defer { isCheckingFeed = false }
         do {
@@ -90,6 +115,26 @@ final class UpdateService: ObservableObject {
         } catch {
             // Feed may not exist yet; keep the last known values.
         }
+    }
+
+    private func presentUnavailableAlert() {
+        let alert = NSAlert()
+        alert.messageText = "暂时无法检查更新"
+        if isPlaceholderFeed {
+            alert.informativeText = "当前是开发构建，更新地址仍是占位域名，不会去连线上更新服务器。正式安装包检查更新即可。"
+        } else if feedURL.isEmpty {
+            alert.informativeText = "当前包没有写入更新地址（SUFeedURL）。"
+        } else {
+            alert.informativeText = unavailableReason
+        }
+        alert.alertStyle = .informational
+        alert.addButton(withTitle: "知道了")
+        alert.runModal()
+    }
+
+    private static func isPlaceholder(_ url: String) -> Bool {
+        let lowered = url.lowercased()
+        return lowered.contains("example.com") || lowered.contains("localhost") && lowered.contains("example")
     }
 
     private static func plainText(from html: String) -> String {

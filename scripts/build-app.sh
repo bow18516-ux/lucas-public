@@ -15,7 +15,23 @@ CONTENTS="$APP/Contents"
 
 VERSION="${LUCAS_VERSION:-0.4.0}"
 BUILD_NUMBER="${LUCAS_BUILD:-$(date +%Y%m%d%H%M)}"
+# Local ./scripts/build-app.sh often runs without publish.sh; still pick up the
+# real feed from Config/release.env so 检查更新 does not hit example.com.
+if [ -z "${LUCAS_FEED_URL:-}" ] && [ -f "$ROOT/Config/release.env" ]; then
+    _feed="$(awk -F= '/^LUCAS_FEED_URL=/{
+        sub(/^LUCAS_FEED_URL=/, "")
+        gsub(/^"/, ""); gsub(/"$/, "")
+        print
+        exit
+    }' "$ROOT/Config/release.env")"
+    if [ -n "$_feed" ]; then
+        LUCAS_FEED_URL="$_feed"
+    fi
+fi
 FEED_URL="${LUCAS_FEED_URL:-https://updates.example.com/lucas/appcast.xml}"
+if [[ "$FEED_URL" == *"example.com"* ]]; then
+    echo "warning: SUFeedURL is still the placeholder ($FEED_URL); 检查更新 will fail until Config/release.env sets LUCAS_FEED_URL" >&2
+fi
 AUTO_CHECKS="false"
 if [ -n "${LUCAS_ENABLE_AUTO_UPDATES:-}" ]; then AUTO_CHECKS="true"; fi
 PUBLIC_KEY="$(tr -d '\n' < "$ROOT/Config/sparkle_public_key.txt" 2>/dev/null || true)"

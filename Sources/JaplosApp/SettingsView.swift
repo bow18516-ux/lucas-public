@@ -1414,7 +1414,7 @@ struct UpdatesSettingsPane: View {
     @ViewBuilder
     private var statusLabel: some View {
         if !updates.isAvailable {
-            Text("开发模式下不会检查更新")
+            Text(updates.unavailableReason)
                 .font(.system(size: SettingsMetrics.bodySize))
                 .foregroundStyle(Theme.textSecondary)
         } else if updates.updateAvailable, let latest = updates.latestVersion {
