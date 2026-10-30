@@ -2161,6 +2161,98 @@ struct VoiceSettingsPane: View {
 }
 
 
+
+// MARK: - Memory / knowledge backup
+
+struct MemoryKnowledgeBackupCard: View {
+    @ObservedObject var model: AppModel
+    var scopeLabel: String = "记忆 + 知识库"
+    @State private var note: String?
+    @State private var busy = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Image(systemName: "externaldrive.badge.timemachine")
+                    .font(.system(size: SettingsMetrics.bodySize))
+                    .foregroundStyle(Theme.textSecondary)
+                Text("备份")
+                    .font(.system(size: SettingsMetrics.cardTitleSize, weight: .semibold))
+                    .foregroundStyle(Theme.textPrimary)
+                Spacer()
+                Text(scopeLabel)
+                    .font(.system(size: SettingsMetrics.captionSize))
+                    .foregroundStyle(Theme.textSecondary)
+            }
+
+            Text("导出到本机指定文件夹，或从备份目录导入。包含记忆、知识库文档正文，以及 KnowledgeFiles 原件副本；按 id 合并，可往返。")
+                .font(.system(size: SettingsMetrics.captionSize))
+                .foregroundStyle(Theme.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            HStack(spacing: 10) {
+                Button {
+                    exportBackup()
+                } label: {
+                    Text(busy ? "处理中…" : "导出到文件夹…")
+                        .font(.system(size: SettingsMetrics.cardSubtitleSize))
+                        .foregroundStyle(Color.black.opacity(0.85))
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 5)
+                        .background(Theme.accent, in: RoundedRectangle(cornerRadius: 6))
+                }
+                .buttonStyle(.pressable)
+                .disabled(busy)
+
+                Button {
+                    importBackup()
+                } label: {
+                    Text("从备份导入…")
+                        .font(.system(size: SettingsMetrics.cardSubtitleSize))
+                        .foregroundStyle(Theme.textSecondary)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 5)
+                        .background(Color.white.opacity(0.06), in: RoundedRectangle(cornerRadius: 6))
+                        .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(Theme.panelBorder, lineWidth: 0.7))
+                }
+                .buttonStyle(.pressable)
+                .disabled(busy)
+            }
+
+            if let note {
+                Text(note)
+                    .font(.system(size: SettingsMetrics.captionSize))
+                    .foregroundStyle(Theme.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .topLeading)
+        .panel(padding: SettingsMetrics.cardPadding)
+    }
+
+    private func exportBackup() {
+        guard let folder = MemoryKnowledgeBackup.pickExportFolder() else { return }
+        busy = true
+        note = "正在导出…"
+        Task {
+            let result = await model.exportMemoryKnowledgeBackup(toParent: folder)
+            note = result
+            busy = false
+        }
+    }
+
+    private func importBackup() {
+        guard let folder = MemoryKnowledgeBackup.pickImportFolder() else { return }
+        busy = true
+        note = "正在导入…"
+        Task {
+            let result = await model.importMemoryKnowledgeBackup(from: folder)
+            note = result
+            busy = false
+        }
+    }
+}
+
 // MARK: - Alarms settings
 
 struct MemorySettingsPane: View {
@@ -2278,6 +2370,8 @@ struct MemorySettingsPane: View {
                     }
                     .frame(maxWidth: .infinity, alignment: .topLeading)
                     .panel(padding: SettingsMetrics.cardPadding)
+
+                    MemoryKnowledgeBackupCard(model: model, scopeLabel: "记忆 + 知识库")
                 }
                 .padding(.horizontal, SettingsMetrics.pagePadding)
                 .padding(.bottom, 28)
@@ -2340,7 +2434,7 @@ struct KnowledgeLibraryPane: View {
                                 .foregroundStyle(Theme.textSecondary)
                         }
 
-                        Text("支持 md / txt / pdf / csv；xlsx / pptx 会入库但正文抽取暂不完整。聊天导出可用 txt / md / json。")
+                        Text("支持 md / txt / pdf / csv / xlsx / pptx（OOXML 正文尽力抽取）。聊天导出可用 txt / md / json。")
                             .font(.system(size: SettingsMetrics.captionSize))
                             .foregroundStyle(Theme.textSecondary)
 
@@ -2502,6 +2596,8 @@ struct KnowledgeLibraryPane: View {
                     }
                     .frame(maxWidth: .infinity, alignment: .topLeading)
                     .panel(padding: SettingsMetrics.cardPadding)
+
+                    MemoryKnowledgeBackupCard(model: model, scopeLabel: "记忆 + 知识库")
                 }
                 .padding(.horizontal, SettingsMetrics.pagePadding)
                 .padding(.bottom, 28)

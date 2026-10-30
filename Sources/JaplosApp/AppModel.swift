@@ -706,6 +706,274 @@ final class AppModel: ObservableObject {
         }
     }
 
+    // MARK: - Memory / knowledge backup
+
+    /// Export memories + knowledge_documents + KnowledgeFiles into a dated folder under `parent`.
+    @discardableResult
+    func exportMemoryKnowledgeBackup(toParent parent: URL) async -> String {
+        let accessed = parent.startAccessingSecurityScopedResource()
+        defer { if accessed { parent.stopAccessingSecurityScopedResource() } }
+
+        let fm = FileManager.default
+        let stamp = MemoryKnowledgeBackup.makeExportDirectoryName()
+        let root = parent.appendingPathComponent(stamp, isDirectory: true)
+        let filesOut = root.appendingPathComponent(MemoryKnowledgeBackup.filesDirName, isDirectory: true)
+
+        do {
+            try fm.createDirectory(at: filesOut, withIntermediateDirectories: true)
+
+            // --- Memories (full slice, preserve ids) ---
+            let memResult = try await client.callAsync(.memoryList, arguments: .object([
+                "limit": .number(2_000),
+            ]))
+            let memories = memResult.arrayValue ?? []
+
+            // --- Knowledge documents ---
+            let knowResult = try await client.callAsync(.knowledgeDocumentsList, arguments: .object([
+                "limit": .number(500),
+            ]))
+            let docs = knowResult.arrayValue ?? []
+
+            var exportedDocs: [JSONValue] = []
+            var filesCopied = 0
+            for doc in docs {
+                guard var obj = doc.objectValue else {
+                    exportedDocs.append(doc)
+                    continue
+                }
+                let id = obj["id"]?.stringValue ?? UUID().uuidString
+                var record = obj["record"]?.objectValue ?? [:]
+                let sourcePath = record["sourcePath"]?.stringValue ?? obj["sourcePath"]?.stringValue ?? ""
+
+                if !sourcePath.isEmpty, fm.fileExists(atPath: sourcePath) {
+                    let src = URL(fileURLWithPath: sourcePath)
+                    let destDir = filesOut.appendingPathComponent(id, isDirectory: true)
+                    try? fm.createDirectory(at: destDir, withIntermediateDirectories: true)
+                    let dest = destDir.appendingPathComponent(src.lastPathComponent)
+                    if fm.fileExists(atPath: dest.path) { try? fm.removeItem(at: dest) }
+                    do {
+                        try fm.copyItem(at: src, to: dest)
+                        let rel = "\(MemoryKnowledgeBackup.filesDirName)/\(id)/\(src.lastPathComponent)"
+                        record["backupFile"] = .string(rel)
+                        obj["backupFile"] = .string(rel)
+                        filesCopied += 1
+                    } catch {
+                        // Keep metadata even if file copy fails.
+                    }
+                }
+                obj["record"] = .object(record)
+                exportedDocs.append(.object(obj))
+            }
+
+            // Also mirror any leftover files under local KnowledgeFiles not tied to a doc.
+            let localFiles = MemoryKnowledgeBackup.localKnowledgeFilesRoot
+            if fm.fileExists(atPath: localFiles.path),
+               let orphanURLs = try? fm.contentsOfDirectory(at: localFiles, includingPropertiesForKeys: nil) {
+                let orphanDir = filesOut.appendingPathComponent("_orphan", isDirectory: true)
+                for item in orphanURLs {
+                    // Skip if already copied under a doc id folder with same filename somewhere — best-effort copy.
+                    let dest = orphanDir.appendingPathComponent(item.lastPathComponent)
+                    if fm.fileExists(atPath: dest.path) { continue }
+                    // Only copy if no exported doc referenced this absolute path.
+                    let abs = item.path
+                    let already = docs.contains { d in
+                        let sp = d["record"]?["sourcePath"]?.stringValue ?? d["sourcePath"]?.stringValue ?? ""
+                        return sp == abs
+                    }
+                    if already { continue }
+                    try? fm.createDirectory(at: orphanDir, withIntermediateDirectories: true)
+                    try? fm.copyItem(at: item, to: dest)
+                    if fm.fileExists(atPath: dest.path) { filesCopied += 1 }
+                }
+            }
+
+            try MemoryKnowledgeBackup.writeJSON(.array(memories), to: root.appendingPathComponent(MemoryKnowledgeBackup.memoriesName))
+            try MemoryKnowledgeBackup.writeJSON(.array(exportedDocs), to: root.appendingPathComponent(MemoryKnowledgeBackup.knowledgeName))
+
+            let manifest: JSONValue = .object([
+                "format": .string(MemoryKnowledgeBackup.formatID),
+                "exportedAt": .string(ISO8601.string(from: Date())),
+                "app": .string("Lucas"),
+                "counts": .object([
+                    "memories": .number(Double(memories.count)),
+                    "knowledgeDocuments": .number(Double(exportedDocs.count)),
+                    "files": .number(Double(filesCopied)),
+                ]),
+                "folder": .string(stamp),
+            ])
+            try MemoryKnowledgeBackup.writeJSON(manifest, to: root.appendingPathComponent(MemoryKnowledgeBackup.manifestName))
+
+            await loadMemories(limit: 100, scopedToCurrentSession: false)
+            await loadKnowledgeDocuments()
+            AppLog.write("backup.export ok path=\(root.path) memories=\(memories.count) docs=\(exportedDocs.count) files=\(filesCopied)")
+            return "已导出到 \(stamp)：记忆 \(memories.count)，知识 \(exportedDocs.count)，文件 \(filesCopied)"
+        } catch {
+            let msg = (error as? ClientError)?.description ?? String(describing: error)
+            AppLog.write("backup.export failed: \(msg)")
+            return "导出失败：\(msg)"
+        }
+    }
+
+    /// Import a lucas.memory-knowledge.v1 folder (merge / upsert by id). Round-trip safe.
+    @discardableResult
+    func importMemoryKnowledgeBackup(from picked: URL) async -> String {
+        let accessed = picked.startAccessingSecurityScopedResource()
+        defer { if accessed { picked.stopAccessingSecurityScopedResource() } }
+
+        guard let root = MemoryKnowledgeBackup.resolveBackupRoot(picked) else {
+            return "未找到有效备份（需要包含 manifest.json）"
+        }
+
+        let fm = FileManager.default
+        do {
+            let manifest = try MemoryKnowledgeBackup.readJSON(from: root.appendingPathComponent(MemoryKnowledgeBackup.manifestName))
+            let format = manifest["format"]?.stringValue ?? ""
+            guard format == MemoryKnowledgeBackup.formatID else {
+                return "备份格式不支持：\(format.isEmpty ? "未知" : format)"
+            }
+
+            let memoriesURL = root.appendingPathComponent(MemoryKnowledgeBackup.memoriesName)
+            let knowledgeURL = root.appendingPathComponent(MemoryKnowledgeBackup.knowledgeName)
+            let memories = (try? MemoryKnowledgeBackup.readJSON(from: memoriesURL).arrayValue) ?? []
+            let docs = (try? MemoryKnowledgeBackup.readJSON(from: knowledgeURL).arrayValue) ?? []
+
+            var memOK = 0
+            for item in memories {
+                guard let content = item["content"]?.stringValue, !content.isEmpty else { continue }
+                let id = item["id"]?.stringValue ?? UUID().uuidString
+                var args: [String: JSONValue] = [
+                    "id": .string(id),
+                    "content": .string(content),
+                    "kind": .string(item["kind"]?.stringValue ?? "note"),
+                ]
+                if let sessionID = item["sessionID"]?.stringValue, !sessionID.isEmpty {
+                    args["sessionID"] = .string(sessionID)
+                }
+                if let record = item["record"] {
+                    args["record"] = record
+                } else {
+                    args["record"] = .object([
+                        "content": .string(content),
+                        "kind": .string(item["kind"]?.stringValue ?? "note"),
+                        "source": .string("backup.import"),
+                    ])
+                }
+                _ = try await client.callAsync(.memoryUpsert, arguments: .object(args))
+                memOK += 1
+            }
+
+            let destRoot = MemoryKnowledgeBackup.localKnowledgeFilesRoot
+            try? fm.createDirectory(at: destRoot, withIntermediateDirectories: true)
+            let backupFilesRoot = root.appendingPathComponent(MemoryKnowledgeBackup.filesDirName, isDirectory: true)
+
+            var docOK = 0
+            var filesOK = 0
+            for item in docs {
+                guard let title = item["title"]?.stringValue ?? item["record"]?["title"]?.stringValue,
+                      !title.isEmpty else { continue }
+                let id = item["id"]?.stringValue ?? UUID().uuidString
+                var record = item["record"]?.objectValue ?? [:]
+                record["title"] = .string(title)
+                if record["body"] == nil, let body = item["body"]?.stringValue {
+                    record["body"] = .string(body)
+                }
+                let body = record["body"]?.stringValue ?? ""
+                let library = record["library"]?.stringValue ?? "all"
+                let fileType = record["fileType"]?.stringValue ?? "note"
+                let extractStatus = record["extractStatus"]?.stringValue ?? "ok"
+                let extractNote = record["extractNote"]?.stringValue ?? ""
+
+                // Restore file copy if present.
+                let rel = item["backupFile"]?.stringValue ?? record["backupFile"]?.stringValue
+                var restoredPath = ""
+                if let rel, !rel.isEmpty {
+                    let src = root.appendingPathComponent(rel)
+                    if fm.fileExists(atPath: src.path) {
+                        let destDir = destRoot.appendingPathComponent(id, isDirectory: true)
+                        try? fm.createDirectory(at: destDir, withIntermediateDirectories: true)
+                        let dest = destDir.appendingPathComponent(src.lastPathComponent)
+                        if fm.fileExists(atPath: dest.path) { try? fm.removeItem(at: dest) }
+                        do {
+                            try fm.copyItem(at: src, to: dest)
+                            restoredPath = dest.path
+                            filesOK += 1
+                        } catch {
+                            // Fall through — body still restores.
+                        }
+                    }
+                }
+                if restoredPath.isEmpty {
+                    // Try orphan / legacy absolute path inside backup KnowledgeFiles.
+                    let old = record["sourcePath"]?.stringValue ?? ""
+                    if old.contains("/KnowledgeFiles/") {
+                        let name = URL(fileURLWithPath: old).lastPathComponent
+                        let candidates = [
+                            backupFilesRoot.appendingPathComponent(id).appendingPathComponent(name),
+                            backupFilesRoot.appendingPathComponent("_orphan").appendingPathComponent(name),
+                            backupFilesRoot.appendingPathComponent(name),
+                        ]
+                        for cand in candidates where fm.fileExists(atPath: cand.path) {
+                            let destDir = destRoot.appendingPathComponent(id, isDirectory: true)
+                            try? fm.createDirectory(at: destDir, withIntermediateDirectories: true)
+                            let dest = destDir.appendingPathComponent(name)
+                            if fm.fileExists(atPath: dest.path) { try? fm.removeItem(at: dest) }
+                            if (try? fm.copyItem(at: cand, to: dest)) != nil {
+                                restoredPath = dest.path
+                                filesOK += 1
+                                break
+                            }
+                        }
+                    }
+                }
+                if !restoredPath.isEmpty {
+                    record["sourcePath"] = .string(restoredPath)
+                }
+                var cleanRecord = record
+                cleanRecord.removeValue(forKey: "backupFile")
+
+                var args: [String: JSONValue] = [
+                    "id": .string(id),
+                    "title": .string(title),
+                    "body": .string(body),
+                    "library": .string(library),
+                    "fileType": .string(fileType),
+                    "extractStatus": .string(extractStatus),
+                    "record": .object(cleanRecord),
+                ]
+                if !extractNote.isEmpty { args["extractNote"] = .string(extractNote) }
+                if !restoredPath.isEmpty { args["sourcePath"] = .string(restoredPath) }
+                _ = try await client.callAsync(.knowledgeDocumentsUpsert, arguments: .object(args))
+                docOK += 1
+            }
+
+            // Copy any remaining backup KnowledgeFiles tree (best-effort merge).
+            if fm.fileExists(atPath: backupFilesRoot.path),
+               let enumerator = fm.enumerator(at: backupFilesRoot, includingPropertiesForKeys: [.isRegularFileKey]) {
+                while let item = enumerator.nextObject() as? URL {
+                    let values = try? item.resourceValues(forKeys: [.isRegularFileKey])
+                    guard values?.isRegularFile == true else { continue }
+                    let rel = item.path.replacingOccurrences(of: backupFilesRoot.path + "/", with: "")
+                    guard !rel.isEmpty, rel != item.path else { continue }
+                    let dest = destRoot.appendingPathComponent(rel)
+                    try? fm.createDirectory(at: dest.deletingLastPathComponent(), withIntermediateDirectories: true)
+                    if !fm.fileExists(atPath: dest.path) {
+                        try? fm.copyItem(at: item, to: dest)
+                    }
+                }
+            }
+
+            await loadMemories(limit: 100, scopedToCurrentSession: false)
+            await loadKnowledgeDocuments()
+            AppLog.write("backup.import ok memories=\(memOK) docs=\(docOK) files=\(filesOK)")
+            return "导入完成：记忆 \(memOK)，知识 \(docOK)，文件 \(filesOK)（按 id 合并，可再导出验证）"
+        } catch {
+            let msg = (error as? ClientError)?.description ?? String(describing: error)
+            AppLog.write("backup.import failed: \(msg)")
+            return "导入失败：\(msg)"
+        }
+    }
+
+
     func loadMCPEvents(limit: Int = 10) async {
         do {
             let result = try await client.callAsync(
