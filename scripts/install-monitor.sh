@@ -7,23 +7,26 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 LABEL="com.lucas.updates-check"
 PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"
-STAGED="$ROOT/Config/$LABEL.plist"
+# Never write into the checkout: a generated LaunchAgent plist is user state,
+# not a repository file. Stage it in a temp file instead.
+STAGED="$(mktemp -t "$LABEL")"
+trap 'rm -f "$STAGED"' EXIT
 LOG_DIR="$HOME/Library/Logs/Lucas"
 ACTION="${1:-install}"
-
-if [ "$ACTION" = "uninstall" ]; then
-    launchctl bootout "gui/$(id -u)/$LABEL" 2>/dev/null || true
-    rm -f "$PLIST" "$STAGED" "$MONITOR"
-    echo "removed $LABEL"
-    exit 0
-fi
 
 SUPPORT="$HOME/Library/Application Support/Lucas"
 BIN="$SUPPORT/bin"
 KEY_DST="$SUPPORT/sparkle_public_key.txt"
 MONITOR="$BIN/check-updates.sh"
 
-mkdir -p "$LOG_DIR" "$ROOT/Config" 2>/dev/null || true
+if [ "$ACTION" = "uninstall" ]; then
+    launchctl bootout "gui/$(id -u)/$LABEL" 2>/dev/null || true
+    rm -f "$PLIST" "$MONITOR"
+    echo "removed $LABEL"
+    exit 0
+fi
+
+mkdir -p "$LOG_DIR" 2>/dev/null || true
 
 cat > "$STAGED" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
@@ -58,7 +61,7 @@ PLIST
 
 if [ ! -w "$HOME/Library/LaunchAgents" ] || [ ! -w "$HOME/Library/Logs/Lucas" ]; then
     echo "sandbox cannot write ~/Library/LaunchAgents or ~/Library/Logs."
-    echo "prepared: $STAGED"
+    echo "prepared: $PLIST (staged in $STAGED)"
     echo
     echo "run this in a normal Terminal to install:"
     echo "  cd '$ROOT' && ./scripts/install-monitor.sh install"
