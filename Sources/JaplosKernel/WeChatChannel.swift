@@ -69,14 +69,24 @@ public final class WeChatChannel: @unchecked Sendable {
     // MARK: - Public ops
 
     public func status() throws -> JSONValue {
+        // Snapshot the in-memory login state under the lock, then build the
+        // response outside it: connect/disconnect/verify mutate these fields
+        // from other threads.
+        lock.lock()
+        let sessionID = loginSessionID
+        let pending = pendingVerification
+        let qrPath = qrImagePath
+        let lastFailure = lastError
+        lock.unlock()
+
         let connections = try store.listWeChatConnections(limit: 50)
         let connectedCount = connections.filter { ($0["state"]?.stringValue ?? "") == State.connected.rawValue }.count
         let hasCredentialFiles = !((try? FileManager.default.contentsOfDirectory(atPath: credentialsDir.path)) ?? []).isEmpty
 
         let state: State
-        if pendingVerification {
+        if pending {
             state = .verificationRequired
-        } else if loginSessionID != nil {
+        } else if sessionID != nil {
             state = .awaitingScan
         } else if connectedCount > 0 {
             state = .connected
@@ -100,15 +110,15 @@ public final class WeChatChannel: @unchecked Sendable {
             "connections": .array(connections.map { redactConnectionSummary($0) }),
             "hardBlock": .string("Live WeChat ClawBot QR login against ilinkai requires an interactive scan; no fabricated connected state."),
         ]
-        if let loginSessionID {
-            object["loginSessionID"] = .string(loginSessionID)
+        if let sessionID {
+            object["loginSessionID"] = .string(sessionID)
         }
-        if let qrImagePath, FileManager.default.fileExists(atPath: qrImagePath) {
-            object["qrImagePath"] = .string(qrImagePath)
+        if let qrPath, FileManager.default.fileExists(atPath: qrPath) {
+            object["qrImagePath"] = .string(qrPath)
             object["qrPresenter"] = .string("open_local_image")
         }
-        if let lastError {
-            object["lastError"] = .string(lastError)
+        if let lastFailure {
+            object["lastError"] = .string(lastFailure)
         }
         if state == .needsAuth {
             object["action"] = .string("Call runtime.wechat.connect to start QR login, or restore persisted credentials after a successful prior scan.")
@@ -225,7 +235,10 @@ public final class WeChatChannel: @unchecked Sendable {
         guard !trimmed.isEmpty else {
             throw ChannelError.invalidArgument("verification code is required")
         }
-        guard pendingVerification || loginSessionID != nil else {
+        lock.lock()
+        let needsVerification = pendingVerification || loginSessionID != nil
+        lock.unlock()
+        guard needsVerification else {
             return .object([
                 "ok": .bool(false),
                 "state": .string(State.disconnected.rawValue),
@@ -234,7 +247,9 @@ public final class WeChatChannel: @unchecked Sendable {
             ])
         }
         // Without live iLink session we cannot complete verification.
+        lock.lock()
         lastError = "verify_requires_live_ilink_session"
+        lock.unlock()
         return .object([
             "ok": .bool(false),
             "state": .string(State.verificationRequired.rawValue),
