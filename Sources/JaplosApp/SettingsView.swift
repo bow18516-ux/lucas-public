@@ -25,6 +25,10 @@ enum SettingsMetrics {
     static let metricSize: CGFloat = 24
 
     static let sidebarWidth: CGFloat = 268
+    /// Shared top inset for the whole settings chrome (left nav + right header) so both
+    /// columns sit on the same horizontal line under the transparent titlebar.
+    /// Kept tight (was ~54/60) so the layout is not top-heavy.
+    static let chromeTopPadding: CGFloat = 36
     /// Detail pane fills remaining window width; horizontal inset is `pagePadding` only.
     static let cardPadding: CGFloat = 22
     static let cardSpacing: CGFloat = 18
@@ -60,14 +64,39 @@ enum SettingsSection: String, CaseIterable, Identifiable {
     }
 }
 
+/// Nested rows under L1 「知识库」 — documents are live; upload types are scaffold.
+enum KnowledgeNav: String, CaseIterable, Identifiable {
+    case documents = "全部文档"
+    case chatLogs = "聊天记录"
+    case markdown = "MD 文档"
+    case ppt = "PPT"
+    case spreadsheet = "表格"
+
+    var id: String { rawValue }
+
+    var icon: String {
+        switch self {
+        case .documents: return "doc.text"
+        case .chatLogs: return "bubble.left.and.bubble.right"
+        case .markdown: return "doc.richtext"
+        case .ppt: return "rectangle.on.rectangle.angled"
+        case .spreadsheet: return "tablecells"
+        }
+    }
+
+    /// True when this row opens a real pane (not a placeholder).
+    var isLive: Bool { self == .documents }
+}
+
+
 struct SettingsScreen: View {
     @ObservedObject var model: AppModel
     @ObservedObject var voice: SpeechOutput
-    /// Top-level sidebar destination: nested settings panes, or nested memory/knowledge panes.
+    /// Top-level sidebar destination: settings / memory / knowledge children.
     private enum SidebarDestination: Equatable {
         case settings(SettingsSection)
         case memory
-        case knowledge
+        case knowledge(KnowledgeNav)
     }
 
     @State private var destination: SidebarDestination
@@ -75,6 +104,8 @@ struct SettingsScreen: View {
     @State private var settingsGroupExpanded = true
     /// Top-level 「记忆」 group — default expanded (same pattern as 「设置」).
     @State private var memoryGroupExpanded = true
+    /// Top-level 「知识库」 group — sibling of 设置/记忆; default expanded.
+    @State private var knowledgeGroupExpanded = true
     @ObservedObject private var updateService = UpdateService.shared
 
     init(model: AppModel, voice: SpeechOutput) {
@@ -84,8 +115,10 @@ struct SettingsScreen: View {
         let lower = requested.lowercased()
         if requested == "记忆" || lower == "memory" {
             _destination = State(initialValue: .memory)
-        } else if requested == "知识库" || lower == "knowledge" {
-            _destination = State(initialValue: .knowledge)
+        } else if requested == "知识库" || lower == "knowledge" || requested == "全部文档" {
+            _destination = State(initialValue: .knowledge(.documents))
+        } else if let kn = KnowledgeNav.allCases.first(where: { $0.rawValue == requested }) {
+            _destination = State(initialValue: .knowledge(kn))
         } else {
             let section = SettingsSection.allCases.first { $0.rawValue == requested } ?? .model
             _destination = State(initialValue: .settings(section))
@@ -214,25 +247,60 @@ struct SettingsScreen: View {
 
                 if memoryGroupExpanded {
                     VStack(spacing: 2) {
-                        memoryNavItem(
+                        sidebarNavItem(
                             title: "记忆管理",
                             icon: "note.text",
                             selected: destination == .memory
                         ) {
                             destination = .memory
                         }
-                        memoryNavItem(
-                            title: "知识库",
-                            icon: "books.vertical",
-                            selected: destination == .knowledge
-                        ) {
-                            destination = .knowledge
+                    }
+                }
+
+                // Top-level group: 「知识库」 — must-read context used with 记忆 when answering.
+                Button {
+                    withAnimation(.easeInOut(duration: 0.18)) {
+                        knowledgeGroupExpanded.toggle()
+                    }
+                } label: {
+                    HStack(spacing: 8) {
+                        Image(systemName: knowledgeGroupExpanded ? "chevron.down" : "chevron.right")
+                            .font(.system(size: 11, weight: .semibold))
+                            .frame(width: 12)
+                        Image(systemName: "books.vertical")
+                            .font(.system(size: SettingsMetrics.navIconSize))
+                            .frame(width: 22)
+                        Text("知识库")
+                            .font(.system(size: SettingsMetrics.navSize, weight: .semibold))
+                        Spacer()
+                    }
+                    .foregroundStyle(Theme.textPrimary)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 10)
+                    .background(Color.clear, in: RoundedRectangle(cornerRadius: 7))
+                }
+                .buttonStyle(.pressable)
+
+                if knowledgeGroupExpanded {
+                    VStack(spacing: 2) {
+                        ForEach(KnowledgeNav.allCases) { item in
+                            let selected: Bool = {
+                                if case .knowledge(let nav) = destination { return nav == item }
+                                return false
+                            }()
+                            sidebarNavItem(
+                                title: item.rawValue,
+                                icon: item.icon,
+                                selected: selected
+                            ) {
+                                destination = .knowledge(item)
+                            }
                         }
                     }
                 }
             }
             .padding(.horizontal, 10)
-            .padding(.top, 54)
+            .padding(.top, SettingsMetrics.chromeTopPadding)
 
             Spacer(minLength: 12)
 
@@ -285,7 +353,7 @@ struct SettingsScreen: View {
         .background(Theme.panel.opacity(0.35))
     }
 
-    private func memoryNavItem(
+    private func sidebarNavItem(
         title: String,
         icon: String,
         selected: Bool,
@@ -331,8 +399,10 @@ struct SettingsScreen: View {
         switch destination {
         case .memory:
             MemorySettingsPane(model: model)
-        case .knowledge:
+        case .knowledge(.documents):
             KnowledgeSettingsPane(model: model)
+        case .knowledge(let kind):
+            KnowledgeUploadPlaceholderPane(kind: kind, model: model)
         case .settings(.model):
             ModelSettingsPane(model: model)
         case .settings(.tools):
@@ -378,7 +448,7 @@ struct SettingsHeader: View {
                 .foregroundStyle(Theme.textSecondary)
         }
         .padding(.horizontal, SettingsMetrics.pagePadding)
-        .padding(.top, 60)
+        .padding(.top, SettingsMetrics.chromeTopPadding)
         .padding(.bottom, 20)
     }
 }
@@ -2322,6 +2392,65 @@ struct KnowledgeSettingsPane: View {
             }
         }
         .task { await model.loadKnowledgeDocuments() }
+    }
+}
+
+/// Scaffold for future knowledge upload types (chat logs / MD / PPT / sheets).
+/// Product intent: uploaded material is must-read context, used with 「记忆」 when answering.
+struct KnowledgeUploadPlaceholderPane: View {
+    let kind: KnowledgeNav
+    @ObservedObject var model: AppModel
+
+    var body: some View {
+        VStack(spacing: 0) {
+            SettingsHeader(
+                title: kind.rawValue,
+                subtitle: "上传后作为模型回答时的必读上下文，与「记忆」一起生效。当前类型的上传尚未接入。",
+                model: model
+            )
+
+            ScrollView {
+                VStack(alignment: .leading, spacing: SettingsMetrics.cardSpacing) {
+                    VStack(alignment: .leading, spacing: 14) {
+                        HStack(spacing: 8) {
+                            Image(systemName: kind.icon)
+                                .font(.system(size: SettingsMetrics.bodySize))
+                                .foregroundStyle(Theme.textSecondary)
+                            Text("即将支持")
+                                .font(.system(size: SettingsMetrics.cardTitleSize, weight: .semibold))
+                                .foregroundStyle(Theme.textPrimary)
+                        }
+                        Text(placeholderCopy)
+                            .font(.system(size: SettingsMetrics.cardSubtitleSize))
+                            .foregroundStyle(Theme.textSecondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                        Text("请先用「全部文档」手动添加标题 + 正文；上传能力就绪后再迁到此分类。")
+                            .font(.system(size: SettingsMetrics.captionSize))
+                            .foregroundStyle(Theme.textSecondary.opacity(0.85))
+                    }
+                    .frame(maxWidth: .infinity, alignment: .topLeading)
+                    .panel(padding: SettingsMetrics.cardPadding)
+                }
+                .padding(.horizontal, SettingsMetrics.pagePadding)
+                .padding(.bottom, 28)
+            }
+            Spacer(minLength: 0)
+        }
+    }
+
+    private var placeholderCopy: String {
+        switch kind {
+        case .documents:
+            return ""
+        case .chatLogs:
+            return "计划：导入聊天记录（导出文本 / JSON），作为长期对话背景供模型必读。"
+        case .markdown:
+            return "计划：上传 .md / .markdown 文档，解析后写入知识库并参与回答检索。"
+        case .ppt:
+            return "计划：上传 PPT / PDF 幻灯片，抽取要点后作为必读资料。"
+        case .spreadsheet:
+            return "计划：上传表格（CSV / Excel），结构化后供模型引用。"
+        }
     }
 }
 
