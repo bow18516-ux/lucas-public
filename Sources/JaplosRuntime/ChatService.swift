@@ -302,6 +302,10 @@ public final class ChatService: @unchecked Sendable {
                 requestID: requestID
             )
         } catch {
+            // A cancelled URLSession task surfaces as URLError(-999); record the
+            // stable token "cancelled" so the stopped-turn contract is testable
+            // without pattern-matching localized error text.
+            let cancelled = Task.isCancelled || Self.isCancellation(error)
             if let runID = trackedRunID {
                 try? core.store.upsertRun(
                     id: runID,
@@ -310,11 +314,11 @@ public final class ChatService: @unchecked Sendable {
                     record: .object([
                         "sessionID": .string(trackedSessionID ?? ""),
                         "requestID": .string(requestID),
-                        "error": .string(String(describing: error)),
+                        "error": .string(cancelled ? "cancelled" : String(describing: error)),
                     ])
                 )
             }
-            if Task.isCancelled {
+            if cancelled {
                 return .failure(
                     KernelFailure(code: "cancelled", message: "已停止", origin: "runtime", retryable: false),
                     requestID: requestID
@@ -322,6 +326,16 @@ public final class ChatService: @unchecked Sendable {
             }
             return .failure(.internalError("\(error)"), requestID: requestID)
         }
+    }
+
+    static func isCancellation(_ error: Error) -> Bool {
+        if error is CancellationError { return true }
+        let nsError = error as NSError
+        if nsError.domain == NSURLErrorDomain && nsError.code == NSURLErrorCancelled { return true }
+        if let underlying = nsError.userInfo[NSUnderlyingErrorKey] as? Error {
+            return isCancellation(underlying)
+        }
+        return false
     }
 
     private func catalog(_ request: KernelRequest) async -> KernelResponse {

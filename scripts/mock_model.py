@@ -6,6 +6,9 @@ Modes:
   * text contains "APPROVE" -> calls system.command.shell.execute (high risk),
                         which forces the approval flow
   * text contains "SLOW"    -> streams tokens slowly so cancellation can be tested
+  * text contains "SLOW_TOOL" -> 20 slow frames, then a system.time tool call, so a
+                        cancelled turn would still record a tool invocation if the
+                        daemon kept working after the socket closed
 
 Supports blocking JSON and SSE streaming.
 """
@@ -15,6 +18,12 @@ import time
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
 PORT = int(os.environ.get("MOCK_PORT", "8787"))
+
+
+def user_text(messages):
+    return " ".join(
+        (message.get("content") or "") for message in messages if message.get("role") == "user"
+    )
 
 
 def tool_mode(messages):
@@ -72,10 +81,12 @@ class Handler(BaseHTTPRequestHandler):
         has_tool_result = any(message.get("role") == "tool" for message in messages)
         mode = tool_mode(messages)
         result = tool_result(messages) if has_tool_result else {}
-        slow = any("SLOW" in (message.get("content") or "") for message in messages)
+        text = user_text(messages)
+        slow_tool = "SLOW_TOOL" in text
+        slow = "SLOW" in text and not slow_tool
 
         if payload.get("stream"):
-            self.stream(has_tool_result, mode, result, slow)
+            self.stream(has_tool_result, mode, result, slow, slow_tool)
         else:
             self.blocking(payload, has_tool_result, mode, result)
 
@@ -117,7 +128,7 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
-    def stream(self, has_tool_result, mode, result, slow=False):
+    def stream(self, has_tool_result, mode, result, slow=False, slow_tool=False):
         self.send_response(200)
         self.send_header("Content-Type", "text/event-stream")
         self.send_header("Cache-Control", "no-cache")
@@ -133,11 +144,33 @@ class Handler(BaseHTTPRequestHandler):
             self.wfile.flush()
 
         try:
-            self._stream_body(has_tool_result, mode, result, slow, chunk)
+            self._stream_body(has_tool_result, mode, result, slow, slow_tool, chunk)
         except (BrokenPipeError, ConnectionResetError):
             return
 
-    def _stream_body(self, has_tool_result, mode, result, slow, chunk):
+    def _stream_body(self, has_tool_result, mode, result, slow, slow_tool, chunk):
+        if slow_tool:
+            for index in range(20):
+                chunk({"content": f"片段{index} "})
+                time.sleep(0.1)
+            call = tool_call("time")
+            chunk(
+                {
+                    "tool_calls": [
+                        {
+                            "index": 0,
+                            "id": call["id"],
+                            "type": "function",
+                            "function": call["function"],
+                        }
+                    ]
+                }
+            )
+            chunk({}, "tool_calls")
+            self.wfile.write(b"data: [DONE]\n\n")
+            self.wfile.flush()
+            return
+
         if slow:
             for index in range(40):
                 chunk({"content": f"片段{index} "})
