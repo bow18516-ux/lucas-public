@@ -17,12 +17,13 @@ enum SettingsMetrics {
     static let metricSize: CGFloat = 24
 
     static let sidebarWidth: CGFloat = 268
-    static let contentWidth: CGFloat = 900
+    /// Detail pane fills remaining window width; horizontal inset is `pagePadding` only.
     static let cardPadding: CGFloat = 22
     static let cardSpacing: CGFloat = 18
     static let rowSpacing: CGFloat = 14
     static let labelWidth: CGFloat = 104
-    static let pagePadding: CGFloat = 10
+    /// Even left/right inset inside the settings detail pane (from sidebar divider and window edge).
+    static let pagePadding: CGFloat = 20
 }
 
 enum SettingsSection: String, CaseIterable, Identifiable {
@@ -72,9 +73,7 @@ struct SettingsScreen: View {
                 .fill(Theme.panelBorder)
                 .frame(width: 0.8)
             content
-                .frame(maxWidth: SettingsMetrics.contentWidth, alignment: .leading)
-                .padding(.leading, 32)
-                .frame(maxWidth: .infinity, alignment: .leading)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         }
         .background(Theme.background.ignoresSafeArea())
         .onExitCommand { model.settingsPresented = false }
