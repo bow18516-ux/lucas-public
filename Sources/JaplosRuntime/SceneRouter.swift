@@ -141,9 +141,16 @@ public enum SceneRouter {
         Scene(
             id: "screenshot",
             name: "截屏",
-            pattern: "截图|截屏|屏幕|screenshot|capture",
-            extraPrompt: "截屏使用 system.screen.capture；成功后把保存路径告诉用户。",
+            pattern: "截图|截屏|screenshot|screencapture|屏幕截图|截个图|截一下屏",
+            extraPrompt: "截屏使用 system.screen.capture；成功后把保存路径告诉用户。不要把桌面文件操作当成截屏。",
             tools: ["system.screen.capture"]
+        ),
+        Scene(
+            id: "filesystem",
+            name: "文件操作",
+            pattern: "文件|目录|文件夹|读取|写入|保存到|桌面.{0,8}文件|文件.{0,8}桌面|读一下|存到|file|folder|directory",
+            extraPrompt: "文件操作使用 system.filesystem；写入前确认路径。",
+            tools: ["system.filesystem", "system.command.shell.execute"]
         ),
         Scene(
             id: "application",

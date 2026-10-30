@@ -126,7 +126,7 @@ private struct WeChatSendTextTool: KernelTool {
                 "additionalProperties": false,
             ]),
             capability: Capability.channelManage,
-            risk: .medium
+            risk: .high
         )
     }
     func invoke(arguments: JSONValue, context: ToolContext) async throws -> JSONValue {
@@ -153,7 +153,7 @@ private struct WeChatSendFileTool: KernelTool {
                 "additionalProperties": false,
             ]),
             capability: Capability.channelManage,
-            risk: .medium
+            risk: .high
         )
     }
     func invoke(arguments: JSONValue, context: ToolContext) async throws -> JSONValue {
@@ -268,7 +268,7 @@ private struct FeishuSendTextTool: KernelTool {
                 "additionalProperties": false,
             ]),
             capability: Capability.channelManage,
-            risk: .medium
+            risk: .high
         )
     }
     func invoke(arguments: JSONValue, context: ToolContext) async throws -> JSONValue {

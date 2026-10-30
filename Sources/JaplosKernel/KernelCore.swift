@@ -1076,7 +1076,7 @@ public final class KernelCore: @unchecked Sendable {
         let requestID = request.id
         guard
             let name = request.arguments["name"]?.stringValue,
-            definition(named: name) != nil
+            let toolDefinition = definition(named: name)
         else {
             return .failure(.invalidArgument("Unknown tool name"), requestID: requestID)
         }
@@ -1086,6 +1086,16 @@ public final class KernelCore: @unchecked Sendable {
             name: name,
             arguments: request.arguments["arguments"] ?? .object([:])
         )
+        // tool.invoke RPC has no ApprovalBroker stream — same gate as chat, deny side-effects.
+        if ToolApprovalGate.requiresApproval(call: call, definition: toolDefinition) {
+            let denied = ToolExecution(
+                call: call,
+                ok: false,
+                output: .null,
+                error: "approval_required: tool.invoke 不能绕过审批闸；请走流式 chat.send 由 ApprovalBroker 决策"
+            )
+            return .success(Self.encode(execution: denied), requestID: requestID)
+        }
         let sessionID = request.arguments["sessionID"]?.stringValue
         let execution = await executeTool(call, sessionID: sessionID, principal: request.principal)
         return .success(Self.encode(execution: execution), requestID: requestID)

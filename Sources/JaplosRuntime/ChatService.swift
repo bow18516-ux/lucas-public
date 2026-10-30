@@ -190,20 +190,27 @@ public final class ChatService: @unchecked Sendable {
                 for call in reply.toolCalls {
                     try Task.checkCancellation()
                     let execution: ToolExecution
-                    if
-                        let approval,
-                        let definition = core.definition(named: call.name),
-                        definition.risk == .high
-                    {
-                        let allowed = await approval(call, definition)
-                        if allowed {
-                            execution = await core.executeTool(call, sessionID: session.id, principal: request.principal)
+                    let definition = core.definition(named: call.name)
+                    if let definition, ToolApprovalGate.requiresApproval(call: call, definition: definition) {
+                        if let approval {
+                            let allowed = await approval(call, definition)
+                            if allowed {
+                                execution = await core.executeTool(call, sessionID: session.id, principal: request.principal)
+                            } else {
+                                execution = ToolExecution(
+                                    call: call,
+                                    ok: false,
+                                    output: .null,
+                                    error: "用户拒绝了该操作"
+                                )
+                            }
                         } else {
+                            // Non-stream / missing broker: never silent side-effect.
                             execution = ToolExecution(
                                 call: call,
                                 ok: false,
                                 output: .null,
-                                error: "用户拒绝了该高风险操作"
+                                error: "该操作需要用户审批，但当前通道无审批能力（请使用流式对话）"
                             )
                         }
                     } else {

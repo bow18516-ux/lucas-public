@@ -67,28 +67,28 @@
       ]
     },
     {
-      "enabled": true,
-      "id": "ED6B866C-8918-473A-83F7-853C548F087F",
-      "name": "截屏",
-      "pattern": "截图|截|屏幕|桌面",
-      "responsePrompt": "因匹配到截字，所以自动注入截图工具，按需调用，如需回复与表达，通常不说废话，简洁不说分辨率，不说细节，一般只说“好了”",
-      "sources": [],
-      "tools": [
-        "system.screen.capture"
-      ],
-      "promptFiles": []
-    },
-    {
       "id": "filesystem",
       "name": "文件操作",
       "enabled": true,
-      "pattern": "文件|目录|文件夹|读取|写入|保存到|\\b(file|folder|directory)\\b",
+      "pattern": "文件|目录|文件夹|读取|写入|保存到|桌面.{0,8}文件|文件.{0,8}桌面|读一下|存到|\\b(file|folder|directory)\\b",
       "tools": [
         "system.filesystem",
         "system.command.shell.execute"
       ],
       "sources": [],
       "responsePrompt": "文件操作使用 system.filesystem；写入前确认路径，不要把大段内容塞进命令参数。"
+    },
+    {
+      "enabled": true,
+      "id": "ED6B866C-8918-473A-83F7-853C548F087F",
+      "name": "截屏",
+      "pattern": "截图|截屏|screenshot|screencapture|屏幕截图|截个图|截一下屏",
+      "responsePrompt": "匹配到明确截屏意图时注入截图工具，按需调用；成功后简洁回复。不要把“桌面文件/读文件”当成截屏。",
+      "sources": [],
+      "tools": [
+        "system.screen.capture"
+      ],
+      "promptFiles": []
     },
     {
       "id": "shell",

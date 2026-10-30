@@ -178,7 +178,7 @@ public struct OpenURLTool: KernelTool {
                 "additionalProperties": false,
             ]),
             capability: Capability.applicationsControl,
-            risk: .low
+            risk: .high
         )
     }
 
@@ -218,7 +218,7 @@ public struct OpenPathTool: KernelTool {
                 "additionalProperties": false,
             ]),
             capability: Capability.applicationsControl,
-            risk: .low
+            risk: .high
         )
     }
 
@@ -229,11 +229,11 @@ public struct OpenPathTool: KernelTool {
         guard let raw = arguments["path"]?.stringValue, !raw.isEmpty else {
             throw ToolError.invalidArguments("path is required")
         }
-        let expanded = (raw as NSString).expandingTildeInPath
+        let url = try TrustRoots.allowedURL(path: raw)
+        let expanded = url.path
         guard FileManager.default.fileExists(atPath: expanded) else {
             throw ToolError.failed("路径不存在：\(expanded)")
         }
-        let url = URL(fileURLWithPath: expanded)
         switch action {
         case "reveal":
             NSWorkspace.shared.activateFileViewerSelecting([url])

@@ -86,4 +86,56 @@ final class JaplosProtocolTests: XCTestCase {
         XCTAssertEqual(decoded.error, "missing model")
         XCTAssertNil(decoded.result)
     }
+
+
+    func testToolApprovalGateHighAlwaysRequires() {
+        let definition = ToolDefinition(
+            name: "system.command.shell.execute",
+            title: "shell",
+            summary: "s",
+            inputSchema: .object([:]),
+            capability: Capability.processExecute,
+            risk: .high
+        )
+        let call = ToolCall(name: definition.name, arguments: .object(["command": .string("ls")]))
+        XCTAssertTrue(ToolApprovalGate.requiresApproval(call: call, definition: definition))
+    }
+
+    func testToolApprovalGateFilesystemWriteOnly() {
+        let definition = ToolDefinition(
+            name: "system.filesystem",
+            title: "fs",
+            summary: "s",
+            inputSchema: .object([:]),
+            capability: Capability.filesystemWrite,
+            risk: .medium
+        )
+        let write = ToolCall(name: definition.name, arguments: .object([
+            "action": .string("write"),
+            "path": .string("~/Desktop/a.txt"),
+            "content": .string("x"),
+        ]))
+        let read = ToolCall(name: definition.name, arguments: .object([
+            "action": .string("read"),
+            "path": .string("~/Desktop/a.txt"),
+        ]))
+        XCTAssertTrue(ToolApprovalGate.requiresApproval(call: write, definition: definition))
+        XCTAssertFalse(ToolApprovalGate.requiresApproval(call: read, definition: definition))
+    }
+
+    func testToolApprovalGateOutboundAndPathOpen() {
+        for name in ["system.path.open", "runtime.wechat.send_text", "system.download.fetch"] {
+            let definition = ToolDefinition(
+                name: name,
+                title: name,
+                summary: "s",
+                inputSchema: .object([:]),
+                capability: Capability.root,
+                risk: .medium
+            )
+            let call = ToolCall(name: name, arguments: .object([:]))
+            XCTAssertTrue(ToolApprovalGate.requiresApproval(call: call, definition: definition), name)
+        }
+    }
+
 }

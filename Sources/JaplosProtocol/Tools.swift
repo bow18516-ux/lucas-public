@@ -176,3 +176,31 @@ public struct ModelConnection: Codable, Sendable, Equatable {
 /// this with an approval frame and a user decision; other transports may
 /// auto-approve.
 public typealias StreamApprovalProvider = @Sendable (ToolCall, ToolDefinition) async -> Bool
+
+/// Single decision source: whether a tool call must get user approval before invoke.
+/// Chat stream uses ApprovalBroker; RPC / non-stream deny instead of silent side-effects.
+public enum ToolApprovalGate {
+    public static func requiresApproval(call: ToolCall, definition: ToolDefinition) -> Bool {
+        if definition.risk == .high { return true }
+
+        switch definition.name {
+        case "system.filesystem":
+            return (call.arguments["action"]?.stringValue ?? "") == "write"
+        case "system.clipboard":
+            return (call.arguments["action"]?.stringValue ?? "") == "set"
+        case "system.application":
+            let action = call.arguments["action"]?.stringValue ?? ""
+            return action == "open" || action == "quit"
+        case "system.path.open",
+             "system.url.open",
+             "system.download.fetch",
+             "system.screen.capture",
+             "runtime.wechat.send_text",
+             "runtime.wechat.send_file",
+             "runtime.feishu.send_text":
+            return true
+        default:
+            return false
+        }
+    }
+}

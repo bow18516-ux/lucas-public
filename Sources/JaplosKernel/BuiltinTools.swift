@@ -70,14 +70,19 @@ public struct ShellTool: KernelTool {
             throw ToolError.denied("命令被安全策略拒绝：\(reason)。如确需执行，请拆分命令或改用其他工具。")
         }
         let timeout = min(max(arguments["timeoutSeconds"]?.doubleValue ?? 30, 1), 120)
+        // Trust-root policy: cwd must be inside allowed roots (default = home).
+        // Absolute path tokens in the command must also stay inside roots.
+        // Approval does not override this hard deny (same class as DangerousCommand).
         let workingDirectory = arguments["workingDirectory"]?.stringValue
+        let cwdURL = try TrustRoots.allowedURL(path: workingDirectory ?? NSHomeDirectory())
+        if let pathReason = TrustRoots.blockedAbsolutePaths(inShellCommand: command) {
+            throw ToolError.denied(pathReason)
+        }
 
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/bin/zsh")
         process.arguments = ["-lc", command]
-        if let workingDirectory {
-            process.currentDirectoryURL = URL(fileURLWithPath: (workingDirectory as NSString).expandingTildeInPath)
-        }
+        process.currentDirectoryURL = cwdURL
         let stdout = Pipe()
         let stderr = Pipe()
         process.standardOutput = stdout
@@ -326,25 +331,11 @@ public struct FilesystemTool: KernelTool {
     }
 
     static func allowedRoots() -> [String] {
-        [
-            NSHomeDirectory(),
-            "/tmp",
-            "/private/tmp",
-            "/Users/Shared",
-        ].map { (($0 as NSString).resolvingSymlinksInPath) }
+        TrustRoots.allowedRoots()
     }
 
     static func allowedURL(path: String) throws -> URL {
-        let expanded = (path as NSString).expandingTildeInPath
-        let url = URL(fileURLWithPath: expanded).standardizedFileURL
-        let resolved = URL(fileURLWithPath: (url.path as NSString).resolvingSymlinksInPath)
-        let allowed = allowedRoots().contains { root in
-            resolved.path == root || resolved.path.hasPrefix(root + "/")
-        }
-        guard allowed else {
-            throw ToolError.denied("Path is outside the allowed roots: \(resolved.path)")
-        }
-        return resolved
+        try TrustRoots.allowedURL(path: path)
     }
 }
 
@@ -366,7 +357,7 @@ public struct ScreenshotTool: KernelTool {
                 "additionalProperties": false,
             ]),
             capability: Capability.screenCapture,
-            risk: .medium
+            risk: .high
         )
     }
 
@@ -462,11 +453,75 @@ public struct ClipboardTool: KernelTool {
     }
 }
 
+/// Shared filesystem / shell trust roots. Approval never widens these roots.
+public enum TrustRoots {
+    public static func allowedRoots() -> [String] {
+        [
+            NSHomeDirectory(),
+            "/tmp",
+            "/private/tmp",
+            "/Users/Shared",
+        ].map { (($0 as NSString).resolvingSymlinksInPath) }
+    }
+
+    public static func contains(path: String) -> Bool {
+        let expanded = (path as NSString).expandingTildeInPath
+        let resolved = ((URL(fileURLWithPath: expanded).standardizedFileURL.path) as NSString)
+            .resolvingSymlinksInPath
+        return allowedRoots().contains { root in
+            resolved == root || resolved.hasPrefix(root + "/")
+        }
+    }
+
+    public static func allowedURL(path: String) throws -> URL {
+        let expanded = (path as NSString).expandingTildeInPath
+        let url = URL(fileURLWithPath: expanded).standardizedFileURL
+        let resolved = URL(fileURLWithPath: (url.path as NSString).resolvingSymlinksInPath)
+        guard contains(path: resolved.path) else {
+            throw ToolError.denied("Path is outside the allowed roots: \(resolved.path)")
+        }
+        return resolved
+    }
+
+    /// System executable prefixes that shell may reference without being trust-root paths.
+    private static let systemExecutablePrefixes = [
+        "/bin/", "/usr/bin/", "/usr/sbin/", "/sbin/", "/usr/libexec/",
+    ]
+
+    /// Absolute / home-relative path tokens outside trust roots (approval cannot widen).
+    /// Policy: cwd + path args must stay in ~/ /tmp /Users/Shared; `/bin`/`/usr/bin` etc. allowed as executables only.
+    public static func blockedAbsolutePaths(inShellCommand command: String) -> String? {
+        let pattern = #"(\~/[^\s;|&<>]+|~(?=[\s;|&<>]|$)|/(?:Users|private|tmp|etc|var|opt|System|Volumes|Applications|Library|usr|bin|sbin)[^\s;|&<>]*)"#
+        guard let regex = try? NSRegularExpression(pattern: pattern) else { return nil }
+        let range = NSRange(command.startIndex..<command.endIndex, in: command)
+        for match in regex.matches(in: command, range: range) {
+            guard let swiftRange = Range(match.range, in: command) else { continue }
+            let token = String(command[swiftRange])
+            if token == "~" || token == "~/" { continue }
+            if contains(path: token) { continue }
+            let resolved = ((token as NSString).expandingTildeInPath as NSString).resolvingSymlinksInPath
+            if systemExecutablePrefixes.contains(where: { resolved == String($0.dropLast()) || resolved.hasPrefix($0) }) {
+                continue
+            }
+            return "命令引用了信任根之外的路径：\(token)。Shell 与 filesystem 共用 ~/、/tmp、/Users/Shared；系统可执行前缀（/bin、/usr/bin…）除外。越界硬拒绝（审批也不能放行）。"
+        }
+        return nil
+    }
+}
+
 /// Always-on guard for catastrophic shell operations. This is deliberately
 /// conservative: it blocks the command, never silently rewrites it.
 public enum DangerousCommand {
     private static let rules: [(pattern: String, reason: String)] = [
-        (#"(?i)\brm\s+(-[a-zA-Z]*r[a-zA-Z]*f|-[a-zA-Z]*f[a-zA-Z]*r)\s+(/|~|\$HOME)(\s|$)"#, "递归删除根目录或主目录"),
+        (#"(?i)\brm\s+(-[a-zA-Z]*r[a-zA-Z]*f|-[a-zA-Z]*f[a-zA-Z]*r)\s+(/|~|\$HOME)(\s|$|/)"#, "递归删除根目录或主目录"),
+        (#"(?i)\brm\s+(-[a-zA-Z]*r[a-zA-Z]*f|-[a-zA-Z]*f[a-zA-Z]*r)\s+(~/Desktop|~/Documents|~/Downloads|\$HOME/Desktop|\$HOME/Documents|\$HOME/Downloads)(/|\s|$)"#, "递归删除桌面/文稿/下载目录"),
+        (#"(?i)\brm\s+(-[a-zA-Z]*r[a-zA-Z]*f|-[a-zA-Z]*f[a-zA-Z]*r)\s+[^\n;|&]*\b(Desktop|Documents|Downloads)(/|\s|$)"#, "递归删除桌面/文稿/下载子树"),
+        (#"(?i)\b(curl|wget|fetch)\b[^\n|;]*\|\s*(ba)?sh\b"#, "管道下载并执行 shell"),
+        (#"(?i)\b(curl|wget|fetch)\b[^\n|;]*\|\s*(ba)?sh\s+-s\b"#, "管道下载并执行 shell -s"),
+        (#"(?i)>\s*~/?\.ssh/authorized_keys\b"#, "写入 ~/.ssh/authorized_keys"),
+        (#"(?i)>\s*\$HOME/?\.ssh/authorized_keys\b"#, "写入 $HOME/.ssh/authorized_keys"),
+        (#"(?i)\btee\b[^\n;|&]*\.ssh/authorized_keys\b"#, "tee 写入 authorized_keys"),
+        (#"(?i)\brm\s+(-[a-zA-Z]*r[a-zA-Z]*f|-[a-zA-Z]*f[a-zA-Z]*r)\s+[^\n;|&]*~/"#, "递归删除主目录下大片内容"),
         (#"(?i)\bsudo\b"#, "sudo 需要交互式密码"),
         (#"(?i)\bmkfs(\.|\s)"#, "格式化磁盘"),
         (#"(?i)\bdiskutil\s+(erase|reformat)"#, "擦除磁盘"),

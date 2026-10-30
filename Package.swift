@@ -52,5 +52,13 @@ let package = Package(
             name: "JaplosProtocolTests",
             dependencies: ["JaplosProtocol"]
         ),
+        .testTarget(
+            name: "JaplosKernelTests",
+            dependencies: ["JaplosKernel", "JaplosProtocol"]
+        ),
+        .testTarget(
+            name: "JaplosRuntimeTests",
+            dependencies: ["JaplosRuntime", "JaplosProtocol"]
+        ),
     ]
 )

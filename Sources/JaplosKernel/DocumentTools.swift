@@ -120,7 +120,7 @@ public struct DownloadFetchTool: KernelTool {
                 "additionalProperties": false,
             ]),
             capability: Capability.filesystemWrite,
-            risk: .medium
+            risk: .high
         )
     }
 
