@@ -208,7 +208,7 @@ struct TopBar: View {
                     .tracking(3.5)
                     .foregroundStyle(Theme.textPrimary)
 
-                Text("v1")
+                Text("v\(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "dev")")
                     .font(.system(size: 9, weight: .semibold))
                     .tracking(0.5)
                     .foregroundStyle(Theme.accent)
@@ -221,7 +221,7 @@ struct TopBar: View {
                 model.settingsPresented = true
             } label: {
                 Image(systemName: "gearshape")
-                    .font(.system(size: 12))
+                    .font(.system(size: 14))
                     .foregroundStyle(Theme.textSecondary)
             }
             .buttonStyle(.borderless)
