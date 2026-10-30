@@ -113,6 +113,23 @@ final class DaemonRestartTests: XCTestCase {
         XCTAssertTrue(FileManager.default.fileExists(atPath: socketPath))
     }
 
+    /// C23: the daemon log must be opened append, so a restart keeps the
+    /// earlier lines instead of truncating them.
+    func testDaemonLogIsAppendedNotTruncated() throws {
+        let client = makeClient()
+        try ensureRunning(client)
+        let first = try String(contentsOf: daemonLog, encoding: .utf8)
+        XCTAssertTrue(first.contains("listening"), first)
+
+        client.shutdown()
+        XCTAssertTrue(waitUntil { !client.ping(timeout: 0.2) }, "old daemon did not stop")
+        try ensureRunning(client)
+
+        let second = try String(contentsOf: daemonLog, encoding: .utf8)
+        XCTAssertGreaterThan(second.count, first.count)
+        XCTAssertTrue(second.hasPrefix(first), "the log was rewritten, not appended")
+    }
+
     func testSecondDaemonRefusesLiveSocket() throws {
         let client = makeClient()
         try ensureRunning(client)
