@@ -1344,7 +1344,9 @@ struct UpdatesSettingsPane: View {
                         latestCard(latest)
                     }
                     automaticCard
+#if DEBUG
                     storeHealthCard
+#endif
                 }
                 .padding(.horizontal, SettingsMetrics.pagePadding)
                 .padding(.bottom, 24)
@@ -1353,7 +1355,9 @@ struct UpdatesSettingsPane: View {
         .task {
             updates.refresh()
             await updates.refreshFeed()
+#if DEBUG
             await model.loadStoreStats()
+#endif
         }
     }
 
@@ -1492,6 +1496,7 @@ struct UpdatesSettingsPane: View {
         .panel(padding: SettingsMetrics.cardPadding)
     }
 
+#if DEBUG
     private var storeHealthCard: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(spacing: 8) {
@@ -1549,6 +1554,8 @@ struct UpdatesSettingsPane: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .panel(padding: SettingsMetrics.cardPadding)
     }
+
+#endif
 
     private var lastCheckText: String {
         guard let date = updates.lastCheck else { return "尚未检查" }
