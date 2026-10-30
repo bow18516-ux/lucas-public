@@ -28,8 +28,13 @@ def user_text(messages):
 
 def tool_mode(messages):
     for message in messages:
-        if message.get("role") == "user" and "APPROVE" in (message.get("content") or ""):
+        content = message.get("content") or ""
+        if message.get("role") != "user":
+            continue
+        if "APPROVE" in content:
             return "shell"
+        if "MCP_ECHO" in content:
+            return "mcp"
     return "time"
 
 
@@ -44,6 +49,13 @@ def tool_result(messages):
 
 
 def final_text(mode, result):
+    if mode == "mcp":
+        output = result.get("output") or {}
+        content = output.get("content") or []
+        texts = [item.get("text", "") for item in content if isinstance(item, dict)]
+        if texts:
+            return "MCP 结果：" + " ".join(texts)
+        return f"MCP 结果：{output}"
     if mode == "shell":
         output = (result.get("output") or {}).get("stdout") or ""
         if output.strip():
@@ -54,6 +66,15 @@ def final_text(mode, result):
 
 
 def tool_call(mode):
+    if mode == "mcp":
+        return {
+            "id": "call_mock_mcp",
+            "type": "function",
+            "function": {
+                "name": "mcp.echo.echo",
+                "arguments": json.dumps({"text": "smoke"}),
+            },
+        }
     if mode == "shell":
         return {
             "id": "call_mock_shell",

@@ -156,4 +156,7 @@ python3 scripts/kernel_rpc.py model.catalog '{}' | grep -q 'mock-model'
 echo "17. stop while an approval is pending"
 python3 scripts/stop_pending_check.py
 
+echo "18. MCP tool runs after approval"
+python3 scripts/approval_check.py allow mcp
+
 echo "✅ smoke test passed"

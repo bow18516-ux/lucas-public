@@ -1,7 +1,11 @@
 #!/usr/bin/env python3
 """Exercises the high-risk tool approval round-trip.
 
-Usage: approval_check.py allow|deny
+Usage: approval_check.py allow|deny [shell|mcp]
+
+  shell (default) -> system.command.shell.execute via the "APPROVE" prompt
+  mcp             -> mcp.echo.echo via the "MCP_ECHO" prompt, which proves an
+                     approved MCP tool actually runs end to end.
 """
 import json
 import os
@@ -13,6 +17,17 @@ import uuid
 SOCKET = os.environ["LUCAS_SOCKET"]
 decision = sys.argv[1] if len(sys.argv) > 1 else "allow"
 assert decision in ("allow", "deny")
+mode = sys.argv[2] if len(sys.argv) > 2 else "shell"
+assert mode in ("shell", "mcp")
+
+if mode == "mcp":
+    prompt = "MCP_ECHO 调一下 echo"
+    tool_name = "mcp.echo.echo"
+    expected = "echo: smoke"
+else:
+    prompt = "APPROVE 跑个命令"
+    tool_name = "system.command.shell.execute"
+    expected = "approved-ok"
 
 
 def send(sock, operation, arguments):
@@ -45,7 +60,7 @@ sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
 sock.settimeout(60)
 sock.connect(SOCKET)
 try:
-    send(sock, "chat.send", {"text": "APPROVE 跑个命令", "stream": True})
+    send(sock, "chat.send", {"text": prompt, "stream": True})
 
     approval = None
     tools = []
@@ -69,13 +84,13 @@ try:
             break
 
     assert approval is not None, "no approval event"
-    assert approval["name"] == "system.command.shell.execute", approval
+    assert approval["name"] == tool_name, approval
     assert tools, "no tool event"
     tool = tools[0]
 
     if decision == "allow":
         assert tool["ok"] is True, tool
-        assert "approved-ok" in final["text"], final["text"]
+        assert expected in final["text"], final["text"]
         print(f"   approved -> tool ok, text={final['text']!r}")
     else:
         assert tool["ok"] is False, tool
@@ -84,4 +99,4 @@ try:
 finally:
     sock.close()
 
-print(f"✅ approval check ({decision}) passed")
+print(f"✅ approval check ({decision}/{mode}) passed")
