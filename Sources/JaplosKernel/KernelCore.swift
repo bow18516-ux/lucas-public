@@ -376,6 +376,74 @@ public final class KernelCore: @unchecked Sendable {
                 try store.deleteAlarm(id: id)
                 return .success(.object(["id": .string(id), "deleted": .bool(true)]), requestID: requestID)
 
+            case .modulesList:
+                let limit = request.arguments["limit"]?.intValue ?? 100
+                return .success(.array(try store.listModules(limit: limit)), requestID: requestID)
+
+            case .modulesSet:
+                guard let id = request.arguments["id"]?.stringValue, !id.isEmpty else {
+                    return .failure(.invalidArgument("id is required"), requestID: requestID)
+                }
+                let version = request.arguments["version"]?.stringValue ?? "1"
+                let enabled = request.arguments["enabled"]?.boolValue ?? true
+                let record = request.arguments["record"] ?? .object([:])
+                try store.upsertModule(id: id, version: version, enabled: enabled, record: record)
+                return .success(.object(["id": .string(id), "saved": .bool(true)]), requestID: requestID)
+
+            case .runsList:
+                let agentID = request.arguments["agentID"]?.stringValue
+                let limit = request.arguments["limit"]?.intValue ?? 50
+                return .success(.array(try store.listRuns(agentID: agentID, limit: limit)), requestID: requestID)
+
+            case .runsUpsert:
+                guard let id = request.arguments["id"]?.stringValue, !id.isEmpty else {
+                    return .failure(.invalidArgument("id is required"), requestID: requestID)
+                }
+                let agentID = request.arguments["agentID"]?.stringValue ?? "default"
+                let state = request.arguments["state"]?.stringValue ?? "unknown"
+                let record = request.arguments["record"] ?? .object([:])
+                try store.upsertRun(id: id, agentID: agentID, state: state, record: record)
+                return .success(.object(["id": .string(id), "saved": .bool(true), "state": .string(state)]), requestID: requestID)
+
+            case .knowledgeDocumentsList:
+                let limit = request.arguments["limit"]?.intValue ?? 50
+                return .success(.array(try store.listKnowledgeDocuments(limit: limit)), requestID: requestID)
+
+            case .knowledgeDocumentsUpsert:
+                guard let title = request.arguments["title"]?.stringValue, !title.isEmpty else {
+                    return .failure(.invalidArgument("title is required"), requestID: requestID)
+                }
+                let id = request.arguments["id"]?.stringValue?.trimmingCharacters(in: .whitespacesAndNewlines)
+                let docID = (id?.isEmpty == false) ? id! : UUID().uuidString
+                let record = request.arguments["record"] ?? .object(["title": .string(title)])
+                try store.upsertKnowledgeDocument(id: docID, title: title, record: record)
+                return .success(.object(["id": .string(docID), "saved": .bool(true)]), requestID: requestID)
+
+            case .knowledgeDocumentsDelete:
+                guard let id = request.arguments["id"]?.stringValue, !id.isEmpty else {
+                    return .failure(.invalidArgument("id is required"), requestID: requestID)
+                }
+                try store.deleteKnowledgeDocument(id: id)
+                return .success(.object(["id": .string(id), "deleted": .bool(true)]), requestID: requestID)
+
+            case .subscriptionsList:
+                let limit = request.arguments["limit"]?.intValue ?? 50
+                return .success(.array(try store.listSubscriptions(limit: limit)), requestID: requestID)
+
+            case .subscriptionsUpsert:
+                guard let informationType = request.arguments["informationType"]?.stringValue, !informationType.isEmpty else {
+                    return .failure(.invalidArgument("informationType is required"), requestID: requestID)
+                }
+                let id = request.arguments["id"]?.stringValue?.trimmingCharacters(in: .whitespacesAndNewlines)
+                let subID = (id?.isEmpty == false) ? id! : UUID().uuidString
+                let active = request.arguments["active"]?.boolValue ?? true
+                let record = request.arguments["record"] ?? .object([:])
+                try store.upsertSubscription(id: subID, informationType: informationType, active: active, record: record)
+                return .success(.object(["id": .string(subID), "saved": .bool(true)]), requestID: requestID)
+
+            case .speechSynthesize:
+                return await Self.synthesizeSpeech(request: request, store: store)
+
             case .toolInvoke:
                 return await invokeTool(request)
 
@@ -398,6 +466,79 @@ public final class KernelCore: @unchecked Sendable {
             }
         } catch {
             return .failure(.internalError("\(error)"), requestID: requestID)
+        }
+    }
+
+    // MARK: - Speech
+
+    private static func synthesizeSpeech(request: KernelRequest, store: KernelStore) async -> KernelResponse {
+        let requestID = request.id
+        guard let text = request.arguments["text"]?.stringValue?
+            .trimmingCharacters(in: .whitespacesAndNewlines), !text.isEmpty else {
+            return .failure(.invalidArgument("text is required"), requestID: requestID)
+        }
+
+        let profile = (try? store.defaultSpeechProfile()) ?? .object([:])
+        let record = profile["record"] ?? .object([:])
+        let provider = (
+            request.arguments["providerID"]?.stringValue
+                ?? profile["providerID"]?.stringValue
+                ?? record["provider"]?.stringValue
+                ?? "system"
+        ).lowercased()
+
+        if provider != "volcengine" {
+            return .success(.object([
+                "provider": .string("system"),
+                "fallback": .bool(true),
+                "reason": .string("provider_is_system"),
+            ]), requestID: requestID)
+        }
+
+        guard let credentials = store.resolvedVolcengineCredentials() else {
+            FileHandle.standardError.write(Data("lucasd: speech.synthesize volcengine credentials missing → system fallback\n".utf8))
+            return .success(.object([
+                "provider": .string("system"),
+                "fallback": .bool(true),
+                "reason": .string("missing_credentials"),
+            ]), requestID: requestID)
+        }
+
+        let voiceType = request.arguments["voiceType"]?.stringValue
+            ?? record["volcengineVoiceType"]?.stringValue
+            ?? "BV001_streaming"
+        let cluster = request.arguments["cluster"]?.stringValue
+            ?? record["volcengineCluster"]?.stringValue
+            ?? "volcano_tts"
+        let speed = request.arguments["speedRatio"]?.doubleValue
+            ?? record["rate"]?.doubleValue.map { max(0.1, min(2.0, $0 * 2.0)) }
+            ?? 1.0
+
+        do {
+            let result = try await VolcengineTTS.synthesize(
+                text: text,
+                appID: credentials.appID,
+                token: credentials.token,
+                voiceType: voiceType,
+                cluster: cluster,
+                encoding: "mp3",
+                speedRatio: speed
+            )
+            return .success(.object([
+                "provider": .string("volcengine"),
+                "fallback": .bool(false),
+                "encoding": .string(result.encoding),
+                "data": .string(result.audioBase64),
+                "reqID": .string(result.reqID),
+            ]), requestID: requestID)
+        } catch {
+            let message = String(describing: error)
+            FileHandle.standardError.write(Data("lucasd: speech.synthesize failed (\(message)) → system fallback\n".utf8))
+            return .success(.object([
+                "provider": .string("system"),
+                "fallback": .bool(true),
+                "reason": .string(message),
+            ]), requestID: requestID)
         }
     }
 

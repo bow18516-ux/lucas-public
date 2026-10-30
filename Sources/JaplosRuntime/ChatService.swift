@@ -81,9 +81,29 @@ public final class ChatService: @unchecked Sendable {
             return .failure(.internalError("读取模型配置失败：\(error)"), requestID: requestID)
         }
 
+        var trackedRunID: String?
+        var trackedSessionID: String?
+
         do {
             let session = try resolveSession(request: request, text: text)
             let isFirstMessage = session.title == "新对话"
+            let runID = {
+                if let key = request.idempotencyKey, !key.isEmpty { return key }
+                if let key = request.correlationID, !key.isEmpty { return key }
+                return UUID().uuidString
+            }()
+            trackedRunID = runID
+            trackedSessionID = session.id
+            try? core.store.upsertRun(
+                id: runID,
+                agentID: "default",
+                state: "running",
+                record: .object([
+                    "sessionID": .string(session.id),
+                    "requestID": .string(requestID),
+                    "preview": .string(String(text.prefix(120))),
+                ])
+            )
 
             let userTurn = ChatTurn(sessionID: session.id, role: .user, text: text)
             try core.store.appendTurn(userTurn)
@@ -129,6 +149,16 @@ public final class ChatService: @unchecked Sendable {
 
                 guard !reply.toolCalls.isEmpty else {
                     try core.store.touchSession(session.id)
+                    try? core.store.upsertRun(
+                        id: runID,
+                        agentID: "default",
+                        state: "completed",
+                        record: .object([
+                            "sessionID": .string(session.id),
+                            "requestID": .string(requestID),
+                            "finishReason": .string(reply.finishReason),
+                        ])
+                    )
                     return .success(.object([
                         "sessionID": .string(session.id),
                         "text": .string(reply.text),
@@ -189,6 +219,16 @@ public final class ChatService: @unchecked Sendable {
             let finalTurn = ChatTurn(sessionID: session.id, role: .assistant, text: fallback)
             try core.store.appendTurn(finalTurn)
             try core.store.touchSession(session.id)
+            try? core.store.upsertRun(
+                id: runID,
+                agentID: "default",
+                state: "completed",
+                record: .object([
+                    "sessionID": .string(session.id),
+                    "requestID": .string(requestID),
+                    "finishReason": .string("tool_budget_exhausted"),
+                ])
+            )
             return .success(.object([
                 "sessionID": .string(session.id),
                 "text": .string(fallback),
@@ -196,11 +236,35 @@ public final class ChatService: @unchecked Sendable {
                 "finishReason": .string("tool_budget_exhausted"),
             ]), requestID: requestID)
         } catch is CancellationError {
+            if let runID = trackedRunID {
+                try? core.store.upsertRun(
+                    id: runID,
+                    agentID: "default",
+                    state: "failed",
+                    record: .object([
+                        "sessionID": .string(trackedSessionID ?? ""),
+                        "requestID": .string(requestID),
+                        "error": .string("cancelled"),
+                    ])
+                )
+            }
             return .failure(
                 KernelFailure(code: "cancelled", message: "已停止", origin: "runtime", retryable: false),
                 requestID: requestID
             )
         } catch let error as ModelError {
+            if let runID = trackedRunID {
+                try? core.store.upsertRun(
+                    id: runID,
+                    agentID: "default",
+                    state: "failed",
+                    record: .object([
+                        "sessionID": .string(trackedSessionID ?? ""),
+                        "requestID": .string(requestID),
+                        "error": .string(error.description),
+                    ])
+                )
+            }
             return .failure(
                 KernelFailure(
                     code: "model_error",
@@ -211,6 +275,18 @@ public final class ChatService: @unchecked Sendable {
                 requestID: requestID
             )
         } catch {
+            if let runID = trackedRunID {
+                try? core.store.upsertRun(
+                    id: runID,
+                    agentID: "default",
+                    state: "failed",
+                    record: .object([
+                        "sessionID": .string(trackedSessionID ?? ""),
+                        "requestID": .string(requestID),
+                        "error": .string(String(describing: error)),
+                    ])
+                )
+            }
             if Task.isCancelled {
                 return .failure(
                     KernelFailure(code: "cancelled", message: "已停止", origin: "runtime", retryable: false),

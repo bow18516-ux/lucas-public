@@ -4,6 +4,8 @@ import JaplosProtocol
 public final class KernelStore {
     public static let modelConnectionPath = "agents.default.model.connection"
     public static let modelSecretAccount = "agents.default.model.connection"
+    public static let speechVolcengineAppIDAccount = "speech.volcengine.appId"
+    public static let speechVolcengineTokenAccount = "speech.volcengine.token"
 
     public let database: SQLiteDatabase
     public let path: String
@@ -158,6 +160,42 @@ public final class KernelStore {
         """)
         try database.execute("CREATE INDEX IF NOT EXISTS idx_mcp_events_time ON mcp_events(created_at);")
         try database.execute("""
+        CREATE TABLE IF NOT EXISTS modules (
+            id TEXT PRIMARY KEY NOT NULL,
+            version TEXT NOT NULL,
+            enabled INTEGER NOT NULL,
+            record_json TEXT NOT NULL
+        );
+        """)
+        try database.execute("""
+        CREATE TABLE IF NOT EXISTS runs (
+            id TEXT PRIMARY KEY NOT NULL,
+            agent_id TEXT NOT NULL,
+            state TEXT NOT NULL,
+            updated_at REAL NOT NULL,
+            record_json TEXT NOT NULL
+        );
+        """)
+        try database.execute("CREATE INDEX IF NOT EXISTS idx_runs_state ON runs(state, updated_at DESC);")
+        try database.execute("""
+        CREATE TABLE IF NOT EXISTS knowledge_documents (
+            id TEXT PRIMARY KEY NOT NULL,
+            title TEXT NOT NULL,
+            updated_at REAL NOT NULL,
+            record_json TEXT NOT NULL
+        );
+        """)
+        try database.execute("CREATE INDEX IF NOT EXISTS idx_knowledge_documents_updated ON knowledge_documents(updated_at DESC);")
+        try database.execute("""
+        CREATE TABLE IF NOT EXISTS subscriptions (
+            id TEXT PRIMARY KEY NOT NULL,
+            information_type TEXT NOT NULL,
+            active INTEGER NOT NULL,
+            record_json TEXT NOT NULL
+        );
+        """)
+        try database.execute("CREATE INDEX IF NOT EXISTS idx_subscriptions_type ON subscriptions(information_type, active);")
+        try database.execute("""
         CREATE TABLE IF NOT EXISTS persistence_migrations (
             namespace TEXT NOT NULL,
             version INTEGER NOT NULL,
@@ -166,6 +204,7 @@ public final class KernelStore {
         );
         """)
         try recordPersistenceMigration(namespace: "lucas.store", version: 2)
+        try recordPersistenceMigration(namespace: "lucas.store", version: 3)
     }
 
     private func recordPersistenceMigration(namespace: String, version: Int) throws {
@@ -350,13 +389,21 @@ public final class KernelStore {
                 let data = recordJSON.data(using: .utf8),
                 let record = try? ProtocolCoding.decode(JSONValue.self, from: data)
             else { return nil }
+            var sanitized = record
+            if var object = sanitized.objectValue {
+                object["volcengineToken"] = .string("")
+                object["volcengineAppID"] = .string("")
+                object["volcengineTokenConfigured"] = .bool(secrets.secret(for: Self.speechVolcengineTokenAccount) != nil)
+                object["volcengineAppIDConfigured"] = .bool(secrets.secret(for: Self.speechVolcengineAppIDAccount) != nil)
+                sanitized = .object(object)
+            }
             return .object([
                 "profileID": .string(profileID),
                 "providerID": .string(providerID),
                 "isDefault": .bool(isDefault != 0),
                 "revision": .number(Double(revision)),
                 "updatedAt": .string(ISO8601.string(from: Date(timeIntervalSince1970: updatedAt))),
-                "record": record,
+                "record": sanitized,
             ])
         }
     }
@@ -367,7 +414,24 @@ public final class KernelStore {
         isDefault: Bool,
         record: JSONValue
     ) throws {
-        let encoded = String(data: try ProtocolCoding.encode(record), encoding: .utf8) ?? "{}"
+        var sanitized = record
+        if var object = sanitized.objectValue {
+            if let appID = object["volcengineAppID"]?.stringValue?.trimmingCharacters(in: .whitespacesAndNewlines),
+               !appID.isEmpty {
+                try secrets.setSecret(appID, for: Self.speechVolcengineAppIDAccount)
+            }
+            if let token = object["volcengineToken"]?.stringValue?.trimmingCharacters(in: .whitespacesAndNewlines),
+               !token.isEmpty {
+                try secrets.setSecret(token, for: Self.speechVolcengineTokenAccount)
+            }
+            // Never persist raw credentials in SQLite.
+            object["volcengineToken"] = .string("")
+            object["volcengineAppID"] = .string("")
+            object["volcengineTokenConfigured"] = .bool(secrets.secret(for: Self.speechVolcengineTokenAccount) != nil)
+            object["volcengineAppIDConfigured"] = .bool(secrets.secret(for: Self.speechVolcengineAppIDAccount) != nil)
+            sanitized = .object(object)
+        }
+        let encoded = String(data: try ProtocolCoding.encode(sanitized), encoding: .utf8) ?? "{}"
         let now = Date().timeIntervalSince1970
         if isDefault {
             try database.execute("UPDATE speech_profiles SET is_default = 0;")
@@ -382,6 +446,19 @@ public final class KernelStore {
             updated_at = excluded.updated_at,
             record_json = excluded.record_json;
         """, [profileID, providerID, isDefault ? 1 : 0, now, encoded])
+    }
+
+    public func resolvedVolcengineCredentials() -> (appID: String, token: String)? {
+        let appID = secrets.secret(for: Self.speechVolcengineAppIDAccount)?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let token = secrets.secret(for: Self.speechVolcengineTokenAccount)?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard !appID.isEmpty, !token.isEmpty else { return nil }
+        return (appID, token)
+    }
+
+    public func defaultSpeechProfile() throws -> JSONValue? {
+        try listSpeechProfiles().first { $0["isDefault"]?.boolValue == true } ?? listSpeechProfiles().first
     }
 
     /// Configuration without secrets; useful for UI and display.
@@ -846,6 +923,144 @@ public final class KernelStore {
         object["id"] = .string(id)
         object["record"] = record
         return .object(object)
+    }
+
+
+    // MARK: - Modules
+
+    public func listModules(limit: Int = 100) throws -> [JSONValue] {
+        try database.query(
+            "SELECT id, version, enabled, record_json FROM modules ORDER BY id ASC LIMIT ?;",
+            [limit]
+        ).compactMap { row in Self.decodeRecordRow(row, idKey: "id", extra: { r in
+            [
+                "version": .string((r["version"] as? String) ?? "0"),
+                "enabled": .bool(((r["enabled"] as? Int64) ?? 0) != 0),
+            ]
+        })}
+    }
+
+    public func upsertModule(id: String, version: String, enabled: Bool, record: JSONValue) throws {
+        let encoded = String(data: try ProtocolCoding.encode(record), encoding: .utf8) ?? "{}"
+        try database.execute("""
+        INSERT INTO modules(id, version, enabled, record_json)
+        VALUES (?, ?, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET
+            version = excluded.version,
+            enabled = excluded.enabled,
+            record_json = excluded.record_json;
+        """, [id, version, enabled ? 1 : 0, encoded])
+    }
+
+    // MARK: - Runs
+
+    public func listRuns(agentID: String? = nil, limit: Int = 50) throws -> [JSONValue] {
+        let rows: [[String: Any]]
+        if let agentID {
+            rows = try database.query(
+                """
+                SELECT id, agent_id, state, updated_at, record_json FROM runs
+                WHERE agent_id = ? ORDER BY updated_at DESC LIMIT ?;
+                """,
+                [agentID, limit]
+            )
+        } else {
+            rows = try database.query(
+                """
+                SELECT id, agent_id, state, updated_at, record_json FROM runs
+                ORDER BY updated_at DESC LIMIT ?;
+                """,
+                [limit]
+            )
+        }
+        return rows.compactMap { row in Self.decodeRecordRow(row, idKey: "id", extra: { r in
+            [
+                "agentID": .string((r["agent_id"] as? String) ?? ""),
+                "state": .string((r["state"] as? String) ?? "unknown"),
+                "updatedAt": .string(ISO8601.string(from: Date(timeIntervalSince1970: (r["updated_at"] as? Double) ?? 0))),
+            ]
+        })}
+    }
+
+    public func upsertRun(
+        id: String,
+        agentID: String,
+        state: String,
+        record: JSONValue
+    ) throws {
+        let encoded = String(data: try ProtocolCoding.encode(record), encoding: .utf8) ?? "{}"
+        let now = Date().timeIntervalSince1970
+        try database.execute("""
+        INSERT INTO runs(id, agent_id, state, updated_at, record_json)
+        VALUES (?, ?, ?, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET
+            agent_id = excluded.agent_id,
+            state = excluded.state,
+            updated_at = excluded.updated_at,
+            record_json = excluded.record_json;
+        """, [id, agentID, state, now, encoded])
+    }
+
+    // MARK: - Knowledge documents
+
+    public func listKnowledgeDocuments(limit: Int = 50) throws -> [JSONValue] {
+        try database.query(
+            "SELECT id, title, updated_at, record_json FROM knowledge_documents ORDER BY updated_at DESC LIMIT ?;",
+            [limit]
+        ).compactMap { row in Self.decodeRecordRow(row, idKey: "id", extra: { r in
+            [
+                "title": .string((r["title"] as? String) ?? ""),
+                "updatedAt": .string(ISO8601.string(from: Date(timeIntervalSince1970: (r["updated_at"] as? Double) ?? 0))),
+            ]
+        })}
+    }
+
+    public func upsertKnowledgeDocument(id: String, title: String, record: JSONValue) throws {
+        let encoded = String(data: try ProtocolCoding.encode(record), encoding: .utf8) ?? "{}"
+        let now = Date().timeIntervalSince1970
+        try database.execute("""
+        INSERT INTO knowledge_documents(id, title, updated_at, record_json)
+        VALUES (?, ?, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET
+            title = excluded.title,
+            updated_at = excluded.updated_at,
+            record_json = excluded.record_json;
+        """, [id, title, now, encoded])
+    }
+
+    public func deleteKnowledgeDocument(id: String) throws {
+        try database.execute("DELETE FROM knowledge_documents WHERE id = ?;", [id])
+    }
+
+    // MARK: - Subscriptions
+
+    public func listSubscriptions(limit: Int = 50) throws -> [JSONValue] {
+        try database.query(
+            "SELECT id, information_type, active, record_json FROM subscriptions ORDER BY information_type ASC, id ASC LIMIT ?;",
+            [limit]
+        ).compactMap { row in Self.decodeRecordRow(row, idKey: "id", extra: { r in
+            [
+                "informationType": .string((r["information_type"] as? String) ?? ""),
+                "active": .bool(((r["active"] as? Int64) ?? 0) != 0),
+            ]
+        })}
+    }
+
+    public func upsertSubscription(
+        id: String,
+        informationType: String,
+        active: Bool,
+        record: JSONValue
+    ) throws {
+        let encoded = String(data: try ProtocolCoding.encode(record), encoding: .utf8) ?? "{}"
+        try database.execute("""
+        INSERT INTO subscriptions(id, information_type, active, record_json)
+        VALUES (?, ?, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET
+            information_type = excluded.information_type,
+            active = excluded.active,
+            record_json = excluded.record_json;
+        """, [id, informationType, active ? 1 : 0, encoded])
     }
 
     public func statistics() throws -> (sessions: Int, turns: Int, tools: Int) {

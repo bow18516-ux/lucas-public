@@ -28,6 +28,7 @@ enum SettingsMetrics {
 enum SettingsSection: String, CaseIterable, Identifiable {
     case model = "大模型设置"
     case voice = "语音设置"
+    case alarms = "提醒"
     case mcp = "MCP 服务"
     case skills = "Skill 列表"
     case tools = "工具列表"
@@ -39,6 +40,7 @@ enum SettingsSection: String, CaseIterable, Identifiable {
         switch self {
         case .model: return "cpu"
         case .voice: return "waveform"
+        case .alarms: return "bell"
         case .mcp: return "globe.asia.australia"
         case .skills: return "square.stack.3d.up"
         case .tools: return "wrench.and.screwdriver"
@@ -172,6 +174,8 @@ struct SettingsScreen: View {
             SkillsSettingsPane(model: model)
         case .voice:
             VoiceSettingsPane(model: model, voice: voice)
+        case .alarms:
+            AlarmsSettingsPane(model: model)
         case .mcp:
             MCPSettingsPane(model: model)
         case .updates:
@@ -1284,13 +1288,16 @@ struct VoiceSettingsPane: View {
         }
         .task {
             devices = AudioDevices.inputs()
-            await model.syncSpeechProfile(from: voice)
+            await model.loadSpeechProfile()
         }
         .onChange(of: voice.voiceIdentifier) { _ in Task { await model.syncSpeechProfile(from: voice) } }
         .onChange(of: voice.languageCode) { _ in Task { await model.syncSpeechProfile(from: voice) } }
         .onChange(of: voice.rate) { _ in Task { await model.syncSpeechProfile(from: voice) } }
         .onChange(of: voice.pitch) { _ in Task { await model.syncSpeechProfile(from: voice) } }
         .onChange(of: voice.inputDeviceUID) { _ in Task { await model.syncSpeechProfile(from: voice) } }
+        .onChange(of: voice.provider) { _ in Task { await model.syncSpeechProfile(from: voice) } }
+        .onChange(of: voice.volcengineVoiceType) { _ in Task { await model.syncSpeechProfile(from: voice) } }
+        .onChange(of: voice.volcengineCluster) { _ in Task { await model.syncSpeechProfile(from: voice) } }
     }
 
     // MARK: Cards
@@ -1343,8 +1350,74 @@ struct VoiceSettingsPane: View {
 
     private var synthesisCard: some View {
         card(icon: "speaker.wave.2", title: "语音合成", subtitle: "选择回复的声音、语速与音高") {
-            row("合成服务") { staticField("系统语音 · Apple") }
-            row("音色") { voiceMenu }
+            row("合成服务") {
+                Menu {
+                    ForEach(SpeechOutput.Provider.allCases) { item in
+                        Button(item.label) { voice.provider = item }
+                    }
+                } label: {
+                    fieldLabel(voice.provider.label)
+                }
+                .menuStyle(.borderlessButton)
+                .menuIndicator(.hidden)
+                .frame(maxWidth: .infinity)
+            }
+            if voice.provider == .volcengine {
+                row("App ID") {
+                    TextField("火山 App ID", text: $voice.volcengineAppID)
+                        .textFieldStyle(.plain)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 7)
+                        .background(Color.white.opacity(0.05), in: RoundedRectangle(cornerRadius: 6))
+                        .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(Theme.panelBorder, lineWidth: 0.7))
+                }
+                row("Token") {
+                    SecureField(voice.volcengineConfigured ? "已保存，输入新 Token 可覆盖" : "火山 Access Token", text: $voice.volcengineToken)
+                        .textFieldStyle(.plain)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 7)
+                        .background(Color.white.opacity(0.05), in: RoundedRectangle(cornerRadius: 6))
+                        .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(Theme.panelBorder, lineWidth: 0.7))
+                }
+                row("音色 ID") {
+                    TextField("如 BV001_streaming", text: $voice.volcengineVoiceType)
+                        .textFieldStyle(.plain)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 7)
+                        .background(Color.white.opacity(0.05), in: RoundedRectangle(cornerRadius: 6))
+                        .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(Theme.panelBorder, lineWidth: 0.7))
+                }
+                row("凭证") {
+                    Button {
+                        Task { await model.syncSpeechProfile(from: voice) }
+                    } label: {
+                        Text("保存 App ID / Token")
+                            .font(.system(size: SettingsMetrics.cardSubtitleSize))
+                            .foregroundStyle(Color.black.opacity(0.85))
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 5)
+                            .background(Theme.accent, in: RoundedRectangle(cornerRadius: 6))
+                    }
+                    .buttonStyle(.borderless)
+                }
+                Text(voice.volcengineConfigured
+                     ? "已配置火山凭证；未填完整或合成失败时仍用系统语音。"
+                     : "未配置时仍用系统语音。凭证经 SecretStore 保存，不会写入 SQLite。")
+                    .font(.system(size: SettingsMetrics.captionSize))
+                    .foregroundStyle(Theme.textSecondary.opacity(0.85))
+                if let err = voice.lastCloudError, !err.isEmpty {
+                    Text("最近云端错误：\(err)")
+                        .font(.system(size: SettingsMetrics.captionSize))
+                        .foregroundStyle(Color.orange.opacity(0.9))
+                }
+            } else if voice.provider == .openaiCompatible {
+                Text("OpenAI 兼容 TTS 仅为占位，当前仍走系统语音。")
+                    .font(.system(size: SettingsMetrics.captionSize))
+                    .foregroundStyle(Theme.textSecondary.opacity(0.85))
+            }
+            if voice.provider == .system {
+                row("音色") { voiceMenu }
+            }
             row("语速") {
                 HStack(spacing: 12) {
                     Slider(value: $voice.rate, in: 0.35...0.65)
@@ -1417,7 +1490,7 @@ struct VoiceSettingsPane: View {
                     }
                 }
             }
-            Text("云端 TTS / 火山音色会在后续版本接入；当前为系统语音，改动即时生效。")
+            Text("改动会同步到 speech_profiles；火山凭证走 SecretStore。未配置或失败时自动回退系统语音。")
                 .font(.system(size: SettingsMetrics.captionSize))
                 .foregroundStyle(Theme.textSecondary.opacity(0.75))
         }
@@ -1529,6 +1602,110 @@ struct VoiceSettingsPane: View {
     private var currentDeviceName: String {
         if voice.inputDeviceUID.isEmpty { return "跟随系统默认" }
         return devices.first(where: { $0.id == voice.inputDeviceUID })?.name ?? "跟随系统默认"
+    }
+}
+
+
+// MARK: - Alarms settings
+
+struct AlarmsSettingsPane: View {
+    @ObservedObject var model: AppModel
+    @State private var title = ""
+    @State private var fireAt = Date().addingTimeInterval(3600)
+
+    var body: some View {
+        VStack(spacing: 0) {
+            SettingsHeader(title: "提醒", subtitle: "本地闹钟列表（轻量端口，不含系统通知投递）", model: model)
+
+            ScrollView {
+                VStack(alignment: .leading, spacing: SettingsMetrics.cardSpacing) {
+                    VStack(alignment: .leading, spacing: 16) {
+                        HStack(alignment: .firstTextBaseline, spacing: 8) {
+                            Image(systemName: "bell")
+                                .font(.system(size: SettingsMetrics.bodySize))
+                                .foregroundStyle(Theme.textSecondary)
+                            Text("新建提醒")
+                                .font(.system(size: SettingsMetrics.cardTitleSize, weight: .semibold))
+                                .foregroundStyle(Theme.textPrimary)
+                        }
+                        HStack(spacing: 12) {
+                            TextField("标题", text: $title)
+                                .textFieldStyle(.plain)
+                                .padding(.horizontal, 10)
+                                .padding(.vertical, 7)
+                                .background(Color.white.opacity(0.05), in: RoundedRectangle(cornerRadius: 6))
+                                .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(Theme.panelBorder, lineWidth: 0.7))
+                            DatePicker("", selection: $fireAt)
+                                .labelsHidden()
+                                .datePickerStyle(.compact)
+                            Button("添加") {
+                                Task {
+                                    await model.upsertAlarm(title: title, fireAt: fireAt)
+                                    title = ""
+                                    fireAt = Date().addingTimeInterval(3600)
+                                }
+                            }
+                            .buttonStyle(.borderless)
+                            .font(.system(size: SettingsMetrics.cardSubtitleSize))
+                            .foregroundStyle(Color.black.opacity(0.85))
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 5)
+                            .background(Theme.accent, in: RoundedRectangle(cornerRadius: 6))
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .panel(padding: SettingsMetrics.cardPadding)
+
+                    VStack(alignment: .leading, spacing: 12) {
+                        HStack {
+                            Text("已保存")
+                                .font(.system(size: SettingsMetrics.cardTitleSize, weight: .semibold))
+                                .foregroundStyle(Theme.textPrimary)
+                            Spacer()
+                            Text("\(model.alarms.count)")
+                                .font(.system(size: SettingsMetrics.captionSize, design: .monospaced))
+                                .foregroundStyle(Theme.textSecondary)
+                        }
+                        if model.alarms.isEmpty {
+                            Text("暂无提醒。")
+                                .font(.system(size: SettingsMetrics.cardSubtitleSize))
+                                .foregroundStyle(Theme.textSecondary)
+                        } else {
+                            ForEach(model.alarms) { alarm in
+                                HStack(spacing: 12) {
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text(alarm.title)
+                                            .font(.system(size: SettingsMetrics.labelSize))
+                                            .foregroundStyle(Theme.textPrimary)
+                                        Text(alarm.fireAt.formatted(date: .abbreviated, time: .shortened))
+                                            .font(.system(size: SettingsMetrics.captionSize))
+                                            .foregroundStyle(Theme.textSecondary)
+                                    }
+                                    Spacer()
+                                    Text(alarm.enabled ? "开" : "关")
+                                        .font(.system(size: SettingsMetrics.captionSize))
+                                        .foregroundStyle(Theme.textSecondary)
+                                    Button {
+                                        Task { await model.deleteAlarm(id: alarm.id) }
+                                    } label: {
+                                        Image(systemName: "trash")
+                                            .font(.system(size: SettingsMetrics.captionSize))
+                                            .foregroundStyle(Color.red.opacity(0.8))
+                                    }
+                                    .buttonStyle(.borderless)
+                                }
+                                .padding(.vertical, 4)
+                            }
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .panel(padding: SettingsMetrics.cardPadding)
+                }
+                .padding(.horizontal, SettingsMetrics.pagePadding)
+                .padding(.bottom, 24)
+            }
+        }
+        .task { await model.loadAlarms() }
     }
 }
 

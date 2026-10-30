@@ -82,6 +82,14 @@ final class AppModel: ObservableObject {
     @Published var testResult: String?
     @Published var memoryNotes: [MemoryNote] = []
     @Published var recentTasks: [PersistedTask] = []
+    @Published var alarms: [AlarmItem] = []
+
+    struct AlarmItem: Identifiable, Equatable {
+        var id: String
+        var title: String
+        var fireAt: Date
+        var enabled: Bool
+    }
 
     struct MemoryNote: Identifiable, Equatable {
         var id: String
@@ -149,6 +157,8 @@ final class AppModel: ObservableObject {
         }
 
         await loadSettings()
+        wireSpeechCloud()
+        await loadSpeechProfile()
         presentOnboardingIfNeeded()
         await loadTools()
         await loadSessions()
@@ -159,6 +169,7 @@ final class AppModel: ObservableObject {
         }
         await loadMemories()
         await loadRecentTasks()
+        await loadAlarms()
     }
 
     // MARK: - Sessions
@@ -594,23 +605,156 @@ final class AppModel: ObservableObject {
         }
     }
 
-    /// Persist current system TTS prefs into `speech_profiles` (kernel store).
+    /// Persist TTS prefs into `speech_profiles` (kernel store). Volcengine
+    /// credentials ride in the record and are redacted into SecretStore by the kernel.
     func syncSpeechProfile(from voice: SpeechOutput) async {
-        let record = JSONValue.object([
-            "provider": .string("system"),
+        let providerID = voice.provider.rawValue
+        var record: [String: JSONValue] = [
+            "provider": .string(providerID),
             "voiceIdentifier": .string(voice.voiceIdentifier),
             "languageCode": .string(voice.languageCode),
             "rate": .number(voice.rate),
             "pitch": .number(voice.pitch),
             "inputDeviceUID": .string(voice.inputDeviceUID),
             "tone": .string(OnboardingPrefs.tone),
-        ])
+            "volcengineVoiceType": .string(voice.volcengineVoiceType),
+            "volcengineCluster": .string(voice.volcengineCluster),
+        ]
+        if !voice.volcengineAppID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            record["volcengineAppID"] = .string(voice.volcengineAppID)
+        }
+        if !voice.volcengineToken.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            record["volcengineToken"] = .string(voice.volcengineToken)
+        }
         _ = try? await client.callAsync(.speechProfilesSet, arguments: .object([
-            "profileID": .string("system-default"),
-            "providerID": .string("system"),
+            "profileID": .string("default"),
+            "providerID": .string(providerID),
             "isDefault": .bool(true),
-            "record": record,
+            "record": .object(record),
         ]))
+        if !voice.volcengineToken.isEmpty {
+            voice.volcengineToken = ""
+            voice.markVolcengineConfigured(true)
+        }
+        await loadSpeechProfile()
+    }
+
+    func loadSpeechProfile() async {
+        do {
+            let result = try await client.callAsync(.speechProfilesList, arguments: .object([:]))
+            guard let profile = (result.arrayValue ?? []).first(where: { $0["isDefault"]?.boolValue == true })
+                    ?? result.arrayValue?.first else { return }
+            let record = profile["record"] ?? .object([:])
+            if let providerRaw = profile["providerID"]?.stringValue ?? record["provider"]?.stringValue,
+               let provider = SpeechOutput.Provider(rawValue: providerRaw) {
+                voice.provider = provider
+            }
+            if let voiceID = record["voiceIdentifier"]?.stringValue {
+                voice.voiceIdentifier = voiceID
+            }
+            if let language = record["languageCode"]?.stringValue, !language.isEmpty {
+                voice.languageCode = language
+            }
+            if let rate = record["rate"]?.doubleValue { voice.rate = rate }
+            if let pitch = record["pitch"]?.doubleValue { voice.pitch = pitch }
+            if let input = record["inputDeviceUID"]?.stringValue {
+                voice.inputDeviceUID = input
+            }
+            if let vt = record["volcengineVoiceType"]?.stringValue, !vt.isEmpty {
+                voice.volcengineVoiceType = vt
+            }
+            if let cluster = record["volcengineCluster"]?.stringValue, !cluster.isEmpty {
+                voice.volcengineCluster = cluster
+            }
+            let configured = record["volcengineTokenConfigured"]?.boolValue == true
+                && record["volcengineAppIDConfigured"]?.boolValue == true
+            voice.markVolcengineConfigured(configured)
+        } catch {
+            // Offline: keep local UserDefaults prefs.
+        }
+    }
+
+    func wireSpeechCloud() {
+        voice.cloudSynthesize = { [weak self] text in
+            guard let self else { return nil }
+            do {
+                let result = try await self.client.callAsync(
+                    .speechSynthesize,
+                    arguments: .object([
+                        "text": .string(text),
+                        "providerID": .string(self.voice.provider.rawValue),
+                        "voiceType": .string(self.voice.volcengineVoiceType),
+                        "cluster": .string(self.voice.volcengineCluster),
+                    ]),
+                    timeout: 45
+                )
+                if result["fallback"]?.boolValue == true {
+                    let reason = result["reason"]?.stringValue ?? "fallback"
+                    await MainActor.run { self.voice.noteCloudError(reason) }
+                    AppLog.write("speech.synthesize fallback: \(reason)")
+                    return nil
+                }
+                guard
+                    let b64 = result["data"]?.stringValue,
+                    let data = Data(base64Encoded: b64),
+                    !data.isEmpty
+                else {
+                    await MainActor.run { self.voice.noteCloudError("empty_audio") }
+                    return nil
+                }
+                let encoding = result["encoding"]?.stringValue ?? "mp3"
+                return (data, encoding)
+            } catch {
+                await MainActor.run {
+                    self.voice.noteCloudError((error as? ClientError)?.description ?? String(describing: error))
+                }
+                AppLog.write("speech.synthesize error: \(error)")
+                return nil
+            }
+        }
+    }
+
+    func loadAlarms(limit: Int = 40) async {
+        do {
+            let result = try await client.callAsync(.alarmList, arguments: .object([
+                "limit": .number(Double(limit)),
+            ]))
+            alarms = (result.arrayValue ?? []).compactMap { item in
+                guard let id = item["id"]?.stringValue else { return nil }
+                let title = item["title"]?.stringValue ?? ""
+                let fireAt = item["fireAt"]?.stringValue.flatMap(ISO8601.date(from:)) ?? Date()
+                let enabled = item["enabled"]?.boolValue ?? true
+                return AlarmItem(id: id, title: title, fireAt: fireAt, enabled: enabled)
+            }
+        } catch {
+            // Keep empty list when kernel offline.
+        }
+    }
+
+    func upsertAlarm(title: String, fireAt: Date, enabled: Bool = true, id: String? = nil) async {
+        let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        do {
+            var args: [String: JSONValue] = [
+                "title": .string(trimmed),
+                "fireAt": .string(ISO8601.string(from: fireAt)),
+                "enabled": .bool(enabled),
+            ]
+            if let id, !id.isEmpty { args["id"] = .string(id) }
+            _ = try await client.callAsync(.alarmUpsert, arguments: .object(args))
+            await loadAlarms()
+        } catch {
+            errorText = (error as? ClientError)?.description ?? String(describing: error)
+        }
+    }
+
+    func deleteAlarm(id: String) async {
+        do {
+            _ = try await client.callAsync(.alarmDelete, arguments: .object(["id": .string(id)]))
+            await loadAlarms()
+        } catch {
+            errorText = (error as? ClientError)?.description ?? String(describing: error)
+        }
     }
 
     func listModelRoutes() async -> [JSONValue] {

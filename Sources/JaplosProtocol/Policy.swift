@@ -118,12 +118,16 @@ public enum CapabilityRouting {
             return Capability.toolRead
         case .mcpRefresh:
             return Capability.toolManage
-        case .memoryList, .agentTasksList, .alarmList:
+        case .memoryList, .agentTasksList, .alarmList,
+             .modulesList, .runsList, .knowledgeDocumentsList, .subscriptionsList:
             return Capability.chatRead
         case .memoryUpsert, .memoryDelete, .agentTasksUpsert, .agentTasksDelete,
-             .alarmUpsert, .alarmDelete:
+             .alarmUpsert, .alarmDelete,
+             .modulesSet, .runsUpsert,
+             .knowledgeDocumentsUpsert, .knowledgeDocumentsDelete,
+             .subscriptionsUpsert:
             return Capability.chatManage
-        case .modelTest, .modelCatalog, .modelRoutesList, .speechProfilesList:
+        case .modelTest, .modelCatalog, .modelRoutesList, .speechProfilesList, .speechSynthesize:
             return Capability.modelInvoke
         case .modelRoutesSet, .modelRoutesDelete, .speechProfilesSet:
             return Capability.root

@@ -40,6 +40,7 @@ public extension KernelOperation {
     static let modelRoutesDelete = KernelOperation("model.routes.delete")
     static let speechProfilesList = KernelOperation("speech.profiles.list")
     static let speechProfilesSet = KernelOperation("speech.profiles.set")
+    static let speechSynthesize = KernelOperation("speech.synthesize")
 
     // Chat
     static let chatSessionCreate = KernelOperation("chat.session.create")
@@ -70,6 +71,17 @@ public extension KernelOperation {
     static let alarmList = KernelOperation("alarm.list")
     static let alarmUpsert = KernelOperation("alarm.upsert")
     static let alarmDelete = KernelOperation("alarm.delete")
+
+    // Modules / runs / knowledge / subscriptions
+    static let modulesList = KernelOperation("modules.list")
+    static let modulesSet = KernelOperation("modules.set")
+    static let runsList = KernelOperation("runs.list")
+    static let runsUpsert = KernelOperation("runs.upsert")
+    static let knowledgeDocumentsList = KernelOperation("knowledge.documents.list")
+    static let knowledgeDocumentsUpsert = KernelOperation("knowledge.documents.upsert")
+    static let knowledgeDocumentsDelete = KernelOperation("knowledge.documents.delete")
+    static let subscriptionsList = KernelOperation("subscriptions.list")
+    static let subscriptionsUpsert = KernelOperation("subscriptions.upsert")
 
     // Model
     static let modelTest = KernelOperation("model.test")
