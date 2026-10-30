@@ -30,7 +30,7 @@ public final class KernelStore: @unchecked Sendable {
         try? pruneToolInvocations()
     }
 
-    static let schemaVersion = 9
+    static let schemaVersion = 10
 
     // MARK: - Schema
 
@@ -50,6 +50,43 @@ public final class KernelStore: @unchecked Sendable {
             // Version 9 starts writing embeddings into that table. Do not rebuild it.
             try database.transaction {
                 try database.setUserVersion(9)
+            }
+            current = 9
+        }
+        if current < 10 {
+            // Version 9 only wrote vectors for documents saved after the upgrade;
+            // backfill the ones that were already there before flipping to 10.
+            try backfillKnowledgeVectors()
+            try database.transaction {
+                try database.setUserVersion(10)
+            }
+        }
+    }
+
+    /// Documents written before v9 have no row in `knowledge_vectors`. Walk them
+    /// in batches so a large library does not block startup or blow memory.
+    /// Resumable: an interrupted run leaves the version at 9 and the next start
+    /// picks up whatever is still missing.
+    private func backfillKnowledgeVectors() throws {
+        guard LocalEmbedding.isAvailable else { return }
+        let batchSize = 50
+        while true {
+            let rows = try database.query("""
+            SELECT d.id, d.title, d.record_json FROM knowledge_documents d
+            WHERE NOT EXISTS (SELECT 1 FROM knowledge_vectors v WHERE v.id = d.id)
+            LIMIT ?;
+            """, [batchSize])
+            guard !rows.isEmpty else { return }
+            for row in rows {
+                guard
+                    let id = row["id"] as? String,
+                    let title = row["title"] as? String,
+                    let raw = row["record_json"] as? String,
+                    let data = raw.data(using: .utf8),
+                    let record = try? ProtocolCoding.decode(JSONValue.self, from: data)
+                else { continue }
+                let body = record["body"]?.stringValue ?? record["text"]?.stringValue ?? ""
+                try storeKnowledgeVector(id: id, title: title, body: body)
             }
         }
     }
