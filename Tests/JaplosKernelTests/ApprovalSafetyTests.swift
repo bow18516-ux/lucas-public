@@ -157,6 +157,27 @@ final class ApprovalSafetyTests: XCTestCase {
         XCTAssertNoThrow(try SensitivePaths.reject("~/lucas-tmp-allowed.txt"))
     }
 
+    func testToolInvocationRetentionDropsOldRows() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("lucas-retention-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let path = root.appendingPathComponent("kernel.sqlite3").path
+        let store = try KernelStore(path: path)
+        try store.recordToolInvocation(
+            sessionID: nil, tool: "system.time", ok: true, durationMilliseconds: 1,
+            arguments: .object([:]), output: .object([:]), error: nil,
+            createdAt: Date().addingTimeInterval(-31 * 86_400)
+        )
+        try store.recordToolInvocation(
+            sessionID: nil, tool: "system.time", ok: true, durationMilliseconds: 1,
+            arguments: .object([:]), output: .object([:]), error: nil
+        )
+
+        let reopened = try KernelStore(path: path)
+        XCTAssertEqual(try reopened.database.scalarInt("SELECT COUNT(*) FROM tool_invocations;"), 1)
+    }
+
     func testShellLargeOutputIsTruncatedInsteadOfTimingOut() async throws {
         let tool = ShellTool()
         let output = try await tool.invoke(

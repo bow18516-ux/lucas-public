@@ -26,6 +26,8 @@ public final class KernelStore: @unchecked Sendable {
         try migrate()
         try? rebuildKnowledgeFTSIfEmpty()
         migratePlaintextModelSecret()
+        // Tool receipts are diagnostics, not history: keep a month.
+        try? pruneToolInvocations()
     }
 
     static let schemaVersion = 9
@@ -884,7 +886,8 @@ public final class KernelStore: @unchecked Sendable {
         durationMilliseconds: Double,
         arguments: JSONValue,
         output: JSONValue,
-        error: String?
+        error: String?,
+        createdAt: Date = Date()
     ) throws {
         func encode(_ value: JSONValue) -> String {
             let text = (try? JSONCoding.encodeToString(value)) ?? "null"
@@ -896,10 +899,23 @@ public final class KernelStore: @unchecked Sendable {
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);
         """, [
             UUID().uuidString, sessionID, tool, ok ? 1 : 0, durationMilliseconds,
-            encode(arguments), encode(output), error, Date().timeIntervalSince1970,
+            encode(arguments), encode(output), error, createdAt.timeIntervalSince1970,
         ])
     }
 
+
+    /// Deletes tool receipts older than `days`. Returns how many rows went away.
+    @discardableResult
+    public func pruneToolInvocations(olderThanDays days: Int = 30, now: Date = Date()) throws -> Int {
+        let cutoff = now.addingTimeInterval(-Double(days) * 86_400).timeIntervalSince1970
+        let doomed = try database.scalarInt(
+            "SELECT COUNT(*) FROM tool_invocations WHERE created_at < ?;",
+            [cutoff]
+        )
+        guard doomed > 0 else { return 0 }
+        try database.execute("DELETE FROM tool_invocations WHERE created_at < ?;", [cutoff])
+        return doomed
+    }
 
     // MARK: - Memories
 
