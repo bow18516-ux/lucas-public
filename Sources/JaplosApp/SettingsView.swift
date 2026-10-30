@@ -4,16 +4,20 @@ import JaplosProtocol
 
 /// One typographic + spacing scale for every settings page.
 enum SettingsMetrics {
+    /// Page chrome title in the detail pane (e.g. 「Skill 列表」).
     static let pageTitleSize: CGFloat = 26
-    static let pageSubtitleSize: CGFloat = 13
+    static let pageSubtitleSize: CGFloat = 14
     static let navSize: CGFloat = 15
     static let navIconSize: CGFloat = 16
-    static let cardTitleSize: CGFloat = 16
-    static let cardSubtitleSize: CGFloat = 12
-    static let labelSize: CGFloat = 13
-    static let bodySize: CGFloat = 13
-    static let captionSize: CGFloat = 11
-    static let microSize: CGFloat = 10
+    /// Section / card titles — one point above `bodySize`.
+    static let cardTitleSize: CGFloat = 15
+    /// Secondary lines under titles / helper copy.
+    static let cardSubtitleSize: CGFloat = 13
+    static let labelSize: CGFloat = 14
+    /// Primary body copy across every settings detail pane.
+    static let bodySize: CGFloat = 14
+    static let captionSize: CGFloat = 12
+    static let microSize: CGFloat = 11
     static let metricSize: CGFloat = 24
 
     static let sidebarWidth: CGFloat = 268
@@ -506,7 +510,7 @@ struct ModelSettingsPane: View {
             }
             TextField("例如 deepseek-chat", text: $model.settings.model)
                 .textFieldStyle(.plain)
-                .font(.system(size: SettingsMetrics.cardSubtitleSize, design: .monospaced))
+                .font(.system(size: SettingsMetrics.bodySize, design: .monospaced))
                 .padding(8)
                 .background(Color.white.opacity(0.04), in: RoundedRectangle(cornerRadius: 6))
                 .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(Theme.panelBorder, lineWidth: 0.7))
@@ -744,7 +748,7 @@ struct ToolsSettingsPane: View {
             HStack(spacing: 10) {
                 TextField("搜索工具名称、说明或能力", text: $query)
                     .textFieldStyle(.plain)
-                    .font(.system(size: SettingsMetrics.cardSubtitleSize))
+                    .font(.system(size: SettingsMetrics.bodySize))
                     .padding(8)
                     .background(Color.white.opacity(0.04), in: RoundedRectangle(cornerRadius: 6))
                     .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(Theme.panelBorder, lineWidth: 0.7))
@@ -824,7 +828,7 @@ struct ToolsSettingsPane: View {
                 VStack(alignment: .leading, spacing: 2) {
                     HStack(spacing: 8) {
                         Text(tool.name)
-                            .font(.system(size: SettingsMetrics.cardSubtitleSize, weight: .medium, design: .monospaced))
+                            .font(.system(size: SettingsMetrics.bodySize, weight: .medium, design: .monospaced))
                             .foregroundStyle(Theme.textPrimary)
                             .textSelection(.enabled)
                         Text(tool.sourceLabel)
@@ -922,7 +926,7 @@ struct SkillsSettingsPane: View {
             HStack(spacing: 10) {
                 TextField("搜索技能名称或说明", text: $query)
                     .textFieldStyle(.plain)
-                    .font(.system(size: SettingsMetrics.cardSubtitleSize))
+                    .font(.system(size: SettingsMetrics.bodySize))
                     .padding(8)
                     .background(Color.white.opacity(0.04), in: RoundedRectangle(cornerRadius: 6))
                     .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(Theme.panelBorder, lineWidth: 0.7))
@@ -983,7 +987,7 @@ struct SkillsSettingsPane: View {
                                             .frame(width: 20)
                                         VStack(alignment: .leading, spacing: 2) {
                                             Text(skill.name)
-                                                .font(.system(size: SettingsMetrics.cardSubtitleSize, weight: .medium, design: .monospaced))
+                                                .font(.system(size: SettingsMetrics.bodySize, weight: .medium, design: .monospaced))
                                                 .foregroundStyle(Theme.textPrimary)
                                             Text(skill.summaryLine)
                                                 .font(.system(size: SettingsMetrics.captionSize))
@@ -1021,7 +1025,7 @@ struct SkillsSettingsPane: View {
                         ScrollView {
                             VStack(alignment: .leading, spacing: 12) {
                                 Text(selected.name)
-                                    .font(.system(size: SettingsMetrics.bodySize, weight: .semibold, design: .monospaced))
+                                    .font(.system(size: SettingsMetrics.cardTitleSize, weight: .semibold, design: .monospaced))
                                     .foregroundStyle(Theme.textPrimary)
                                 Text(selected.description)
                                     .font(.system(size: SettingsMetrics.cardSubtitleSize))
@@ -1032,7 +1036,7 @@ struct SkillsSettingsPane: View {
                                     .textSelection(.enabled)
                                 Divider()
                                 Text(selected.body)
-                                    .font(.system(size: SettingsMetrics.captionSize))
+                                    .font(.system(size: SettingsMetrics.bodySize))
                                     .foregroundStyle(Theme.textPrimary)
                                     .textSelection(.enabled)
                                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -1312,6 +1316,7 @@ struct ChannelsSettingsPane: View {
                 }
             }
             .textFieldStyle(.plain)
+            .font(.system(size: SettingsMetrics.bodySize))
             .padding(.horizontal, 10)
             .padding(.vertical, 7)
             .background(Color.white.opacity(0.05), in: RoundedRectangle(cornerRadius: 6))
@@ -1371,7 +1376,7 @@ struct UpdatesSettingsPane: View {
                     .foregroundStyle(Theme.textPrimary)
                 Spacer()
                 Text(updates.version)
-                    .font(.system(size: 24, weight: .semibold))
+                    .font(.system(size: SettingsMetrics.metricSize, weight: .semibold))
                     .foregroundStyle(Theme.textPrimary)
             }
 
@@ -1388,7 +1393,7 @@ struct UpdatesSettingsPane: View {
                 } label: {
                     HStack(spacing: 6) {
                         Image(systemName: "arrow.triangle.2.circlepath")
-                            .font(.system(size: 10))
+                            .font(.system(size: SettingsMetrics.microSize))
                         Text("检查更新")
                             .font(.system(size: SettingsMetrics.bodySize, weight: .medium))
                     }
@@ -1668,6 +1673,7 @@ struct VoiceSettingsPane: View {
                 row("App ID") {
                     TextField("火山 App ID", text: $voice.volcengineAppID)
                         .textFieldStyle(.plain)
+                        .font(.system(size: SettingsMetrics.bodySize))
                         .padding(.horizontal, 10)
                         .padding(.vertical, 7)
                         .background(Color.white.opacity(0.05), in: RoundedRectangle(cornerRadius: 6))
@@ -1676,6 +1682,7 @@ struct VoiceSettingsPane: View {
                 row("Token") {
                     SecureField(voice.volcengineConfigured ? "已保存，输入新 Token 可覆盖" : "火山 Access Token", text: $voice.volcengineToken)
                         .textFieldStyle(.plain)
+                        .font(.system(size: SettingsMetrics.bodySize))
                         .padding(.horizontal, 10)
                         .padding(.vertical, 7)
                         .background(Color.white.opacity(0.05), in: RoundedRectangle(cornerRadius: 6))
@@ -1684,6 +1691,7 @@ struct VoiceSettingsPane: View {
                 row("音色 ID") {
                     TextField("如 BV001_streaming", text: $voice.volcengineVoiceType)
                         .textFieldStyle(.plain)
+                        .font(.system(size: SettingsMetrics.bodySize))
                         .padding(.horizontal, 10)
                         .padding(.vertical, 7)
                         .background(Color.white.opacity(0.05), in: RoundedRectangle(cornerRadius: 6))
@@ -1933,6 +1941,7 @@ struct AlarmsSettingsPane: View {
                         HStack(spacing: 12) {
                             TextField("标题", text: $title)
                                 .textFieldStyle(.plain)
+                                .font(.system(size: SettingsMetrics.bodySize))
                                 .padding(.horizontal, 10)
                                 .padding(.vertical, 7)
                                 .background(Color.white.opacity(0.05), in: RoundedRectangle(cornerRadius: 6))
@@ -2146,7 +2155,7 @@ struct MCPSettingsPane: View {
                                 .lineLimit(1)
                             Spacer(minLength: 0)
                             Text(Self.shortTime(event.createdAt))
-                                .font(.system(size: 9, design: .monospaced))
+                                .font(.system(size: SettingsMetrics.microSize, design: .monospaced))
                                 .foregroundStyle(Theme.textSecondary)
                         }
                     }
@@ -2192,19 +2201,19 @@ struct MCPSettingsPane: View {
             HStack(spacing: 10) {
                 TextField("名称", text: $name)
                     .textFieldStyle(.plain)
-                    .font(.system(size: SettingsMetrics.cardSubtitleSize))
+                    .font(.system(size: SettingsMetrics.bodySize))
                     .padding(7)
                     .background(Color.white.opacity(0.04), in: RoundedRectangle(cornerRadius: 6))
                     .frame(width: 110)
                 TextField("HTTP URL（可选，填了就忽略命令）", text: $url)
                     .textFieldStyle(.plain)
-                    .font(.system(size: SettingsMetrics.cardSubtitleSize, design: .monospaced))
+                    .font(.system(size: SettingsMetrics.bodySize, design: .monospaced))
                     .padding(7)
                     .background(Color.white.opacity(0.04), in: RoundedRectangle(cornerRadius: 6))
                     .frame(width: 260)
                 TextField("参数（空格分隔）", text: $arguments)
                     .textFieldStyle(.plain)
-                    .font(.system(size: SettingsMetrics.cardSubtitleSize, design: .monospaced))
+                    .font(.system(size: SettingsMetrics.bodySize, design: .monospaced))
                     .padding(7)
                     .background(Color.white.opacity(0.04), in: RoundedRectangle(cornerRadius: 6))
                 Button {
@@ -2224,7 +2233,7 @@ struct MCPSettingsPane: View {
             HStack(spacing: 10) {
                 TextField("stdio 命令（HTTP 模式留空）", text: $command)
                     .textFieldStyle(.plain)
-                    .font(.system(size: SettingsMetrics.cardSubtitleSize, design: .monospaced))
+                    .font(.system(size: SettingsMetrics.bodySize, design: .monospaced))
                     .padding(7)
                     .background(Color.white.opacity(0.04), in: RoundedRectangle(cornerRadius: 6))
                     .frame(width: 240)
@@ -2239,13 +2248,13 @@ struct MCPSettingsPane: View {
                     HStack(spacing: 10) {
                         TextField("Client ID", text: $oauthClientID)
                             .textFieldStyle(.plain)
-                            .font(.system(size: SettingsMetrics.cardSubtitleSize))
+                            .font(.system(size: SettingsMetrics.bodySize))
                             .padding(7)
                             .background(Color.white.opacity(0.04), in: RoundedRectangle(cornerRadius: 6))
                             .frame(width: 160)
                         TextField("授权页 URL", text: $oauthAuthURL)
                             .textFieldStyle(.plain)
-                            .font(.system(size: SettingsMetrics.cardSubtitleSize, design: .monospaced))
+                            .font(.system(size: SettingsMetrics.bodySize, design: .monospaced))
                             .padding(7)
                             .background(Color.white.opacity(0.04), in: RoundedRectangle(cornerRadius: 6))
                         Button("打开授权页") {
@@ -2258,7 +2267,7 @@ struct MCPSettingsPane: View {
                     }
                     SecureField("Access Token", text: $oauthToken)
                         .textFieldStyle(.plain)
-                        .font(.system(size: SettingsMetrics.cardSubtitleSize, design: .monospaced))
+                        .font(.system(size: SettingsMetrics.bodySize, design: .monospaced))
                         .padding(7)
                         .background(Color.white.opacity(0.04), in: RoundedRectangle(cornerRadius: 6))
                 }
@@ -2441,12 +2450,12 @@ struct MCPSettingsPane: View {
             HStack(spacing: 8) {
                 TextField("Client ID", text: bindingOAuth(server.id, keyPath: \.oauthClientID))
                     .textFieldStyle(.plain)
-                    .font(.system(size: SettingsMetrics.captionSize))
+                    .font(.system(size: SettingsMetrics.bodySize))
                     .padding(6)
                     .background(Color.white.opacity(0.04), in: RoundedRectangle(cornerRadius: 5))
                 TextField("授权页 URL", text: bindingOAuth(server.id, keyPath: \.oauthAuthURL))
                     .textFieldStyle(.plain)
-                    .font(.system(size: SettingsMetrics.captionSize, design: .monospaced))
+                    .font(.system(size: SettingsMetrics.bodySize, design: .monospaced))
                     .padding(6)
                     .background(Color.white.opacity(0.04), in: RoundedRectangle(cornerRadius: 5))
                 Button("打开授权页") {
@@ -2460,7 +2469,7 @@ struct MCPSettingsPane: View {
             }
             SecureField("Access Token", text: bindingOAuth(server.id, keyPath: \.oauthToken))
                 .textFieldStyle(.plain)
-                .font(.system(size: SettingsMetrics.captionSize, design: .monospaced))
+                .font(.system(size: SettingsMetrics.bodySize, design: .monospaced))
                 .padding(6)
                 .background(Color.white.opacity(0.04), in: RoundedRectangle(cornerRadius: 5))
             Button("保存 OAuth") {
