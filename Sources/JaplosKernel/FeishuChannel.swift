@@ -23,6 +23,13 @@ public final class FeishuChannel: @unchecked Sendable {
     private var lastError: String?
     private var awaitingConfiguration = false
 
+    /// Injected so tests can point the whole channel at a URLProtocol mock.
+    public var httpSession: URLSession = .shared
+
+    static let tokenExpireReference = "tenant_access_token_expire"
+    /// Refresh when less than this much validity is left.
+    public static let refreshLeeway: TimeInterval = 300
+
     public init(store: KernelStore, supportDirectory: URL? = nil) {
         self.store = store
         if let supportDirectory {
@@ -53,6 +60,63 @@ public final class FeishuChannel: @unchecked Sendable {
         Self.authSQLiteURL(under: supportDirectory)
     }
 
+    // MARK: - Token bookkeeping
+
+    private func authStore() -> FeishuAuthStore {
+        FeishuAuthStore(path: authURL.path)
+    }
+
+    private func storedExpireAt() -> Date? {
+        guard let raw = (try? authStore().secret(reference: Self.tokenExpireReference)) ?? nil,
+              let epoch = Double(raw)
+        else { return nil }
+        return Date(timeIntervalSince1970: epoch)
+    }
+
+    /// Present on disk and not within the refresh window. Reading it from disk
+    /// (not from an in-memory flag) means a restarted daemon can still send.
+    private func validStoredToken() -> String? {
+        guard let token = store.secrets.secret(for: KernelStore.feishuTenantAccessTokenAccount),
+              !token.isEmpty
+        else { return nil }
+        guard let expireAt = storedExpireAt() else { return nil }
+        guard expireAt.timeIntervalSinceNow > Self.refreshLeeway else { return nil }
+        return token
+    }
+
+    private func persistToken(_ token: String, expireSeconds: Double) throws {
+        try store.secrets.setSecret(token, for: KernelStore.feishuTenantAccessTokenAccount)
+        let expireAt = Date().addingTimeInterval(expireSeconds)
+        try authStore().upsert(reference: Self.tokenExpireReference, secret: String(expireAt.timeIntervalSince1970))
+        try authStore().upsert(reference: "tenant_access_token", secret: token)
+    }
+
+    private func clearToken() {
+        store.secrets.removeSecret(for: KernelStore.feishuTenantAccessTokenAccount)
+        try? authStore().delete(reference: Self.tokenExpireReference)
+        try? authStore().delete(reference: "tenant_access_token")
+    }
+
+    /// Returns a token that will stay valid for at least the refresh window,
+    /// minting a new one when the stored token is missing or about to expire.
+    @discardableResult
+    func ensureFreshToken() async -> String? {
+        if let token = validStoredToken() { return token }
+        let appID = store.secrets.secret(for: KernelStore.feishuAppIDAccount)?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let appSecret = store.secrets.secret(for: KernelStore.feishuAppSecretAccount)?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard !appID.isEmpty, !appSecret.isEmpty else { return nil }
+        let result = await fetchTenantAccessToken(appID: appID, appSecret: appSecret)
+        guard result.ok, let token = result.token, !token.isEmpty else {
+            lastError = result.error ?? "token_failed"
+            return nil
+        }
+        try? persistToken(token, expireSeconds: result.expireSeconds)
+        sessionActive = true
+        return token
+    }
+
     // MARK: - Ops
 
     public func status() throws -> JSONValue {
@@ -61,8 +125,10 @@ public final class FeishuChannel: @unchecked Sendable {
         let tokenConfigured = store.secrets.secret(for: KernelStore.feishuVerificationTokenAccount)?.isEmpty == false
         let profileCount = (try? FeishuAuthStore(path: authURL.path).count()) ?? 0
 
+        let tokenValid = validStoredToken() != nil
         let state: State
-        if sessionActive && appIDConfigured && appSecretConfigured {
+        if tokenValid && appIDConfigured && appSecretConfigured {
+            sessionActive = true
             state = .connected
         } else if awaitingConfiguration {
             state = .awaitingConfiguration
@@ -169,9 +235,9 @@ public final class FeishuChannel: @unchecked Sendable {
         // Attempt tenant access token (Open API). Failure → not connected.
         let tokenResult = await fetchTenantAccessToken(appID: appID, appSecret: appSecret)
         if tokenResult.ok, let access = tokenResult.token, !access.isEmpty {
-            // Persist opaque session marker only (not the raw token in status).
-            try store.secrets.setSecret(access, for: KernelStore.feishuTenantAccessTokenAccount)
-            try FeishuAuthStore(path: authURL.path).upsert(reference: "tenant_access_token", secret: access)
+            // Persist the token with its expiry so a restart can still send,
+            // and the next send refreshes before it dies.
+            try persistToken(access, expireSeconds: tokenResult.expireSeconds)
             sessionActive = true
             lastError = nil
             awaitingConfiguration = false
@@ -211,8 +277,7 @@ public final class FeishuChannel: @unchecked Sendable {
         sessionActive = false
         awaitingConfiguration = false
         lastError = nil
-        store.secrets.removeSecret(for: KernelStore.feishuTenantAccessTokenAccount)
-        try? FeishuAuthStore(path: authURL.path).delete(reference: "tenant_access_token")
+        clearToken()
         return .object([
             "ok": .bool(true),
             "state": .string(State.disconnected.rawValue),
@@ -273,9 +338,8 @@ public final class FeishuChannel: @unchecked Sendable {
         guard !body.isEmpty else {
             throw ChannelError.invalidArgument("text is required")
         }
-        guard sessionActive,
-              let token = store.secrets.secret(for: KernelStore.feishuTenantAccessTokenAccount),
-              !token.isEmpty else {
+        // Refresh first when the stored token is missing or about to expire.
+        guard var token = await ensureFreshToken() else {
             return .object([
                 "ok": .bool(false),
                 "delivered": .bool(false),
@@ -294,8 +358,11 @@ public final class FeishuChannel: @unchecked Sendable {
             ])
         }
 
-        let urlString = "\(Self.openAPIBaseURL)/open-apis/im/v1/messages?receive_id_type=\(receiveIDType)"
-        guard let url = URL(string: urlString) else {
+        guard var components = URLComponents(string: "\(Self.openAPIBaseURL)/open-apis/im/v1/messages") else {
+            throw ChannelError.invalidArgument("invalid feishu URL")
+        }
+        components.queryItems = [URLQueryItem(name: "receive_id_type", value: receiveIDType)]
+        guard let url = components.url else {
             throw ChannelError.invalidArgument("invalid feishu URL")
         }
         var request = URLRequest(url: url)
@@ -311,14 +378,29 @@ public final class FeishuChannel: @unchecked Sendable {
         request.timeoutInterval = 20
 
         do {
-            let (data, response) = try await URLSession.shared.data(for: request)
-            let code = (response as? HTTPURLResponse)?.statusCode ?? -1
-            let okHTTP = (200...299).contains(code)
-            var apiCode: Int = -1
-            if let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
-                apiCode = obj["code"] as? Int ?? -1
+            var code = -1
+            var apiCode = -1
+            for attempt in 0..<2 {
+                var attemptRequest = request
+                attemptRequest.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+                let (data, response) = try await httpSession.data(for: attemptRequest)
+                code = (response as? HTTPURLResponse)?.statusCode ?? -1
+                apiCode = -1
+                if let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+                    apiCode = obj["code"] as? Int ?? -1
+                }
+                // Feishu answers an expired token with 401 or one of these codes.
+                let rejected = code == 401 || apiCode == 99991663 || apiCode == 99991661
+                if rejected, attempt == 0 {
+                    clearToken()
+                    if let fresh = await ensureFreshToken() {
+                        token = fresh
+                        continue
+                    }
+                }
+                break
             }
-            let delivered = okHTTP && apiCode == 0
+            let delivered = (200...299).contains(code) && apiCode == 0
             _ = try? store.upsertRuntimeLedger(
                 table: "feishu_messages",
                 id: nil,
@@ -364,6 +446,7 @@ public final class FeishuChannel: @unchecked Sendable {
         var ok: Bool
         var token: String?
         var error: String?
+        var expireSeconds: Double = 7_200
     }
 
     private func fetchTenantAccessToken(appID: String, appSecret: String) async -> TokenResult {
@@ -377,14 +460,20 @@ public final class FeishuChannel: @unchecked Sendable {
         request.httpBody = try? JSONSerialization.data(withJSONObject: payload)
         request.timeoutInterval = 20
         do {
-            let (data, response) = try await URLSession.shared.data(for: request)
+            let (data, response) = try await httpSession.data(for: request)
             let code = (response as? HTTPURLResponse)?.statusCode ?? -1
             guard let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
                 return TokenResult(ok: false, error: "ilink_http_\(code)_bad_json".replacingOccurrences(of: "ilink", with: "feishu"))
             }
             let apiCode = obj["code"] as? Int ?? -1
             if apiCode == 0, let token = obj["tenant_access_token"] as? String, !token.isEmpty {
-                return TokenResult(ok: true, token: token)
+                let expire = (obj["expire"] as? Double) ?? Double(obj["expire"] as? Int ?? 0)
+                return TokenResult(
+                    ok: true,
+                    token: token,
+                    error: nil,
+                    expireSeconds: expire > 0 ? expire : 7_200
+                )
             }
             let msg = obj["msg"] as? String ?? "api_code_\(apiCode)"
             // Do not include app_secret in error.
@@ -428,6 +517,15 @@ public final class FeishuAuthStore {
         INSERT INTO auth_profile_store(reference, secret) VALUES (?, ?)
         ON CONFLICT(reference) DO UPDATE SET secret = excluded.secret;
         """, [reference, secret])
+    }
+
+    public func secret(reference: String) throws -> String? {
+        let db = try SQLiteDatabase(path: path)
+        let rows = try db.query(
+            "SELECT secret FROM auth_profile_store WHERE reference = ? LIMIT 1;",
+            [reference]
+        )
+        return rows.first?["secret"] as? String
     }
 
     public func delete(reference: String) throws {
