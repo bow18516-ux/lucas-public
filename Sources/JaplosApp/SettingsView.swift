@@ -1928,7 +1928,8 @@ struct AlarmsSettingsPane: View {
             SettingsHeader(title: "提醒", subtitle: "本地闹钟列表（轻量端口，不含系统通知投递）", model: model)
 
             ScrollView {
-                VStack(alignment: .leading, spacing: SettingsMetrics.cardSpacing) {
+                HStack(alignment: .top, spacing: SettingsMetrics.cardSpacing) {
+                    // Left: create — compact date + time fields (popover calendar, no analog clock).
                     VStack(alignment: .leading, spacing: 16) {
                         HStack(alignment: .firstTextBaseline, spacing: 8) {
                             Image(systemName: "bell")
@@ -1961,16 +1962,36 @@ struct AlarmsSettingsPane: View {
                             .padding(.vertical, 5)
                             .background(Theme.accent, in: RoundedRectangle(cornerRadius: 6))
                         }
-                        // Graphical calendar: month arrows jump by month (no stepper-field clicking).
-                        DatePicker("提醒时间", selection: $fireAt, displayedComponents: [.date, .hourAndMinute])
-                            .datePickerStyle(.graphical)
-                            .labelsHidden()
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .environment(\.locale, Locale.current)
+                        VStack(alignment: .leading, spacing: 10) {
+                            HStack(spacing: 10) {
+                                Text("日期")
+                                    .font(.system(size: SettingsMetrics.cardSubtitleSize))
+                                    .foregroundStyle(Theme.textSecondary)
+                                    .frame(width: 36, alignment: .leading)
+                                DatePicker("", selection: $fireAt, displayedComponents: [.date])
+                                    .datePickerStyle(.compact)
+                                    .labelsHidden()
+                                    .environment(\.locale, Locale.current)
+                                Spacer(minLength: 0)
+                            }
+                            HStack(spacing: 10) {
+                                Text("时间")
+                                    .font(.system(size: SettingsMetrics.cardSubtitleSize))
+                                    .foregroundStyle(Theme.textSecondary)
+                                    .frame(width: 36, alignment: .leading)
+                                DatePicker("", selection: $fireAt, displayedComponents: [.hourAndMinute])
+                                    .datePickerStyle(.compact)
+                                    .labelsHidden()
+                                    .environment(\.locale, Locale.current)
+                                Spacer(minLength: 0)
+                            }
+                        }
+                        Spacer(minLength: 0)
                     }
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .frame(maxWidth: .infinity, minHeight: 160, alignment: .topLeading)
                     .panel(padding: SettingsMetrics.cardPadding)
 
+                    // Right: saved list — equal width with create card.
                     VStack(alignment: .leading, spacing: 12) {
                         HStack {
                             Text("已保存")
@@ -1985,6 +2006,7 @@ struct AlarmsSettingsPane: View {
                             Text("暂无提醒。")
                                 .font(.system(size: SettingsMetrics.cardSubtitleSize))
                                 .foregroundStyle(Theme.textSecondary)
+                            Spacer(minLength: 0)
                         } else {
                             ForEach(model.alarms) { alarm in
                                 HStack(spacing: 12) {
@@ -2011,9 +2033,10 @@ struct AlarmsSettingsPane: View {
                                 }
                                 .padding(.vertical, 4)
                             }
+                            Spacer(minLength: 0)
                         }
                     }
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .frame(maxWidth: .infinity, minHeight: 160, alignment: .topLeading)
                     .panel(padding: SettingsMetrics.cardPadding)
                 }
                 .padding(.horizontal, SettingsMetrics.pagePadding)
