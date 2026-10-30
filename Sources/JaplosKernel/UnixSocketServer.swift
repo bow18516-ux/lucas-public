@@ -195,7 +195,7 @@ public final class UnixSocketServer: @unchecked Sendable {
                 && request.arguments["stream"]?.boolValue == true
             if wantsStream, let streamHandler {
                 let writer = FrameWriter(client: client)
-                let broker = ApprovalBroker(bridge: self.approvalBridge)
+                let broker = ApprovalBroker(bridge: self.approvalBridge, writer: writer)
                 awaitStream(request, handler: streamHandler, writer: writer, client: client, broker: broker)
                 writer.finish()
             } else {
@@ -248,7 +248,7 @@ public final class UnixSocketServer: @unchecked Sendable {
                 guard message.operation == .toolApproval else { continue }
                 let callID = message.arguments["callID"]?.stringValue ?? ""
                 let approved = message.arguments["approved"]?.boolValue ?? false
-                broker.resolve(callID: callID, approved: approved)
+                broker.resolve(callID: callID, approved: approved, source: "desktop")
             } catch {
                 break
             }
@@ -304,9 +304,11 @@ public final class UnixSocketServer: @unchecked Sendable {
         private let lock = NSLock()
         private var pending: [String: CheckedContinuation<Bool, Never>] = [:]
         private let bridge: WeChatApprovalBridge?
+        private let writer: FrameWriter
 
-        init(bridge: WeChatApprovalBridge?) {
+        init(bridge: WeChatApprovalBridge?, writer: FrameWriter) {
             self.bridge = bridge
+            self.writer = writer
         }
 
         func request(
@@ -330,7 +332,8 @@ public final class UnixSocketServer: @unchecked Sendable {
                     title: definition.title,
                     name: definition.name,
                     onResolve: { [weak self] approved in
-                        self?.resolve(callID: call.id, approved: approved)
+                        // Broker takes the continuation once, settles bridge, acks WeChat, notifies App.
+                        self?.resolve(callID: call.id, approved: approved, source: "wechat")
                     }
                 )
 
@@ -353,17 +356,35 @@ public final class UnixSocketServer: @unchecked Sendable {
                 }
 
                 DispatchQueue.global().asyncAfter(deadline: .now() + effectiveTimeout) { [weak self] in
-                    self?.resolve(callID: call.id, approved: false)
+                    self?.resolve(callID: call.id, approved: false, source: "timeout")
                 }
             }
         }
 
-        func resolve(callID: String, approved: Bool) {
+        /// First successful resolve wins (continuation take under lock).
+        /// Settles the WeChat bridge, acks WeChat, and emits `approvalResolved`
+        /// so the App clears its pending card when WeChat/timeout decided.
+        func resolve(callID: String, approved: Bool, source: String) {
             lock.lock()
-            let continuation = pending.removeValue(forKey: callID)
+            guard let continuation = pending.removeValue(forKey: callID) else {
+                lock.unlock()
+                return
+            }
             lock.unlock()
-            bridge?.clear(callID: callID)
-            continuation?.resume(returning: approved)
+
+            _ = bridge?.settle(
+                callID: callID,
+                approved: approved,
+                source: source,
+                notifyWeChat: true
+            )
+            writer.write(.success(.object([
+                "event": .string("approvalResolved"),
+                "callID": .string(callID),
+                "approved": .bool(approved),
+                "source": .string(source),
+            ]), requestID: callID))
+            continuation.resume(returning: approved)
         }
 
         @discardableResult
@@ -377,7 +398,12 @@ public final class UnixSocketServer: @unchecked Sendable {
             pending.removeAll()
             lock.unlock()
             for callID in all.keys {
-                bridge?.clear(callID: callID)
+                _ = bridge?.settle(
+                    callID: callID,
+                    approved: false,
+                    source: "cancel",
+                    notifyWeChat: false
+                )
             }
             for continuation in all.values {
                 continuation.resume(returning: false)

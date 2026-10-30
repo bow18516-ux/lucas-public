@@ -21,11 +21,23 @@ public final class WeChatApprovalBridge: @unchecked Sendable {
         let resolve: (Bool) -> Void
     }
 
+    /// Remembered decision so a late WeChat reply cannot re-fire the tool
+    /// and can still get a brief already-decided ack.
+    public struct Settled: Equatable {
+        public let callID: String
+        public let shortId: String
+        public let approved: Bool
+        public let source: String
+        public let at: Date
+    }
+
     private let store: KernelStore
     private let wechat: WeChatChannel
     private let lock = NSLock()
     private var byCallID: [String: Entry] = [:]
     private var callIDByShortId: [String: String] = [:]
+    private var settledByCallID: [String: Settled] = [:]
+    private var settledByShortId: [String: Settled] = [:]
     private var lastPushNote: String?
 
     public init(store: KernelStore, wechat: WeChatChannel) {
@@ -89,8 +101,13 @@ public final class WeChatApprovalBridge: @unchecked Sendable {
         }
         lock.lock()
         let pendingCount = byCallID.count
+        let settledCount = settledByCallID.count
         lock.unlock()
         extras["approvalPushPendingCount"] = .number(Double(pendingCount))
+        extras["approvalPushSettledCount"] = .number(Double(settledCount))
+        extras["approvalPushSyncNote"] = .string(
+            "Desktop and WeChat share one ApprovalBroker decision; late WeChat replies get already-decided ack."
+        )
         return extras
     }
 
@@ -123,6 +140,7 @@ public final class WeChatApprovalBridge: @unchecked Sendable {
     }
 
     /// Remove without invoking the resolve callback (socket path already resumed).
+    /// Prefer `settle` so late WeChat replies can still ack.
     public func clear(callID: String) {
         lock.lock()
         defer { lock.unlock() }
@@ -135,21 +153,82 @@ public final class WeChatApprovalBridge: @unchecked Sendable {
         lock.lock()
         byCallID.removeAll()
         callIDByShortId.removeAll()
+        settledByCallID.removeAll()
+        settledByShortId.removeAll()
         lock.unlock()
     }
 
-    /// Resolve a pending approval (WeChat inbound or tests). Returns whether one was pending.
+    public func settled(callID: String) -> Settled? {
+        lock.lock()
+        defer { lock.unlock() }
+        return settledByCallID[callID]
+    }
+
+    public func settled(shortId: String) -> Settled? {
+        lock.lock()
+        defer { lock.unlock() }
+        return settledByShortId[shortId.uppercased()]
+    }
+
+    /// Mark decided without re-invoking the tool continuation.
+    /// Desktop / timeout paths call this after resuming the broker.
+    /// Idempotent: first decision wins; later calls only refresh TTL bookkeeping.
+    @discardableResult
+    public func settle(
+        callID: String,
+        approved: Bool,
+        source: String,
+        notifyWeChat: Bool = true
+    ) -> Settled? {
+        lock.lock()
+        pruneSettledLocked(now: Date())
+        if let existing = settledByCallID[callID] {
+            // First decision wins — do not re-notify or flip.
+            lock.unlock()
+            return existing
+        }
+        var shortId = WeChatApprovalBridge.makeShortId(for: callID)
+        if let entry = byCallID.removeValue(forKey: callID) {
+            callIDByShortId.removeValue(forKey: entry.shortId)
+            shortId = entry.shortId
+        }
+        let record = Settled(
+            callID: callID,
+            shortId: shortId,
+            approved: approved,
+            source: source,
+            at: Date()
+        )
+        settledByCallID[callID] = record
+        settledByShortId[shortId] = record
+        lock.unlock()
+        if notifyWeChat {
+            sendSettledAck(record)
+        }
+        return record
+    }
+
+    /// Ask the registered broker callback to resolve. Does **not** settle here —
+    /// `ApprovalBroker.resolve` is the single winner (continuation + settle + UI event).
+    /// Returns true only when this call newly settled the request.
     @discardableResult
     public func resolve(callID: String, approved: Bool) -> Bool {
         lock.lock()
-        let entry = byCallID.removeValue(forKey: callID)
-        if let entry {
-            callIDByShortId.removeValue(forKey: entry.shortId)
+        pruneSettledLocked(now: Date())
+        if settledByCallID[callID] != nil {
+            lock.unlock()
+            return false
+        }
+        guard let entry = byCallID[callID] else {
+            lock.unlock()
+            return false
         }
         lock.unlock()
-        guard let entry else { return false }
         entry.resolve(approved)
-        return true
+        lock.lock()
+        let won = settledByCallID[callID] != nil
+        lock.unlock()
+        return won
     }
 
     @discardableResult
@@ -238,21 +317,47 @@ public final class WeChatApprovalBridge: @unchecked Sendable {
 
     /// Parse approve/deny from WeChat (or test) text. Bare 同意/拒绝 resolves the
     /// sole pending item; with multiple pending, shortId is required.
+    /// Late replies for an already-settled shortId get a brief WeChat ack and
+    /// do **not** flip or re-fire the decision.
     @discardableResult
     public func handleInboundText(_ text: String) -> Bool {
         guard let decision = Self.parseDecision(text) else { return false }
 
         if let shortId = decision.shortId {
-            return resolve(shortId: shortId, approved: decision.approved)
+            if resolve(shortId: shortId, approved: decision.approved) {
+                return true
+            }
+            return ackIfAlreadySettled(shortId: shortId)
         }
 
         lock.lock()
         let ids = Array(byCallID.keys)
         lock.unlock()
-        guard ids.count == 1, let only = ids.first else {
-            return false
+        if ids.count == 1, let only = ids.first {
+            return resolve(callID: only, approved: decision.approved)
         }
-        return resolve(callID: only, approved: decision.approved)
+        if ids.isEmpty {
+            // No pending: if exactly one recent settled, treat bare 同意/拒绝 as late ack.
+            lock.lock()
+            let recent = settledByCallID.values.sorted { $0.at > $1.at }
+            lock.unlock()
+            if recent.count == 1, let only = recent.first {
+                sendAlreadyDecidedAck(only, lateReply: true)
+                return true
+            }
+        }
+        return false
+    }
+
+    /// Returns true when the shortId was already decided (message consumed).
+    @discardableResult
+    public func ackIfAlreadySettled(shortId: String) -> Bool {
+        lock.lock()
+        let record = settledByShortId[shortId.uppercased()]
+        lock.unlock()
+        guard let record else { return false }
+        sendAlreadyDecidedAck(record, lateReply: true)
+        return true
     }
 
     /// Best-effort poll of iLink getUpdates; without a live token returns 0 and never crashes.
@@ -333,6 +438,62 @@ public final class WeChatApprovalBridge: @unchecked Sendable {
             return nil
         }
         return candidate
+    }
+
+    // MARK: - Settled acks
+
+    private func pruneSettledLocked(now: Date) {
+        let ttl = Self.wechatPushTimeout + 120
+        let staleCallIDs = settledByCallID.compactMap { id, record -> String? in
+            now.timeIntervalSince(record.at) > ttl ? id : nil
+        }
+        for id in staleCallIDs {
+            if let record = settledByCallID.removeValue(forKey: id) {
+                settledByShortId.removeValue(forKey: record.shortId)
+            }
+        }
+    }
+
+    private func sendSettledAck(_ record: Settled) {
+        guard isPushEnabled() else { return }
+        let verdict = record.approved ? "已通过" : "已拒绝"
+        let whereFrom: String
+        switch record.source {
+        case "desktop":
+            whereFrom = "桌面"
+        case "wechat":
+            whereFrom = "微信"
+        case "timeout":
+            whereFrom = "超时默认"
+        default:
+            whereFrom = record.source
+        }
+        let body: String
+        if record.source == "wechat" {
+            body = "【Lucas】\(record.shortId) \(verdict)（微信），开始按该决定执行。桌面卡片已同步。"
+        } else if record.source == "timeout" {
+            body = "【Lucas】\(record.shortId) 已超时默认拒绝。桌面与微信两侧均已收口。"
+        } else {
+            body = "【Lucas】\(record.shortId) \(verdict)（\(whereFrom)）。微信侧无需再回；迟回复将提示已处理。"
+        }
+        _ = try? wechat.sendText(text: body, suppressAck: true)
+        lastPushNote = body
+    }
+
+    private func sendAlreadyDecidedAck(_ record: Settled, lateReply: Bool) {
+        guard isPushEnabled() else { return }
+        let verdict = record.approved ? "已通过" : "已拒绝"
+        let whereFrom: String
+        switch record.source {
+        case "desktop": whereFrom = "桌面"
+        case "wechat": whereFrom = "微信"
+        case "timeout": whereFrom = "超时"
+        default: whereFrom = record.source
+        }
+        let prefix = lateReply ? "无需重复操作：" : ""
+        let body = "【Lucas】\(record.shortId) \(prefix)\(verdict)（\(whereFrom)），本次回复已忽略。"
+        _ = try? wechat.sendText(text: body, suppressAck: true)
+        lastPushNote = body
     }
 
     private static func compactSummary(_ arguments: JSONValue) -> String {

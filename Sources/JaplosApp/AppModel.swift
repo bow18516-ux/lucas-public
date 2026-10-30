@@ -345,6 +345,12 @@ final class AppModel: ObservableObject {
                         title: event["title"]?.stringValue ?? "",
                         summary: AppModel.approvalSummary(event["arguments"])
                     )
+                case "approvalResolved":
+                    // WeChat / timeout / other channel settled — keep desktop card in sync.
+                    let callID = event["callID"]?.stringValue ?? ""
+                    if let pending = pendingApproval, callID.isEmpty || pending.callID == callID {
+                        pendingApproval = nil
+                    }
                 case "done":
                     finished = true
                     if let finalText = event["text"]?.stringValue, !finalText.isEmpty {
