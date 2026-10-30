@@ -19,7 +19,7 @@
 ```bash
 cd ~/Desktop/japlosv2/clone
 
-# 1) 写更新说明（建议；文件名必须与 zip 同名）
+# 1) 写更新说明（可选；不写会自动从 git 提交生成）
 cat > updates/Lucas-0.5.3.html <<'EOF'
 <ul>
 <li>修复……</li>
@@ -37,6 +37,13 @@ EOF
 - `LUCAS_NOTARY_PROFILE` / `LUCAS_NOTARY_KEYCHAIN`：公证凭据
 - `LUCAS_FEED_URL` / `LUCAS_DOWNLOAD_PREFIX`
 - `LUCAS_DEPLOY_TARGET` / `LUCAS_SSH_KEY`：rsync 上传
+
+## 监控
+
+```bash
+./scripts/check-updates.sh 0.5.4
+./scripts/install-monitor.sh install   # 每 6 小时检查，日志在 ~/Library/Logs/Lucas
+```
 
 ## 发布后自检
 

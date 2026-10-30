@@ -658,7 +658,15 @@ main() → NSApplication + AppDelegate
 3. 完成（展示服务/模型/地址）
 
 判定：`!hasStoredConnection && !UserDefaults.LucasOnboardingCompleted` → 显示。
-点「稍后再说」只关闭本次；完成时写 `LucasOnboardingCompleted = true`。
+- 点「稍后再说」会写 `LucasOnboardingSkipped = true`，以后启动不再自动弹出
+- 点「开始使用」写 `LucasOnboardingCompleted = true`
+- 菜单 **帮助 → 重新显示新手引导** 会清除两个标记并重新打开引导
+- 想用命令重置：
+
+```bash
+defaults delete com.lucas.app LucasOnboardingCompleted
+defaults delete com.lucas.app LucasOnboardingSkipped
+```
 
 ### 9.7 语音
 
@@ -1038,7 +1046,18 @@ EOF
 ./scripts/publish.sh 0.5.3
 ```
 
-### 15.2 脚本内部顺序
+### 15.2 发版说明自动生成
+
+`publish.sh` 会在发布前调用 `scripts/release-notes.sh <version>`：
+
+- 如果 `updates/Lucas-<version>.html` 已存在，直接使用（人工写的优先）
+- 否则从 **上一个 git tag 到 HEAD** 的提交标题生成 HTML 列表
+- 没有新提交时写“本次更新包含若干修复与改进。”
+- 发布成功后自动打 tag `v<version>`，下个版本的说明只包含新提交
+
+因此发版前请先把改动提交到 git；目录不是 git 仓库时会退化为占位说明。
+
+### 15.3 脚本内部顺序
 
 ```
 release.sh
@@ -1056,7 +1075,7 @@ release.sh
  └─ rsync 上传
 ```
 
-### 15.3 发布前检查清单
+### 15.4 发布前检查清单
 
 - [ ] 版本号递增，build 号大于线上
 - [ ] `updates/Lucas-<version>.html` 已写
@@ -1068,7 +1087,7 @@ release.sh
 - [ ] 下载 zip 校验 `sparkle:edSignature`
 - [ ] 旧版本装一次，走完“检查 → 弹窗 → 进度 → 重启”
 
-### 15.4 发布后验证
+### 15.5 发布后验证
 
 ```bash
 curl -sI https://updates.okcue.app/lucas/appcast.xml | head -3
@@ -1153,7 +1172,21 @@ LUCAS_CHECK_DEEP=1 LUCAS_CHECK_RESOLVE=43.132.224.242 ./scripts/check-updates.sh
 | `LUCAS_CHECK_UPDATES_ON_LAUNCH` | 启动后强制检查更新 |
 | `LUCAS_AUTOCLOSE_TEST` | 自动关闭窗口（测试） |
 
-### 16.6 手动回归清单
+### 16.6 更新源监控
+
+本机安装一个每 6 小时检查一次 feed 的 LaunchAgent：
+
+```bash
+./scripts/install-monitor.sh install
+./scripts/install-monitor.sh uninstall
+```
+
+- 生成 `~/Library/LaunchAgents/com.lucas.updates-check.plist`
+- 日志：`~/Library/Logs/Lucas/updates-monitor.log`
+- 检查失败时 LaunchAgent 的 last exit code 非 0，可被系统监控发现
+- 在受限沙箱里运行时会自动把 plist 放到 `Config/` 并打印一键安装命令
+
+### 16.7 手动回归清单
 
 - [ ] 首次引导：无配置 → 三步 → 完成
 - [ ] 模型切换：右上角胶囊 → 选择 → 下一条消息生效
@@ -1208,7 +1241,7 @@ LUCAS_CHECK_DEEP=1 LUCAS_CHECK_RESOLVE=43.132.224.242 ./scripts/check-updates.sh
 | ~~API Key 明文存储~~ | 0.5.3 起已迁移到 Keychain / 0600 文件，SQLite 只保留空字段 | 已完成 |
 | 内部模块名仍为 `Japlos*` | `JaplosProtocol` / `JaplosKernel` / `JaplosRuntime` | 用户不可见；彻底改名需全量改 import |
 | appcast channel 标题为 `Lucas` | generate_appcast 读取可执行名 | 可改 zip/包名或后处理，影响很小 |
-| 首次引导「稍后再说」不持久化 | 下次启动还提示 | 如需“永不提示”，加独立标记 |
+| ~~首次引导「稍后再说」不持久化~~ | 0.5.4 起已持久化，并支持帮助菜单重置 | 已完成 |
 | 语音只有系统实现 | 没有火山/MiMo 云端语音 | 需要凭据与流式协议，另立项目 |
 | 无 UI 自动化测试 | 只有协议单测 + 冒烟 | 可加 XCUITest，但成本高 |
 | DMG 未单独公证 | App 已公证，DMG 仅签名 | 需要时可 `notarytool submit dmg` 再 staple |
@@ -1250,6 +1283,17 @@ LUCAS_CHECK_DEEP=1 LUCAS_CHECK_RESOLVE=43.132.224.242 ./scripts/check-updates.sh
 - 服务器回滚：`updates/` 保留历史 zip 时可直接重新生成 appcast。
 
 ### 19.5 监控建议
+
+```bash
+# 一次性检查
+./scripts/check-updates.sh 0.5.4
+
+# 每 6 小时自动检查（普通终端执行）
+./scripts/install-monitor.sh install
+
+# 查看最近结果
+tail -20 ~/Library/Logs/Lucas/updates-monitor.log
+```
 
 - 每天 curl 一次 appcast（可用 UptimeRobot 等）。
 - 每周检查服务器磁盘、证书到期。
