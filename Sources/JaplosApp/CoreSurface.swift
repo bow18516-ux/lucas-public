@@ -412,7 +412,7 @@ struct MemoryCard: View {
                     .foregroundStyle(Theme.textPrimary)
                 Spacer()
                 Text(model.memoryNotes.isEmpty ? "会话回退" : "已持久化")
-                    .font(.system(size: 9))
+                    .font(.system(size: 10))
                     .foregroundStyle(Theme.textSecondary)
                     .padding(.horizontal, 7)
                     .padding(.vertical, 2)
@@ -429,10 +429,10 @@ struct MemoryCard: View {
                                 .fill(Color.white.opacity(0.18))
                                 .frame(width: 7, height: 7)
                             Text("暂无记忆")
-                                .font(.system(size: 10))
+                                .font(.system(size: 11))
                                 .foregroundStyle(Theme.textSecondary.opacity(0.7))
                             Text("点「记一条」保存短笔记")
-                                .font(.system(size: 9))
+                                .font(.system(size: 10))
                                 .foregroundStyle(Theme.textSecondary.opacity(0.55))
                         }
                         .padding(12)
@@ -445,7 +445,7 @@ struct MemoryCard: View {
                                         .frame(width: 6, height: 6)
                                         .padding(.top, 3)
                                     Text(item.text)
-                                        .font(.system(size: 10))
+                                        .font(.system(size: 11))
                                         .foregroundStyle(Theme.textPrimary.opacity(0.9))
                                         .lineLimit(2)
                                 }
@@ -458,7 +458,7 @@ struct MemoryCard: View {
             HStack(spacing: 8) {
                 TextField("记一条…", text: $draft)
                     .textFieldStyle(.plain)
-                    .font(.system(size: 10))
+                    .font(.system(size: 11))
                     .padding(.horizontal, 8)
                     .padding(.vertical, 5)
                     .background(Color.white.opacity(0.04), in: RoundedRectangle(cornerRadius: 6))
@@ -468,14 +468,14 @@ struct MemoryCard: View {
                     Task { await model.rememberNote(text) }
                 }
                 .buttonStyle(.pressable)
-                .font(.system(size: 10))
+                .font(.system(size: 11))
                 .foregroundStyle(Theme.accent)
                 .disabled(draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 Button("记上条") {
                     Task { await model.rememberLatestUserMessage() }
                 }
                 .buttonStyle(.pressable)
-                .font(.system(size: 10))
+                .font(.system(size: 11))
                 .foregroundStyle(Theme.textSecondary)
             }
 
@@ -484,7 +484,7 @@ struct MemoryCard: View {
                 Label("知识摘录 \(excerptCount)", systemImage: "square")
                 Spacer()
             }
-            .font(.system(size: 9))
+            .font(.system(size: 10))
             .foregroundStyle(Theme.textSecondary.opacity(0.8))
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -511,7 +511,7 @@ struct KnowledgeCard: View {
                     .foregroundStyle(Theme.textPrimary)
                 Spacer()
                 Text("\(model.knowledgeDocuments.count) 篇")
-                    .font(.system(size: 9))
+                    .font(.system(size: 10))
                     .foregroundStyle(Theme.textSecondary)
                     .padding(.horizontal, 7)
                     .padding(.vertical, 2)
@@ -528,10 +528,10 @@ struct KnowledgeCard: View {
                                 .fill(Color.white.opacity(0.18))
                                 .frame(width: 7, height: 7)
                             Text("暂无文档")
-                                .font(.system(size: 10))
+                                .font(.system(size: 11))
                                 .foregroundStyle(Theme.textSecondary.opacity(0.7))
                             Text("标题 + 正文保存到 knowledge.documents")
-                                .font(.system(size: 9))
+                                .font(.system(size: 10))
                                 .foregroundStyle(Theme.textSecondary.opacity(0.55))
                         }
                         .padding(12)
@@ -545,12 +545,12 @@ struct KnowledgeCard: View {
                                         .padding(.top, 3)
                                     VStack(alignment: .leading, spacing: 2) {
                                         Text(doc.title)
-                                            .font(.system(size: 10, weight: .medium))
+                                            .font(.system(size: 11, weight: .medium))
                                             .foregroundStyle(Theme.textPrimary.opacity(0.95))
                                             .lineLimit(1)
                                         if !doc.body.isEmpty {
                                             Text(doc.body)
-                                                .font(.system(size: 9))
+                                                .font(.system(size: 10))
                                                 .foregroundStyle(Theme.textSecondary.opacity(0.85))
                                                 .lineLimit(2)
                                         }
@@ -560,7 +560,7 @@ struct KnowledgeCard: View {
                                         Task { await model.deleteKnowledgeDocument(id: doc.id) }
                                     } label: {
                                         Image(systemName: "trash")
-                                            .font(.system(size: 9))
+                                            .font(.system(size: 10))
                                             .foregroundStyle(Theme.textSecondary.opacity(0.7))
                                     }
                                     .buttonStyle(.pressable)
@@ -575,13 +575,13 @@ struct KnowledgeCard: View {
             VStack(alignment: .leading, spacing: 6) {
                 TextField("标题", text: $titleDraft)
                     .textFieldStyle(.plain)
-                    .font(.system(size: 10))
+                    .font(.system(size: 11))
                     .padding(.horizontal, 8)
                     .padding(.vertical, 5)
                     .background(Color.white.opacity(0.04), in: RoundedRectangle(cornerRadius: 6))
                 TextField("正文…", text: $bodyDraft)
                     .textFieldStyle(.plain)
-                    .font(.system(size: 10))
+                    .font(.system(size: 11))
                     .padding(.horizontal, 8)
                     .padding(.vertical, 5)
                     .background(Color.white.opacity(0.04), in: RoundedRectangle(cornerRadius: 6))
@@ -595,7 +595,7 @@ struct KnowledgeCard: View {
                         Task { await model.upsertKnowledgeDocument(title: title, body: body) }
                     }
                     .buttonStyle(.pressable)
-                    .font(.system(size: 10))
+                    .font(.system(size: 11))
                     .foregroundStyle(Theme.accent)
                     .disabled(titleDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 }
@@ -673,7 +673,7 @@ struct CalendarCard: View {
                     Button { monthOffset = 0 } label: { Text("今天") }
                     Button { monthOffset += 1 } label: { Image(systemName: "chevron.right") }
                 }
-                .font(.system(size: 10))
+                .font(.system(size: 11))
                 .buttonStyle(.pressable)
                 .foregroundStyle(Theme.textSecondary)
             }
@@ -681,7 +681,7 @@ struct CalendarCard: View {
             HStack(spacing: 0) {
                 ForEach(["一", "二", "三", "四", "五", "六", "日"], id: \.self) { day in
                     Text(day)
-                        .font(.system(size: 10))
+                        .font(.system(size: 11))
                         .foregroundStyle(Theme.textSecondary.opacity(0.7))
                         .frame(maxWidth: .infinity)
                 }
@@ -701,7 +701,7 @@ struct CalendarCard: View {
                 Spacer()
                 Text("北京时间")
             }
-            .font(.system(size: 9))
+            .font(.system(size: 10))
             .foregroundStyle(Theme.textSecondary.opacity(0.75))
         }
         .frame(maxWidth: .infinity, alignment: .leading)
