@@ -61,7 +61,7 @@ public struct MusicTool: KernelTool {
             throw ToolError.invalidArguments("Unknown action \(action)")
         }
 
-        let result = try runAppleScript(script)
+        let result = try await runAppleScript(script)
         if action == "status" {
             let parts = result.split(separator: "|", omittingEmptySubsequences: false).map(String.init)
             return .object([
@@ -73,7 +73,7 @@ public struct MusicTool: KernelTool {
         return .object(["action": .string(action), "ok": .bool(true)])
     }
 
-    private func runAppleScript(_ source: String) throws -> String {
+    private func runAppleScript(_ source: String) async throws -> String {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
         process.arguments = ["-e", source]
@@ -86,7 +86,7 @@ public struct MusicTool: KernelTool {
         } catch {
             throw ToolError.failed("osascript failed to launch: \(error)")
         }
-        let captured = ProcessPipes.drain(
+        let captured = await ProcessPipes.drain(
             process: process,
             stdout: stdout.fileHandleForReading,
             stderr: stderr.fileHandleForReading,
@@ -131,21 +131,21 @@ public struct AudioTool: KernelTool {
         }
         switch action {
         case "get":
-            let value = try run("output volume of (get volume settings)")
+            let value = try await run("output volume of (get volume settings)")
             return .object(["volume": .number(Double(Int(value) ?? 0))])
         case "set":
             guard let volume = arguments["volume"]?.intValue else {
                 throw ToolError.invalidArguments("volume is required")
             }
             let clamped = min(max(volume, 0), 100)
-            _ = try run("set volume output volume \(clamped)")
+            _ = try await run("set volume output volume \(clamped)")
             return .object(["volume": .number(Double(clamped))])
         default:
             throw ToolError.invalidArguments("Unknown action \(action)")
         }
     }
 
-    private func run(_ source: String) throws -> String {
+    private func run(_ source: String) async throws -> String {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
         process.arguments = ["-e", source]
@@ -154,7 +154,7 @@ public struct AudioTool: KernelTool {
         process.standardOutput = stdout
         process.standardError = stderr
         try process.run()
-        let captured = ProcessPipes.drain(
+        let captured = await ProcessPipes.drain(
             process: process,
             stdout: stdout.fileHandleForReading,
             stderr: stderr.fileHandleForReading,

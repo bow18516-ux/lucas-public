@@ -230,7 +230,7 @@ public struct NotificationTool: KernelTool {
         let stderr = Pipe()
         process.standardError = stderr
         try process.run()
-        let captured = ProcessPipes.drain(
+        let captured = await ProcessPipes.drain(
             process: process,
             stdout: nil,
             stderr: stderr.fileHandleForReading,

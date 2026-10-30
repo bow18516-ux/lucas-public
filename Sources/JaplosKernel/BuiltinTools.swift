@@ -79,87 +79,62 @@ public struct ShellTool: KernelTool {
             throw ToolError.denied(pathReason)
         }
 
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/bin/zsh")
-        process.arguments = ["-lc", command]
-        process.currentDirectoryURL = cwdURL
-        let stdout = Pipe()
-        let stderr = Pipe()
-        process.standardOutput = stdout
-        process.standardError = stderr
+        // Own process group: a timed-out command takes its background children
+        // with it, and a child that holds the pipe after the shell exits can no
+        // longer keep this call waiting for an EOF that never comes.
+        let child = try ProcessGroup.spawn(
+            executable: "/bin/zsh",
+            arguments: ["-lc", command],
+            workingDirectory: cwdURL
+        )
+        let watcher = ProcessGroup.ExitWatcher(pid: child.pid)
         let limit = 32 * 1024
         let bucket = ProcessPipes.Bucket(limit: limit)
-        let group = DispatchGroup()
+        let readers = ProcessPipes.ReaderSet(
+            stdout: child.stdout,
+            stderr: child.stderr,
+            bucket: bucket
+        )
+        readers.start()
 
-        try process.run()
-        let outHandle = stdout.fileHandleForReading
-        let errHandle = stderr.fileHandleForReading
-        group.enter()
-        DispatchQueue.global(qos: .userInitiated).async {
-            defer { group.leave() }
-            while true {
-                let chunk = outHandle.readData(ofLength: 16 * 1024)
-                if chunk.isEmpty { break }
-                bucket.append(chunk, stdout: true)
-            }
-        }
-        group.enter()
-        DispatchQueue.global(qos: .userInitiated).async {
-            defer { group.leave() }
-            while true {
-                let chunk = errHandle.readData(ofLength: 16 * 1024)
-                if chunk.isEmpty { break }
-                bucket.append(chunk, stdout: false)
-            }
-        }
-
-        let deadline = Date().addingTimeInterval(timeout)
         var timedOut = false
         var cancelled = false
-        while process.isRunning && Date() < deadline {
+        var status: Int32?
+        let deadline = Date().addingTimeInterval(timeout)
+        while true {
+            if let exit = watcher.poll() {
+                status = exit
+                break
+            }
             if Task.isCancelled {
                 cancelled = true
                 break
             }
-            do {
-                try await Task.sleep(nanoseconds: 40_000_000)
-            } catch {
-                cancelled = true
+            if Date() >= deadline {
+                timedOut = true
                 break
             }
+            try? await Task.sleep(nanoseconds: 25_000_000)
         }
-        if process.isRunning {
-            if !cancelled { timedOut = true }
-            process.terminate()
-            let killDeadline = Date().addingTimeInterval(1)
-            while process.isRunning && Date() < killDeadline {
-                try? await Task.sleep(nanoseconds: 40_000_000)
-            }
-            if process.isRunning {
-                kill(process.processIdentifier, SIGKILL)
-            }
+        if status == nil {
+            status = await ProcessGroup.terminate(child.pid, watcher: watcher)
         }
-        process.waitUntilExit()
-        waitForOutput(group)
+        let captured = await ProcessPipes.finish(readers: readers, bucket: bucket)
         if cancelled {
             throw CancellationError()
         }
 
-        let captured = bucket.snapshot()
         let outText = String(decoding: captured.stdout, as: UTF8.self)
         let errText = String(decoding: captured.stderr, as: UTF8.self)
 
         return .object([
-            "exitCode": .number(Double(process.terminationStatus)),
+            "exitCode": .number(Double(status ?? -1)),
             "stdout": .string(outText),
             "stderr": .string(errText),
             "timedOut": .bool(timedOut),
             "truncated": .bool(captured.truncated),
+            "detachedBackground": .bool(captured.detachedBackground),
         ])
-    }
-
-    private func waitForOutput(_ group: DispatchGroup) {
-        group.wait()
     }
 }
 
@@ -467,7 +442,7 @@ public struct ScreenshotTool: KernelTool {
         let stderr = Pipe()
         process.standardError = stderr
         try process.run()
-        let captured = ProcessPipes.drain(
+        let captured = await ProcessPipes.drain(
             process: process,
             stdout: nil,
             stderr: stderr.fileHandleForReading,

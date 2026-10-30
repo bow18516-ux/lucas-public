@@ -530,7 +530,7 @@ public final class UnixSocketServer: @unchecked Sendable {
         } catch {
             return nil
         }
-        let captured = ProcessPipes.drain(process: task, stdout: nil, stderr: pipe.fileHandleForReading, limit: 64 * 1024)
+        let captured = ProcessPipes.drainBlocking(process: task, stdout: nil, stderr: pipe.fileHandleForReading, limit: 64 * 1024)
         let text = String(decoding: captured.stderr, as: UTF8.self)
         for line in text.split(whereSeparator: \.isNewline) {
             let s = String(line)
