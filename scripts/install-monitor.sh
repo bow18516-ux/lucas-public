@@ -60,15 +60,21 @@ if [ ! -w "$HOME/Library/LaunchAgents" ] || [ ! -w "$HOME/Library/Logs/Lucas" ];
     echo "sandbox cannot write ~/Library/LaunchAgents or ~/Library/Logs."
     echo "prepared: $STAGED"
     echo
-    echo "run these two lines in a normal Terminal to install:"
-    echo "  mkdir -p ~/Library/LaunchAgents ~/Library/Logs/Lucas"
-    printf '  cp "%s" "%s" && launchctl bootstrap gui/%s "%s"
-' "$STAGED" "$PLIST" "$(id -u)" "$PLIST"
+    echo "run this in a normal Terminal to install:"
+    echo "  cd '$ROOT' && ./scripts/install-monitor.sh install"
     exit 0
 fi
+
+# Install copies outside ~/Desktop, which macOS protects from background jobs.
+mkdir -p "$BIN"
+install -m 755 "$ROOT/scripts/check-updates.sh" "$MONITOR"
+install -m 644 "$ROOT/Config/sparkle_public_key.txt" "$KEY_DST"
 
 cp "$STAGED" "$PLIST"
 launchctl bootout "gui/$(id -u)/$LABEL" 2>/dev/null || true
 launchctl bootstrap "gui/$(id -u)" "$PLIST"
 launchctl kickstart -k "gui/$(id -u)/$LABEL"
 echo "installed $LABEL (every 6h, log: $LOG_DIR/updates-monitor.log)"
+sleep 3
+echo "--- latest monitor output ---"
+tail -5 "$LOG_DIR/updates-monitor.log" 2>/dev/null || echo "(no output yet)"

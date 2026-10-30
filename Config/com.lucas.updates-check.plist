@@ -7,12 +7,14 @@
     <key>ProgramArguments</key>
     <array>
         <string>/bin/bash</string>
-        <string>/Users/w/Desktop/japlosv2/clone/scripts/check-updates.sh</string>
+        <string>/Users/w/Library/Application Support/Lucas/bin/check-updates.sh</string>
     </array>
     <key>EnvironmentVariables</key>
     <dict>
         <key>LUCAS_CHECK_RESOLVE</key>
         <string>43.132.224.242</string>
+        <key>LUCAS_PUBLIC_KEY_FILE</key>
+        <string>/Users/w/Library/Application Support/Lucas/sparkle_public_key.txt</string>
     </dict>
     <key>RunAtLoad</key>
     <true/>
