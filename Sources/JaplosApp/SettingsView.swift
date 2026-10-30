@@ -215,6 +215,7 @@ struct ModelSettingsPane: View {
     @ObservedObject var model: AppModel
     @State private var protocolName = "Chat Completions"
     @State private var savedNote = "配置已同步"
+    @State private var savedRoutes: [JSONValue] = []
 
     private let protocols = ["Chat Completions", "Responses"]
 
@@ -226,6 +227,7 @@ struct ModelSettingsPane: View {
                 VStack(alignment: .leading, spacing: SettingsMetrics.cardSpacing) {
                     currentCard
                     configuredCard
+                    routesCard
                     connectionCard
                 }
                 .padding(.horizontal, SettingsMetrics.pagePadding)
@@ -234,6 +236,52 @@ struct ModelSettingsPane: View {
 
             bottomBar
         }
+        .task { await reloadRoutes() }
+    }
+
+    private func reloadRoutes() async {
+        savedRoutes = await model.listModelRoutes()
+    }
+
+    private var routesCard: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Text("路由历史")
+                    .font(.system(size: SettingsMetrics.cardTitleSize, weight: .medium))
+                    .foregroundStyle(Theme.textPrimary)
+                Text("\(savedRoutes.count)")
+                    .font(.system(size: SettingsMetrics.cardSubtitleSize))
+                    .foregroundStyle(Theme.textSecondary)
+                Spacer()
+                Button {
+                    Task { await reloadRoutes() }
+                } label: {
+                    Label("刷新", systemImage: "arrow.clockwise")
+                        .font(.system(size: SettingsMetrics.cardSubtitleSize))
+                }
+                .buttonStyle(.borderless)
+                .foregroundStyle(Theme.textSecondary)
+            }
+
+            if savedRoutes.isEmpty {
+                Text("保存连接后会出现在这里（写入 custom_model_routes）。")
+                    .font(.system(size: SettingsMetrics.cardSubtitleSize))
+                    .foregroundStyle(Theme.textSecondary)
+            } else {
+                ForEach(Array(savedRoutes.enumerated()), id: \.offset) { _, route in
+                    ModelRouteRow(route: route) { title in
+                        let record = route["record"]
+                        if let base = record?["baseURL"]?.stringValue { model.settings.baseURL = base }
+                        if let m = record?["model"]?.stringValue { model.settings.model = m }
+                        if let temp = record?["temperature"]?.doubleValue { model.settings.temperature = temp }
+                        if let name = record?["displayName"]?.stringValue { model.settings.displayName = name }
+                        savedNote = "已填入 \(title)，确认 Key 后点保存"
+                    }
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .panel(padding: SettingsMetrics.cardPadding)
     }
 
     private var currentCard: some View {
@@ -511,6 +559,7 @@ struct ModelSettingsPane: View {
                 Task {
                     let ok = await model.saveSettings()
                     savedNote = ok ? "配置已同步" : "保存失败"
+                    if ok { await reloadRoutes() }
                 }
             } label: {
                 Text("保存并使用")
@@ -622,6 +671,44 @@ struct ModelSettingsPane: View {
 }
 
 // MARK: - Tools settings
+
+
+
+private struct ModelRouteRow: View {
+    let route: JSONValue
+    let onSelect: (String) -> Void
+
+    private var routeID: String { route["routeID"]?.stringValue ?? "—" }
+    private var record: JSONValue? { route["record"] }
+    private var title: String {
+        record?["displayName"]?.stringValue
+            ?? record?["model"]?.stringValue
+            ?? routeID
+    }
+    private var subtitle: String { record?["baseURL"]?.stringValue ?? "" }
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 10) {
+            VStack(alignment: .leading, spacing: 3) {
+                Text(title)
+                    .font(.system(size: SettingsMetrics.bodySize, weight: .medium))
+                Text(subtitle)
+                    .font(.system(size: SettingsMetrics.cardSubtitleSize, design: .monospaced))
+                    .foregroundStyle(Theme.textSecondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+            }
+            Spacer()
+            Button("选用") { onSelect(title) }
+                .buttonStyle(.borderless)
+                .font(.system(size: SettingsMetrics.cardSubtitleSize))
+                .foregroundStyle(Theme.accent)
+        }
+        .padding(10)
+        .background(Color.white.opacity(0.025), in: RoundedRectangle(cornerRadius: 8))
+        .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Theme.panelBorder, lineWidth: 0.7))
+    }
+}
 
 struct ToolsSettingsPane: View {
     @ObservedObject var model: AppModel
@@ -1195,7 +1282,15 @@ struct VoiceSettingsPane: View {
                 .padding(.bottom, 24)
             }
         }
-        .task { devices = AudioDevices.inputs() }
+        .task {
+            devices = AudioDevices.inputs()
+            await model.syncSpeechProfile(from: voice)
+        }
+        .onChange(of: voice.voiceIdentifier) { _ in Task { await model.syncSpeechProfile(from: voice) } }
+        .onChange(of: voice.languageCode) { _ in Task { await model.syncSpeechProfile(from: voice) } }
+        .onChange(of: voice.rate) { _ in Task { await model.syncSpeechProfile(from: voice) } }
+        .onChange(of: voice.pitch) { _ in Task { await model.syncSpeechProfile(from: voice) } }
+        .onChange(of: voice.inputDeviceUID) { _ in Task { await model.syncSpeechProfile(from: voice) } }
     }
 
     // MARK: Cards

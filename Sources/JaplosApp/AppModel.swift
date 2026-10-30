@@ -433,6 +433,19 @@ final class AppModel: ObservableObject {
                 "path": .string("agents.default.model.connection"),
                 "value": value,
             ]))
+            // Mirror into custom_model_routes so Settings can list provider history like Japlos.
+            let routeID = Self.routeID(for: settings)
+            let routeRecord = JSONValue.object([
+                "baseURL": .string(settings.baseURL),
+                "model": .string(settings.model),
+                "temperature": .number(settings.temperature),
+                "displayName": .string(settings.displayName.isEmpty ? providerHint(for: settings.baseURL) : settings.displayName),
+                "protocol": .string("chat.completions"),
+            ])
+            _ = try? await client.callAsync(.modelRoutesSet, arguments: .object([
+                "routeID": .string(routeID),
+                "record": routeRecord,
+            ]))
             storedAPIKey = "__stored__"
             settings.apiKey = ""
             hasStoredConnection = true
@@ -441,6 +454,51 @@ final class AppModel: ObservableObject {
             errorText = String(describing: error)
             return false
         }
+    }
+
+    /// Persist current system TTS prefs into `speech_profiles` (kernel store).
+    func syncSpeechProfile(from voice: SpeechOutput) async {
+        let record = JSONValue.object([
+            "provider": .string("system"),
+            "voiceIdentifier": .string(voice.voiceIdentifier),
+            "languageCode": .string(voice.languageCode),
+            "rate": .number(voice.rate),
+            "pitch": .number(voice.pitch),
+            "inputDeviceUID": .string(voice.inputDeviceUID),
+            "tone": .string(OnboardingPrefs.tone),
+        ])
+        _ = try? await client.callAsync(.speechProfilesSet, arguments: .object([
+            "profileID": .string("system-default"),
+            "providerID": .string("system"),
+            "isDefault": .bool(true),
+            "record": record,
+        ]))
+    }
+
+    func listModelRoutes() async -> [JSONValue] {
+        do {
+            let result = try await client.callAsync(.modelRoutesList, arguments: .object([:]))
+            return result.arrayValue ?? []
+        } catch {
+            return []
+        }
+    }
+
+    private static func routeID(for settings: ModelConnection) -> String {
+        let host = URL(string: settings.baseURL)?.host ?? "custom"
+        let model = settings.model.replacingOccurrences(of: "/", with: "-")
+        let raw = "\(host)/\(model)"
+        let allowed = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: ".-_"))
+        return String(raw.unicodeScalars.map { allowed.contains($0) ? Character($0) : Character("-") })
+    }
+
+    private func providerHint(for baseURL: String) -> String {
+        let url = baseURL.lowercased()
+        if url.contains("deepseek") { return "DeepSeek" }
+        if url.contains("xiaomimimo") { return "MiMo" }
+        if url.contains("pollinations") { return "Pollinations" }
+        if url.contains("openai.com") { return "OpenAI" }
+        return "Custom"
     }
 
     func switchModel(_ id: String) async {
