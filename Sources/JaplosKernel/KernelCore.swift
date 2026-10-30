@@ -721,6 +721,43 @@ public final class KernelCore: @unchecked Sendable {
                     "tableCount": .number(Double(counts.count)),
                 ]), requestID: requestID)
 
+            case .runtimeLedgerTables:
+                return .success(.array(KernelStore.runtimeLedgerTables.map { .string($0) }), requestID: requestID)
+
+            case .runtimeLedgerList:
+                guard let table = request.arguments["table"]?.stringValue, !table.isEmpty else {
+                    return .failure(.invalidArgument("table is required"), requestID: requestID)
+                }
+                let limit = request.arguments["limit"]?.intValue ?? 50
+                return .success(.array(try store.listRuntimeLedger(table: table, limit: limit)), requestID: requestID)
+
+            case .runtimeLedgerUpsert:
+                guard let table = request.arguments["table"]?.stringValue, !table.isEmpty else {
+                    return .failure(.invalidArgument("table is required"), requestID: requestID)
+                }
+                let id = request.arguments["id"]?.stringValue
+                let record = request.arguments["record"] ?? .object([:])
+                let saved = try store.upsertRuntimeLedger(table: table, id: id, record: record)
+                return .success(.object([
+                    "table": .string(table),
+                    "id": .string(saved),
+                    "saved": .bool(true),
+                ]), requestID: requestID)
+
+            case .runtimeLedgerDelete:
+                guard let table = request.arguments["table"]?.stringValue, !table.isEmpty else {
+                    return .failure(.invalidArgument("table is required"), requestID: requestID)
+                }
+                guard let id = request.arguments["id"]?.stringValue, !id.isEmpty else {
+                    return .failure(.invalidArgument("id is required"), requestID: requestID)
+                }
+                try store.deleteRuntimeLedger(table: table, id: id)
+                return .success(.object([
+                    "table": .string(table),
+                    "id": .string(id),
+                    "deleted": .bool(true),
+                ]), requestID: requestID)
+
             case .speechSynthesize:
                 return await Self.synthesizeSpeech(request: request, store: store)
 

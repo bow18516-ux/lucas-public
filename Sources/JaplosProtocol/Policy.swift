@@ -123,7 +123,8 @@ public enum CapabilityRouting {
              .contextSnapshotsList, .cancellationsList, .capabilityDelegationsList,
              .informationRevisionsList, .toolArtifactsList,
              .informationTypesList, .informationHeadsList, .informationProcessorsList,
-             .deliveriesList, .situationsList, .selfHealingEventsList, .kernelStoreStats:
+             .deliveriesList, .situationsList, .selfHealingEventsList, .kernelStoreStats,
+             .runtimeLedgerList, .runtimeLedgerTables:
             return Capability.chatRead
         case .memoryUpsert, .memoryDelete, .agentTasksUpsert, .agentTasksDelete,
              .alarmUpsert, .alarmDelete,
@@ -133,7 +134,8 @@ public enum CapabilityRouting {
              .contextSnapshotsUpsert, .cancellationsUpsert, .capabilityDelegationsUpsert,
              .informationRevisionsUpsert, .toolArtifactsUpsert,
              .informationTypesUpsert, .informationHeadsSet, .informationProcessorsUpsert,
-             .deliveriesUpsert, .situationsUpsert, .selfHealingEventsAppend:
+             .deliveriesUpsert, .situationsUpsert, .selfHealingEventsAppend,
+             .runtimeLedgerUpsert, .runtimeLedgerDelete:
             return Capability.chatManage
         case .modelTest, .modelCatalog, .modelRoutesList, .speechProfilesList, .speechSynthesize:
             return Capability.modelInvoke

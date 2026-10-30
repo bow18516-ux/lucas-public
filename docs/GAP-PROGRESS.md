@@ -4,58 +4,50 @@
 
 ## HEAD
 
-See `git rev-parse HEAD` after the latest local commit from this batch (store v5 + self-healing + tools + store stats UI).
-
-Start of batch: `768229b`.
+See `git rev-parse HEAD` after the latest local commit.
 
 ## Store (`lucas.store`)
 
-Namespace version: **v5** (recorded in `persistence_migrations`).
+Namespace version: **v6** (recorded in `persistence_migrations`).
 
-### Tables (29 data + persistence_migrations)
+### Tables
 
-metadata, configurations, sessions, turns, permission_grants, tool_invocations, configuration_history, custom_model_routes, speech_profiles, memories, agent_tasks, alarms, mcp_events, modules, runs, knowledge_documents, subscriptions, context_snapshots, cancellations, capability_delegations, information_revisions, generated_tool_artifacts, **information_types**, **information_heads**, **information_processors**, **deliveries**, **situations**, **self_healing_events**, persistence_migrations.
+**Core / plane (29):** metadata, configurations, sessions, turns, permission_grants, tool_invocations, configuration_history, custom_model_routes, speech_profiles, memories, agent_tasks, alarms, mcp_events, modules, runs, knowledge_documents, subscriptions, context_snapshots, cancellations, capability_delegations, information_revisions, generated_tool_artifacts, information_types, information_heads, information_processors, deliveries, situations, self_healing_events, persistence_migrations.
 
-### New ops (v5)
+**Runtime ledgers v6 (28, simplified `id/updated_at/record_json`):** tool_package_publishers, task_plans, scheduled_work, run_attempts, runtime_tools, tool_projects, tool_source_revisions, tool_incidents, tool_packages, tool_package_installations, primary_sessions, memory_embeddings, memory_recognition_jobs, speech_replies, task_privacy, task_desktop_only, mcp_event_cursors, knowledge_chunks, knowledge_terms, knowledge_vectors, knowledge_libraries, knowledge_library_documents, knowledge_import_receipts, knowledge_import_library_receipts, knowledge_library_migrations, knowledge_deletions, knowledge_deletion_aliases, feishu_messages.
+
+**Total tracked by `kernel.store.stats`:** 57 tables.
+
+Japlos reconstructed schema has 53 named tables; Lucas covers them via short names + these ledgers (sessions≈agent_runtime_sessions, etc.).
+
+### Ops (selected)
 
 | Op | Notes |
 |---|---|
-| `information.types.list` / `upsert` | PK `(type_id, schema_version)` |
-| `information.heads.list` / `set` | head revision pointer |
-| `information.processors.list` / `upsert` | module capability processors |
-| `deliveries.list` / `upsert` | subscription delivery ledger |
-| `situations.list` / `upsert` | agent runtime situations |
-| `selfhealing.events.list` / `append` | Lucas-side self-heal ledger |
-| `kernel.store.stats` | table → row count map |
+| `information.*` / `deliveries.*` / `situations.*` / `selfhealing.events.*` | store v5 |
+| `kernel.store.stats` | table → row count |
+| `runtime.ledger.tables` | whitelist of v6 ledger names |
+| `runtime.ledger.list` / `upsert` / `delete` | args: `table`, `id?`, `record?`, `limit?` |
 
-## Self-healing scaffold
+## Self-healing
 
-- On `lucasd` start: ensure `~/Library/Application Support/Lucas/self-healing/` (or `LUCAS_CLONE_HOME/self-healing/`).
-- Append JSONL `events.jsonl` + SQLite `self_healing_events` row with kind `boot`.
-- `UnixSocketServer.start`: on bind failure, unlink + retry once; if recovered, daemon logs and appends kind `socket.bind.recover`.
+- `~/Library/Application Support/Lucas/self-healing/` (+ clone home)
+- boot + `socket.bind.recover` → JSONL + SQLite
 
-## Tools added / extended
+## Tools (safe)
 
-| Tool | Notes |
-|---|---|
-| `system.hostname` | Host / ProcessInfo |
-| `system.os.version` | macOS version tuple |
-| `system.app.support.paths` | Lucas support / store / socket / logs / self-healing |
-| `system.user.defaults` | get/set, **Lucas-scoped keys only** (`lucas.*`, onboarding/speech/voice/update) |
-| `system.clipboard` | `action=types` + `hasImage` on get/types |
-
-Skipped: EventKit calendar (TCC/entitlement risk); `system.finder.reveal` (covered by `system.path.open` reveal).
+hostname, os.version, app.support.paths, scoped user.defaults, clipboard types/hasImage. EventKit skipped (TCC).
 
 ## UI
 
-Settings → 在线更新: read-only **内核存储 / 自愈** card (`kernel.store.stats` + latest `selfhealing.events`).
+Settings → 在线更新: store/self-heal card (`kernel.store.stats`).
 
-## Hard blocks (not done this batch)
+## Hard blocks
 
-- Volcengine live API keys / cloud TTS production wiring
+- Volcengine live API keys / production cloud TTS
 - Developer ID sign + notarize / Sparkle publish
-- Bailongma BSK binary integration
+- Bailongma BSK binary
 
-## Soft work after this batch
+## Soft surface
 
-If build is green and docs match HEAD: treat remaining soft surface as exhausted unless new Japlos reverse tables/ops appear. Cloud TTS beyond scaffold, MCP OAuth live flows, and signed release stay hard.
+Japlos table scaffolds + named/whitelist ops for local parity are in. Remaining work that still needs secrets, signing, or third-party binaries is **hard** only.

@@ -110,6 +110,12 @@ public extension KernelOperation {
     static let selfHealingEventsAppend = KernelOperation("selfhealing.events.append")
     static let kernelStoreStats = KernelOperation("kernel.store.stats")
 
+    // Runtime ledgers (store v6 — whitelisted Japlos agent_runtime_* scaffolds)
+    static let runtimeLedgerList = KernelOperation("runtime.ledger.list")
+    static let runtimeLedgerUpsert = KernelOperation("runtime.ledger.upsert")
+    static let runtimeLedgerDelete = KernelOperation("runtime.ledger.delete")
+    static let runtimeLedgerTables = KernelOperation("runtime.ledger.tables")
+
     // Model
     static let modelTest = KernelOperation("model.test")
     static let modelCatalog = KernelOperation("model.catalog")

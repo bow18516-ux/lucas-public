@@ -308,10 +308,25 @@ public final class KernelStore {
             PRIMARY KEY(namespace, version)
         );
         """)
+
+        // Store v6 — remaining Japlos agent_runtime_* / knowledge / tool package ledgers (simplified)
+        let v6Ledgers = KernelStore.runtimeLedgerTables
+        for table in v6Ledgers {
+            try database.execute("""
+            CREATE TABLE IF NOT EXISTS \(table) (
+                id TEXT PRIMARY KEY,
+                updated_at REAL NOT NULL,
+                record_json TEXT NOT NULL
+            );
+            """)
+            try database.execute("CREATE INDEX IF NOT EXISTS idx_\(table)_updated ON \(table)(updated_at DESC);")
+        }
+
         try recordPersistenceMigration(namespace: "lucas.store", version: 2)
         try recordPersistenceMigration(namespace: "lucas.store", version: 3)
         try recordPersistenceMigration(namespace: "lucas.store", version: 4)
         try recordPersistenceMigration(namespace: "lucas.store", version: 5)
+        try recordPersistenceMigration(namespace: "lucas.store", version: 6)
     }
 
     private func recordPersistenceMigration(namespace: String, version: Int) throws {
@@ -1606,9 +1621,86 @@ public final class KernelStore {
         )
     }
 
+    /// Whitelisted simplified ledgers (Japlos agent_runtime_* / knowledge / tool packages).
+    public static let runtimeLedgerTables: [String] = [
+        "tool_package_publishers",
+        "task_plans",
+        "scheduled_work",
+        "run_attempts",
+        "runtime_tools",
+        "tool_projects",
+        "tool_source_revisions",
+        "tool_incidents",
+        "tool_packages",
+        "tool_package_installations",
+        "primary_sessions",
+        "memory_embeddings",
+        "memory_recognition_jobs",
+        "speech_replies",
+        "task_privacy",
+        "task_desktop_only",
+        "mcp_event_cursors",
+        "knowledge_chunks",
+        "knowledge_terms",
+        "knowledge_vectors",
+        "knowledge_libraries",
+        "knowledge_library_documents",
+        "knowledge_import_receipts",
+        "knowledge_import_library_receipts",
+        "knowledge_library_migrations",
+        "knowledge_deletions",
+        "knowledge_deletion_aliases",
+        "feishu_messages",
+    ]
+
+    public static func isRuntimeLedgerTable(_ name: String) -> Bool {
+        runtimeLedgerTables.contains(name)
+    }
+
+    public func listRuntimeLedger(table: String, limit: Int = 50) throws -> [JSONValue] {
+        guard Self.isRuntimeLedgerTable(table) else {
+            throw KernelStoreError.invalidArgument("unknown ledger table \(table)")
+        }
+        let lim = max(1, min(limit, 500))
+        return try database.query(
+            "SELECT id, updated_at, record_json FROM \(table) ORDER BY updated_at DESC LIMIT ?;",
+            [lim]
+        ).compactMap { row in Self.decodeRecordRow(row, idKey: "id", extra: { r in
+            [
+                "table": .string(table),
+                "updatedAt": .string(ISO8601.string(from: Date(timeIntervalSince1970: (r["updated_at"] as? Double) ?? 0))),
+            ]
+        })}
+    }
+
+    public func upsertRuntimeLedger(table: String, id: String?, record: JSONValue) throws -> String {
+        guard Self.isRuntimeLedgerTable(table) else {
+            throw KernelStoreError.invalidArgument("unknown ledger table \(table)")
+        }
+        let trimmed = id?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let rowID = trimmed.isEmpty ? UUID().uuidString : trimmed
+        let now = Date().timeIntervalSince1970
+        let encoded = String(data: try ProtocolCoding.encode(record), encoding: .utf8) ?? "{}"
+        try database.execute("""
+        INSERT INTO \(table)(id, updated_at, record_json)
+        VALUES (?, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET
+            updated_at = excluded.updated_at,
+            record_json = excluded.record_json;
+        """, [rowID, now, encoded])
+        return rowID
+    }
+
+    public func deleteRuntimeLedger(table: String, id: String) throws {
+        guard Self.isRuntimeLedgerTable(table) else {
+            throw KernelStoreError.invalidArgument("unknown ledger table \(table)")
+        }
+        try database.execute("DELETE FROM \(table) WHERE id = ?;", [id])
+    }
+
     /// Row counts for every known lucas.store table (demo / parity).
     public func tableCounts() throws -> [String: Int] {
-        let tables = [
+        var tables = [
             "metadata", "configurations", "sessions", "turns", "permission_grants",
             "tool_invocations", "configuration_history", "custom_model_routes", "speech_profiles",
             "memories", "agent_tasks", "alarms", "mcp_events", "modules", "runs",
@@ -1617,11 +1709,23 @@ public final class KernelStore {
             "persistence_migrations", "information_types", "information_heads",
             "information_processors", "deliveries", "situations", "self_healing_events",
         ]
+        tables.append(contentsOf: Self.runtimeLedgerTables)
         var result: [String: Int] = [:]
         for table in tables {
             result[table] = try database.scalarInt("SELECT COUNT(*) FROM \(table);")
         }
         return result
+    }
+}
+
+public enum KernelStoreError: Error, LocalizedError, Sendable {
+    case invalidArgument(String)
+
+    public var errorDescription: String? {
+        switch self {
+        case .invalidArgument(let message):
+            return message
+        }
     }
 }
 
