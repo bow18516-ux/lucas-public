@@ -1,4 +1,5 @@
 import AppKit
+import JaplosClient
 import JaplosProtocol
 import SwiftUI
 
@@ -274,29 +275,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    /// Records abnormal exits to /tmp so a launch failure leaves evidence even
-    /// when the system does not write a crash report.
+    /// Records abnormal exits under ~/Library/Logs/Lucas so a launch failure
+    /// leaves evidence even when the system writes no crash report.
     fileprivate static func installCrashHandlers() {
         NSSetUncaughtExceptionHandler { exception in
             AppLog.write("UNCAUGHT \(exception.name.rawValue): \(exception.reason ?? "")")
         }
-        let handler: @convention(c) (Int32) -> Void = { signalNumber in
-            let path = "/tmp/lucas-crash.log"
-            let fd = open(path, O_WRONLY | O_APPEND | O_CREAT, 0o644)
-            if fd >= 0 {
-                let line = "signal \(signalNumber) pid \(getpid())\n"
-                _ = line.withCString { write(fd, $0, strlen($0)) }
-                close(fd)
-            }
-            signal(signalNumber, SIG_DFL)
-            raise(signalNumber)
-        }
-        signal(SIGABRT, handler)
-        signal(SIGSEGV, handler)
-        signal(SIGBUS, handler)
-        signal(SIGILL, handler)
-        signal(SIGFPE, handler)
-        signal(SIGTRAP, handler)
+        // The signal handler only calls write(2) on a descriptor opened here.
+        CrashLog.install()
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
