@@ -178,6 +178,25 @@ final class ApprovalSafetyTests: XCTestCase {
         XCTAssertEqual(try reopened.database.scalarInt("SELECT COUNT(*) FROM tool_invocations;"), 1)
     }
 
+    func testEveryRetiredOperationReturnsNotFound() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("lucas-retired-ops-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let core = try KernelCore(storePath: root.appendingPathComponent("kernel.sqlite3").path, workspace: root)
+        XCTAssertGreaterThan(KernelRetiredOperations.all.count, 30)
+        for operation in KernelRetiredOperations.all {
+            let response = await core.handle(KernelRequest(operation: operation))
+            XCTAssertEqual(response.failure?.code, "not_found", operation.rawValue)
+        }
+        // The App writes snapshots through the canonical upsert, which must stay.
+        let kept = await core.handle(KernelRequest(
+            operation: .contextSnapshotsUpsert,
+            arguments: .object(["id": .string("snap-1"), "record": .object([:])])
+        ))
+        XCTAssertNotEqual(kept.failure?.code, "not_found")
+    }
+
     func testShellLargeOutputIsTruncatedInsteadOfTimingOut() async throws {
         let tool = ShellTool()
         let output = try await tool.invoke(

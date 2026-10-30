@@ -35,5 +35,20 @@ enum KernelRetiredOperations {
         .mailConnectionConfigure,
         .mailConnectionConnect,
         .mailConnectionDisconnect,
+        // Q1: unused ledgers stay in the schema, but the RPC is no longer served.
+        // `context.snapshots.upsert` is intentionally kept: the App writes it.
+        .deliveriesList,
+        .deliveriesUpsert,
+        .situationsList,
+        .situationsUpsert,
+        .subscriptionsList,
+        .subscriptionsUpsert,
+        .capabilityDelegationsList,
+        .capabilityDelegationsUpsert,
+        .contextSnapshotsList,
+        .toolArtifactsList,
+        .toolArtifactsUpsert,
+        .modulesList,
+        .modulesSet,
     ]
 }
