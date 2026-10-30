@@ -227,7 +227,7 @@ struct TopBar: View {
                         .font(.system(size: 14))
                         .foregroundStyle(Theme.textSecondary)
                 }
-                .buttonStyle(.borderless)
+                .buttonStyle(.pressable)
                 .overlay(alignment: .topTrailing) {
                     if updateService.updateAvailable {
                         Circle()
@@ -264,7 +264,7 @@ struct TopBar: View {
                     .font(.system(size: 11))
                     .foregroundStyle(Theme.textSecondary)
             }
-            .buttonStyle(.borderless)
+            .buttonStyle(.pressable)
         }
         .padding(.horizontal, DashboardLayout.outerMargin)
         .padding(.top, DashboardLayout.topBarTopPadding)
@@ -467,14 +467,14 @@ struct MemoryCard: View {
                     draft = ""
                     Task { await model.rememberNote(text) }
                 }
-                .buttonStyle(.borderless)
+                .buttonStyle(.pressable)
                 .font(.system(size: 10))
                 .foregroundStyle(Theme.accent)
                 .disabled(draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 Button("记上条") {
                     Task { await model.rememberLatestUserMessage() }
                 }
-                .buttonStyle(.borderless)
+                .buttonStyle(.pressable)
                 .font(.system(size: 10))
                 .foregroundStyle(Theme.textSecondary)
             }
@@ -563,7 +563,7 @@ struct KnowledgeCard: View {
                                             .font(.system(size: 9))
                                             .foregroundStyle(Theme.textSecondary.opacity(0.7))
                                     }
-                                    .buttonStyle(.borderless)
+                                    .buttonStyle(.pressable)
                                     .help("删除")
                                 }
                             }
@@ -594,7 +594,7 @@ struct KnowledgeCard: View {
                         bodyDraft = ""
                         Task { await model.upsertKnowledgeDocument(title: title, body: body) }
                     }
-                    .buttonStyle(.borderless)
+                    .buttonStyle(.pressable)
                     .font(.system(size: 10))
                     .foregroundStyle(Theme.accent)
                     .disabled(titleDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
@@ -674,7 +674,7 @@ struct CalendarCard: View {
                     Button { monthOffset += 1 } label: { Image(systemName: "chevron.right") }
                 }
                 .font(.system(size: 10))
-                .buttonStyle(.borderless)
+                .buttonStyle(.pressable)
                 .foregroundStyle(Theme.textSecondary)
             }
 
@@ -858,7 +858,7 @@ struct CenterColumn: View {
                     .frame(width: 28, height: 28)
                     .background(Color.white.opacity(0.05), in: Circle())
             }
-            .buttonStyle(.borderless)
+            .buttonStyle(.pressable)
 
             if speech.isRecording {
                 HStack(spacing: 7) {
@@ -888,7 +888,7 @@ struct CenterColumn: View {
                     .font(.system(size: 11))
                     .foregroundStyle(speech.isRecording ? Color.red : Theme.textSecondary.opacity(0.8))
             }
-            .buttonStyle(.borderless)
+            .buttonStyle(.pressable)
             .help(speech.isRecording ? "停止并发送" : "语音输入")
 
             Button {
@@ -899,7 +899,7 @@ struct CenterColumn: View {
                     .font(.system(size: 11))
                     .foregroundStyle(voice.enabled ? (voice.isSpeaking ? Theme.accent : Theme.textSecondary.opacity(0.8)) : Theme.textSecondary.opacity(0.4))
             }
-            .buttonStyle(.borderless)
+            .buttonStyle(.pressable)
             .help(voice.enabled ? "关闭语音播报" : "开启语音播报")
 
             HStack(spacing: 5) {
@@ -923,7 +923,7 @@ struct CenterColumn: View {
                         .frame(width: 28, height: 28)
                         .background(Theme.accent, in: Circle())
                 }
-                .buttonStyle(.borderless)
+                .buttonStyle(.pressable)
             } else {
                 Button(action: sendDraft) {
                     Image(systemName: "arrow.up")
@@ -935,7 +935,7 @@ struct CenterColumn: View {
                             in: Circle()
                         )
                 }
-                .buttonStyle(.borderless)
+                .buttonStyle(.pressable)
                 .disabled(draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
         }
@@ -1003,7 +1003,7 @@ struct TurnRow: View {
                         Label("复制", systemImage: "doc.on.doc")
                             .font(.system(size: 10))
                     }
-                    .buttonStyle(.borderless)
+                    .buttonStyle(.pressable)
                     .foregroundStyle(Theme.textSecondary)
                 }
 
@@ -1326,7 +1326,7 @@ struct RightColumn: View {
                 Spacer()
             }
             .font(.system(size: 10))
-            .buttonStyle(.borderless)
+            .buttonStyle(.pressable)
             .foregroundStyle(Theme.textSecondary)
         }
         .panel()

@@ -127,7 +127,7 @@ struct CodeBlockView: View {
                     Label(copied ? "已复制" : "复制", systemImage: copied ? "checkmark" : "doc.on.doc")
                         .font(.system(size: 10))
                 }
-                .buttonStyle(.borderless)
+                .buttonStyle(.pressable)
                 .foregroundStyle(.secondary)
             }
             .padding(.horizontal, 10)

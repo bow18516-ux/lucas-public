@@ -96,7 +96,7 @@ struct SettingsScreen: View {
                 }
                 .foregroundStyle(Theme.accent)
             }
-            .buttonStyle(.borderless)
+            .buttonStyle(.pressable)
             .padding(.horizontal, 18)
             .padding(.top, 54)
             .padding(.bottom, 22)
@@ -145,7 +145,7 @@ struct SettingsScreen: View {
                             }
                         }
                     }
-                    .buttonStyle(.borderless)
+                    .buttonStyle(.pressable)
                 }
             }
             .padding(.horizontal, 10)
@@ -206,7 +206,7 @@ struct SettingsHeader: View {
                     .foregroundStyle(Theme.textPrimary)
                 Spacer()
                 Button("Esc 返回") { model.settingsPresented = false }
-                    .buttonStyle(.borderless)
+                    .buttonStyle(.pressable)
                     .font(.system(size: SettingsMetrics.cardSubtitleSize))
                     .foregroundStyle(Theme.textSecondary)
             }
@@ -270,7 +270,7 @@ struct ModelSettingsPane: View {
                     Label("刷新", systemImage: "arrow.clockwise")
                         .font(.system(size: SettingsMetrics.cardSubtitleSize))
                 }
-                .buttonStyle(.borderless)
+                .buttonStyle(.pressable)
                 .foregroundStyle(Theme.textSecondary)
             }
 
@@ -325,7 +325,7 @@ struct ModelSettingsPane: View {
                     .font(.system(size: SettingsMetrics.cardSubtitleSize))
                     .foregroundStyle(Theme.accent)
             }
-            .buttonStyle(.borderless)
+            .buttonStyle(.pressable)
             .disabled(model.isTestingModel || !model.hasStoredConnection)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -353,7 +353,7 @@ struct ModelSettingsPane: View {
                     model.hasStoredConnection = false
                     savedNote = "已清空表单，填写后点保存并使用"
                 }
-                    .buttonStyle(.borderless)
+                    .buttonStyle(.pressable)
                     .font(.system(size: SettingsMetrics.cardSubtitleSize))
                     .foregroundStyle(Theme.accent)
                 Button {
@@ -362,7 +362,7 @@ struct ModelSettingsPane: View {
                     Label("刷新", systemImage: "arrow.clockwise")
                         .font(.system(size: SettingsMetrics.cardSubtitleSize))
                 }
-                .buttonStyle(.borderless)
+                .buttonStyle(.pressable)
                 .foregroundStyle(Theme.textSecondary)
             }
 
@@ -406,7 +406,7 @@ struct ModelSettingsPane: View {
                             }
                         }
                     }
-                        .buttonStyle(.borderless)
+                        .buttonStyle(.pressable)
                         .font(.system(size: SettingsMetrics.cardSubtitleSize))
                         .foregroundStyle(Theme.textPrimary)
                         .padding(.horizontal, 10)
@@ -503,7 +503,7 @@ struct ModelSettingsPane: View {
                     Button("刷新列表") {
                         Task { await model.refreshModels() }
                     }
-                    .buttonStyle(.borderless)
+                    .buttonStyle(.pressable)
                     .font(.system(size: SettingsMetrics.captionSize))
                     .foregroundStyle(Theme.textSecondary)
                 }
@@ -580,7 +580,7 @@ struct ModelSettingsPane: View {
                     .padding(.vertical, 8)
                     .background(Theme.accent, in: RoundedRectangle(cornerRadius: 7))
             }
-            .buttonStyle(.borderless)
+            .buttonStyle(.pressable)
         }
         .padding(.horizontal, SettingsMetrics.pagePadding)
         .padding(.vertical, 12)
@@ -711,7 +711,7 @@ private struct ModelRouteRow: View {
             }
             Spacer()
             Button("选用") { onSelect(title) }
-                .buttonStyle(.borderless)
+                .buttonStyle(.pressable)
                 .font(.system(size: SettingsMetrics.cardSubtitleSize))
                 .foregroundStyle(Theme.accent)
         }
@@ -773,7 +773,7 @@ struct ToolsSettingsPane: View {
                     Label("刷新", systemImage: "arrow.clockwise")
                         .font(.system(size: SettingsMetrics.captionSize))
                 }
-                .buttonStyle(.borderless)
+                .buttonStyle(.pressable)
                 .foregroundStyle(Theme.accent)
             }
             .padding(.horizontal, SettingsMetrics.pagePadding)
@@ -851,7 +851,7 @@ struct ToolsSettingsPane: View {
                         .font(.system(size: SettingsMetrics.captionSize))
                         .foregroundStyle(Theme.textSecondary)
                 }
-                .buttonStyle(.borderless)
+                .buttonStyle(.pressable)
                 .help("复制工具名")
                 Button {
                     if isOpen { expanded.remove(tool.name) } else { expanded.insert(tool.name) }
@@ -860,7 +860,7 @@ struct ToolsSettingsPane: View {
                         .font(.system(size: SettingsMetrics.captionSize))
                         .foregroundStyle(Theme.textSecondary)
                 }
-                .buttonStyle(.borderless)
+                .buttonStyle(.pressable)
             }
             if isOpen {
                 VStack(alignment: .leading, spacing: 6) {
@@ -936,7 +936,7 @@ struct SkillsSettingsPane: View {
                     Label("刷新", systemImage: "arrow.clockwise")
                         .font(.system(size: SettingsMetrics.captionSize))
                 }
-                .buttonStyle(.borderless)
+                .buttonStyle(.pressable)
                 .foregroundStyle(Theme.accent)
                 Button {
                     NSWorkspace.shared.open(BuiltinSkillCatalog.supportSkillsRoot())
@@ -944,7 +944,7 @@ struct SkillsSettingsPane: View {
                     Label("打开目录", systemImage: "folder")
                         .font(.system(size: SettingsMetrics.captionSize))
                 }
-                .buttonStyle(.borderless)
+                .buttonStyle(.pressable)
                 .foregroundStyle(Theme.accent)
             }
             .padding(.horizontal, SettingsMetrics.pagePadding)
@@ -1012,7 +1012,7 @@ struct SkillsSettingsPane: View {
                                             )
                                     )
                                 }
-                                .buttonStyle(.borderless)
+                                .buttonStyle(.pressable)
                             }
                         }
                         .padding(.horizontal, SettingsMetrics.pagePadding)
@@ -1194,7 +1194,7 @@ struct ChannelsSettingsPane: View {
                         .font(.system(size: SettingsMetrics.bodySize))
                         .foregroundStyle(Theme.textSecondary)
                 }
-                .buttonStyle(.borderless)
+                .buttonStyle(.pressable)
             }
 
             Text("官方 ClawBot / iLink（ilinkai.weixin.qq.com）。不需要 AppID。真实扫码连通需老板现场扫码验证。")
@@ -1282,7 +1282,7 @@ struct ChannelsSettingsPane: View {
                         .font(.system(size: SettingsMetrics.bodySize))
                         .foregroundStyle(Theme.textSecondary)
                 }
-                .buttonStyle(.borderless)
+                .buttonStyle(.pressable)
                 .disabled(busy)
             }
 
@@ -1553,7 +1553,7 @@ struct UpdatesSettingsPane: View {
                     .font(.system(size: SettingsMetrics.bodySize))
                     .foregroundStyle(Theme.accent)
             }
-            .buttonStyle(.borderless)
+            .buttonStyle(.pressable)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .panel(padding: SettingsMetrics.cardPadding)
@@ -1708,7 +1708,7 @@ struct VoiceSettingsPane: View {
                             .padding(.vertical, 5)
                             .background(Theme.accent, in: RoundedRectangle(cornerRadius: 6))
                     }
-                    .buttonStyle(.borderless)
+                    .buttonStyle(.pressable)
                 }
                 Text(voice.volcengineConfigured
                      ? "已配置火山凭证；未填完整或合成失败时仍用系统语音。"
@@ -1760,7 +1760,7 @@ struct VoiceSettingsPane: View {
                             .padding(.vertical, 5)
                             .background(Theme.accent, in: RoundedRectangle(cornerRadius: 6))
                     }
-                    .buttonStyle(.borderless)
+                    .buttonStyle(.pressable)
 
                     if voice.isSpeaking {
                         HStack(spacing: 5) {
@@ -1789,12 +1789,12 @@ struct VoiceSettingsPane: View {
                         voice.rate = 0.50
                         voice.pitch = 1.0
                     }
-                    .buttonStyle(.borderless)
+                    .buttonStyle(.pressable)
                     .font(.system(size: SettingsMetrics.cardSubtitleSize))
                     .foregroundStyle(Theme.accent)
                     if voice.isSpeaking {
                         Button("停止播报") { voice.stop() }
-                            .buttonStyle(.borderless)
+                            .buttonStyle(.pressable)
                             .font(.system(size: SettingsMetrics.cardSubtitleSize))
                             .foregroundStyle(Color.red.opacity(0.85))
                     }
@@ -1955,7 +1955,7 @@ struct AlarmsSettingsPane: View {
                                     fireAt = Date().addingTimeInterval(3600)
                                 }
                             }
-                            .buttonStyle(.borderless)
+                            .buttonStyle(.pressable)
                             .font(.system(size: SettingsMetrics.cardSubtitleSize))
                             .foregroundStyle(Color.black.opacity(0.85))
                             .padding(.horizontal, 12)
@@ -2029,7 +2029,7 @@ struct AlarmsSettingsPane: View {
                                             .font(.system(size: SettingsMetrics.captionSize))
                                             .foregroundStyle(Color.red.opacity(0.8))
                                     }
-                                    .buttonStyle(.borderless)
+                                    .buttonStyle(.pressable)
                                 }
                                 .padding(.vertical, 4)
                             }
@@ -2157,7 +2157,7 @@ struct MCPSettingsPane: View {
                     Label("刷新", systemImage: "arrow.clockwise")
                         .font(.system(size: SettingsMetrics.cardSubtitleSize))
                 }
-                .buttonStyle(.borderless)
+                .buttonStyle(.pressable)
                 .foregroundStyle(Theme.textSecondary)
             }
 
@@ -2214,13 +2214,13 @@ struct MCPSettingsPane: View {
                 Button("Echo (stdio)") {
                     applyPresetEcho()
                 }
-                .buttonStyle(.borderless)
+                .buttonStyle(.pressable)
                 .font(.system(size: SettingsMetrics.captionSize))
                 .foregroundStyle(Theme.accent)
                 Button("HTTP 示例") {
                     applyPresetHTTP()
                 }
-                .buttonStyle(.borderless)
+                .buttonStyle(.pressable)
                 .font(.system(size: SettingsMetrics.captionSize))
                 .foregroundStyle(Theme.accent)
             }
@@ -2253,7 +2253,7 @@ struct MCPSettingsPane: View {
                         .padding(.vertical, 5)
                         .background(Theme.accent, in: RoundedRectangle(cornerRadius: 6))
                 }
-                .buttonStyle(.borderless)
+                .buttonStyle(.pressable)
                 .disabled(busy || name.isEmpty || (url.isEmpty && command.isEmpty))
             }
 
@@ -2287,7 +2287,7 @@ struct MCPSettingsPane: View {
                         Button("打开授权页") {
                             openAuthURL(oauthAuthURL)
                         }
-                        .buttonStyle(.borderless)
+                        .buttonStyle(.pressable)
                         .font(.system(size: SettingsMetrics.captionSize))
                         .foregroundStyle(Theme.accent)
                         .disabled(oauthAuthURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
@@ -2326,7 +2326,7 @@ struct MCPSettingsPane: View {
                     Label("刷新", systemImage: "arrow.clockwise")
                         .font(.system(size: SettingsMetrics.cardSubtitleSize))
                 }
-                .buttonStyle(.borderless)
+                .buttonStyle(.pressable)
                 .foregroundStyle(Theme.textSecondary)
             }
 
@@ -2383,7 +2383,7 @@ struct MCPSettingsPane: View {
                                             .font(.system(size: SettingsMetrics.captionSize))
                                             .foregroundStyle(Theme.accent)
                                     }
-                                    .buttonStyle(.borderless)
+                                    .buttonStyle(.pressable)
                                     .help("OAuth")
                                 }
                                 Button {
@@ -2393,7 +2393,7 @@ struct MCPSettingsPane: View {
                                         .font(.system(size: SettingsMetrics.captionSize))
                                         .foregroundStyle(Theme.accent)
                                 }
-                                .buttonStyle(.borderless)
+                                .buttonStyle(.pressable)
                                 .help("重新连接")
                                 Button {
                                     Task { await removeServer(server) }
@@ -2402,7 +2402,7 @@ struct MCPSettingsPane: View {
                                         .font(.system(size: SettingsMetrics.captionSize))
                                         .foregroundStyle(Theme.textSecondary)
                                 }
-                                .buttonStyle(.borderless)
+                                .buttonStyle(.pressable)
                             }
 
                             if server.isHTTP, expandedServerID == server.id {
@@ -2490,7 +2490,7 @@ struct MCPSettingsPane: View {
                         openAuthURL(servers[idx].oauthAuthURL)
                     }
                 }
-                .buttonStyle(.borderless)
+                .buttonStyle(.pressable)
                 .font(.system(size: SettingsMetrics.captionSize))
                 .foregroundStyle(Theme.accent)
             }
@@ -2502,7 +2502,7 @@ struct MCPSettingsPane: View {
             Button("保存 OAuth") {
                 Task { await persist() }
             }
-            .buttonStyle(.borderless)
+            .buttonStyle(.pressable)
             .font(.system(size: SettingsMetrics.captionSize))
             .foregroundStyle(Theme.accent)
         }
