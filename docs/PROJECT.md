@@ -1,6 +1,6 @@
 # Lucas Agent 项目文档
 
-> 适用版本：**0.5.4 (build 202610301026)** · 最后更新：2026-10-30
+> 适用版本：**0.5.5 (build 202610310400)** · 最后更新：2026-10-31
 > 读者：接手开发、构建、发布或运维的工程师。
 > 目标：读完这一篇，能独立完成「改代码 → 构建 → 公证 → 发布 → 用户更新」全流程。
 
@@ -41,12 +41,12 @@
 |---|---|
 | 产品名 | Lucas Agent |
 | Bundle ID | `com.lucas.app` |
-| 当前版本 | `0.5.4` |
+| 当前版本 | `0.5.5` |
 | Bundle 版本 | `202610301026`（时间戳） |
 | 最低系统 | macOS 13.0 |
 | 架构 | arm64 |
 | 更新源 | `https://updates.okcue.app/lucas/appcast.xml` |
-| 下载页文件 | `https://updates.okcue.app/lucas/Lucas-0.5.4.dmg` |
+| 下载页文件 | `https://updates.okcue.app/lucas/Lucas-0.5.5.dmg` |
 | 代码位置 | `~/Desktop/japlosv2/clone`（SwiftPM 包） |
 | 原版参考 | `../REPORT.md`、`../extracted/` |
 
@@ -1301,7 +1301,7 @@ LUCAS_CHECK_DEEP=1 LUCAS_CHECK_RESOLVE=43.132.224.242 ./scripts/check-updates.sh
 
 ```bash
 # 一次性检查
-./scripts/check-updates.sh 0.5.4
+./scripts/check-updates.sh 0.5.5
 
 # 每 6 小时自动检查（普通终端执行）
 ./scripts/install-monitor.sh install
@@ -1351,9 +1351,9 @@ xcrun stapler validate build/Lucas.app
 | 用途 | URL |
 |---|---|
 | appcast | `https://updates.okcue.app/lucas/appcast.xml` |
-| 最新 DMG | `https://updates.okcue.app/lucas/Lucas-0.5.4.dmg` |
-| 最新 ZIP | `https://updates.okcue.app/lucas/Lucas-0.5.4.zip` |
-| 更新说明 | `https://updates.okcue.app/lucas/Lucas-0.5.4.html` |
+| 最新 DMG | `https://updates.okcue.app/lucas/Lucas-0.5.5.dmg` |
+| 最新 ZIP | `https://updates.okcue.app/lucas/Lucas-0.5.5.zip` |
+| 更新说明 | `https://updates.okcue.app/lucas/Lucas-0.5.5.html` |
 
 ### 20.3 术语
 

@@ -8,9 +8,9 @@
 | 用途 | URL |
 |---|---|
 | appcast | `https://updates.okcue.app/lucas/appcast.xml` |
-| 最新 DMG | `https://updates.okcue.app/lucas/Lucas-0.5.4.dmg` |
-| 最新 ZIP | `https://updates.okcue.app/lucas/Lucas-0.5.4.zip` |
-| 更新说明 | `https://updates.okcue.app/lucas/Lucas-0.5.4.html` |
+| 最新 DMG | `https://updates.okcue.app/lucas/Lucas-0.5.5.dmg` |
+| 最新 ZIP | `https://updates.okcue.app/lucas/Lucas-0.5.5.zip` |
+| 更新说明 | `https://updates.okcue.app/lucas/Lucas-0.5.5.html` |
 
 服务器：`ubuntu@43.132.224.242`，目录 `/var/www/updates/lucas/`，nginx + Let's Encrypt。
 
@@ -20,7 +20,7 @@
 cd ~/Desktop/japlosv2/clone
 
 # 1) 写更新说明（可选；不写会自动从 git 提交生成）
-cat > updates/Lucas-0.5.4.html <<'EOF'
+cat > updates/Lucas-0.5.5.html <<'EOF'
 <ul>
 <li>修复……</li>
 <li>新增……</li>
@@ -28,7 +28,7 @@ cat > updates/Lucas-0.5.4.html <<'EOF'
 EOF
 
 # 2) 一条命令：构建 → 签名 → 公证 → staple → zip/dmg → appcast → 上传
-./scripts/publish.sh 0.5.4
+./scripts/publish.sh 0.5.5
 ```
 
 脚本会读取 `Config/release.env`（已 gitignore），其中包含：
@@ -41,18 +41,18 @@ EOF
 ## 监控
 
 ```bash
-./scripts/check-updates.sh 0.5.4
+./scripts/check-updates.sh 0.5.5
 ./scripts/install-monitor.sh install   # 每 6 小时检查，日志在 ~/Library/Logs/Lucas
 ```
 
 ## 发布后自检
 
 ```bash
-./scripts/check-updates.sh 0.5.4
-LUCAS_CHECK_DEEP=1 LUCAS_CHECK_RESOLVE=43.132.224.242 ./scripts/check-updates.sh 0.5.4
+./scripts/check-updates.sh 0.5.5
+LUCAS_CHECK_DEEP=1 LUCAS_CHECK_RESOLVE=43.132.224.242 ./scripts/check-updates.sh 0.5.5
 curl -sI https://updates.okcue.app/lucas/appcast.xml | head -3
 curl -s https://updates.okcue.app/lucas/appcast.xml | head -20
-shasum -a 256 updates/Lucas-0.5.4.zip
+shasum -a 256 updates/Lucas-0.5.5.zip
 codesign -dv --verbose=4 build/Lucas.app
 spctl -a -t exec -vv build/Lucas.app
 ```
