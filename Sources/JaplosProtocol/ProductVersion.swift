@@ -2,7 +2,7 @@ import Foundation
 
 /// Single marketing version for the app, daemon, and MCP client info.
 public enum ProductVersion {
-    public static let marketing = "0.5.4"
+    public static let marketing = "0.5.5"
 }
 
 /// Build identity of the process: the packaged `CFBundleVersion` (not the
