@@ -213,6 +213,15 @@ sign_inside_out() {
     if [ -d "$sparkle" ]; then
         codesign "${flags[@]}" "$sparkle"
     fi
+    # SPM resource bundles (resource-only, but still code-signed units under --deep).
+    for bundle in \
+        "$CONTENTS/Resources/JaplosClone_JaplosRuntime.bundle" \
+        "$CONTENTS/MacOS/JaplosClone_JaplosRuntime.bundle"
+    do
+        if [ -d "$bundle" ]; then
+            codesign "${flags[@]}" "$bundle"
+        fi
+    done
     # Helper daemon: no app entitlements.
     if [ -f "$CONTENTS/MacOS/lucasd" ]; then
         codesign "${flags[@]}" "$CONTENTS/MacOS/lucasd"
