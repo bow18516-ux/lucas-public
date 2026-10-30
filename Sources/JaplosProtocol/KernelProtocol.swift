@@ -36,7 +36,10 @@ public extension KernelOperation {
 
     // Model routes / speech profiles (Japlos store clusters)
     static let modelRoutesList = KernelOperation("model.routes.list")
+    static let modelRoutesSet = KernelOperation("model.routes.set")
+    static let modelRoutesDelete = KernelOperation("model.routes.delete")
     static let speechProfilesList = KernelOperation("speech.profiles.list")
+    static let speechProfilesSet = KernelOperation("speech.profiles.set")
 
     // Chat
     static let chatSessionCreate = KernelOperation("chat.session.create")

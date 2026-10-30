@@ -120,6 +120,8 @@ public enum CapabilityRouting {
             return Capability.toolManage
         case .modelTest, .modelCatalog, .modelRoutesList, .speechProfilesList:
             return Capability.modelInvoke
+        case .modelRoutesSet, .modelRoutesDelete, .speechProfilesSet:
+            return Capability.root
         default:
             return Capability.root
         }

@@ -379,12 +379,14 @@ final class AppModel: ObservableObject {
 
     func skipOnboarding() {
         UserDefaults.standard.set(true, forKey: Self.onboardingSkippedKey)
+        OnboardingPrefs.markSkipped()
         onboardingPresented = false
     }
 
     func resetOnboarding() {
         UserDefaults.standard.removeObject(forKey: Self.onboardingSkippedKey)
         UserDefaults.standard.removeObject(forKey: Self.onboardingCompletedKey)
+        OnboardingPrefs.reset()
         settingsPresented = false
         onboardingPresented = true
     }

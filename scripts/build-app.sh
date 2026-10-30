@@ -51,6 +51,13 @@ if [ -d "$PROMPT_SRC/BuiltinSkills" ]; then
     rm -rf "$CONTENTS/Resources/BuiltinSkills"
     cp -R "$PROMPT_SRC/BuiltinSkills" "$CONTENTS/Resources/BuiltinSkills"
 fi
+
+# First-run guidance tones (optional preview in onboarding)
+AWAKEN_SRC="$ROOT/Sources/JaplosApp/Resources/Awakening"
+if [ -d "$AWAKEN_SRC" ]; then
+    rm -rf "$CONTENTS/Resources/Awakening"
+    cp -R "$AWAKEN_SRC" "$CONTENTS/Resources/Awakening"
+fi
 chmod +x "$CONTENTS/MacOS/Lucas" "$CONTENTS/MacOS/lucasd"
 
 # Sparkle ships as a framework next to the executable.

@@ -39,6 +39,9 @@ let package = Package(
             dependencies: [
                 "JaplosProtocol",
                 .product(name: "Sparkle", package: "Sparkle"),
+            ],
+            resources: [
+                .copy("Resources/Awakening"),
             ]
         ),
         .testTarget(
