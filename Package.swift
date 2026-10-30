@@ -10,6 +10,7 @@ let package = Package(
         .library(name: "JaplosProtocol", targets: ["JaplosProtocol"]),
         .library(name: "JaplosKernel", targets: ["JaplosKernel"]),
         .library(name: "JaplosRuntime", targets: ["JaplosRuntime"]),
+        .library(name: "JaplosClient", targets: ["JaplosClient"]),
     ],
     dependencies: [
         .package(url: "https://github.com/sparkle-project/Sparkle", from: "2.10.1"),
@@ -35,6 +36,10 @@ let package = Package(
                 .copy("Resources/SeedManifest.json"),
             ]
         ),
+        .target(
+            name: "JaplosClient",
+            dependencies: ["JaplosProtocol"]
+        ),
         .executableTarget(
             name: "japlosd",
             dependencies: ["JaplosKernel", "JaplosRuntime"]
@@ -43,6 +48,7 @@ let package = Package(
             name: "JaplosApp",
             dependencies: [
                 "JaplosProtocol",
+                "JaplosClient",
                 .product(name: "Sparkle", package: "Sparkle"),
             ],
             resources: [
@@ -56,6 +62,10 @@ let package = Package(
         .testTarget(
             name: "JaplosKernelTests",
             dependencies: ["JaplosKernel", "JaplosProtocol"]
+        ),
+        .testTarget(
+            name: "JaplosClientTests",
+            dependencies: ["JaplosClient", "JaplosProtocol"]
         ),
         .testTarget(
             name: "JaplosRuntimeTests",

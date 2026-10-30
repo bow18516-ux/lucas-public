@@ -26,7 +26,7 @@ public final class UnixSocketServer: @unchecked Sendable {
             case .cannotCreateSocket(let code): return "Cannot create socket: errno \(code)"
             case .cannotBind(let path, let code): return "Cannot bind socket at \(path): errno \(code)"
             case .cannotListen(let code): return "Cannot listen on socket: errno \(code)"
-            case .alreadyRunning: return "Server is already running"
+            case .alreadyRunning: return "Another lucasd is already serving this socket"
             }
         }
     }
@@ -41,6 +41,9 @@ public final class UnixSocketServer: @unchecked Sendable {
     private var running = false
     /// Set when start() had to unlink + rebind after an initial bind failure.
     public private(set) var recoveredFromBindFailure = false
+    /// inode of the socket file this daemon created. `stop()` only unlinks that
+    /// exact file, so a slow shutdown can never delete a newer daemon's socket.
+    private var boundInode: ino_t = 0
 
     public init(
         path: String,
@@ -61,7 +64,7 @@ public final class UnixSocketServer: @unchecked Sendable {
         defer { lock.unlock() }
         guard !running else { throw ServerError.alreadyRunning }
 
-        removeStaleSocket()
+        try removeStaleSocket()
 
         let fd = socket(AF_UNIX, SOCK_STREAM, 0)
         guard fd >= 0 else { throw ServerError.cannotCreateSocket(errno) }
@@ -105,6 +108,10 @@ public final class UnixSocketServer: @unchecked Sendable {
         }
 
         chmod(path, 0o600)
+        var bound = stat()
+        if stat(path, &bound) == 0 {
+            boundInode = bound.st_ino
+        }
 
         guard listen(fd, 16) == 0 else {
             let code = errno
@@ -131,15 +138,47 @@ public final class UnixSocketServer: @unchecked Sendable {
         listenFD = -1
         lock.unlock()
         if fd >= 0 { close(fd) }
+        var info = stat()
+        if boundInode != 0, stat(path, &info) == 0, info.st_ino == boundInode {
+            unlink(path)
+        }
+        boundInode = 0
+    }
+
+    private func removeStaleSocket() throws {
+        var info = stat()
+        guard stat(path, &info) == 0 else { return }
+        guard (info.st_mode & S_IFMT) == S_IFSOCK else { return }
+        if isSocketServing() {
+            throw ServerError.alreadyRunning
+        }
         unlink(path)
     }
 
-    private func removeStaleSocket() {
-        var info = stat()
-        guard stat(path, &info) == 0 else { return }
-        if (info.st_mode & S_IFMT) == S_IFSOCK {
-            unlink(path)
+    /// True when something is accepting connections on `path`. A stale socket
+    /// file fails to connect, so it is safe to unlink; a live daemon is not.
+    private func isSocketServing() -> Bool {
+        guard var address = socketAddress() else { return false }
+        let fd = socket(AF_UNIX, SOCK_STREAM, 0)
+        guard fd >= 0 else { return false }
+        defer { close(fd) }
+        let result = withUnsafePointer(to: &address) { pointer in
+            pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) { sockaddrPointer in
+                connect(fd, sockaddrPointer, socklen_t(MemoryLayout<sockaddr_un>.size))
+            }
         }
+        return result == 0
+    }
+
+    private func socketAddress() -> sockaddr_un? {
+        var address = sockaddr_un()
+        address.sun_family = sa_family_t(AF_UNIX)
+        let pathBytes = Array(path.utf8)
+        guard pathBytes.count < MemoryLayout.size(ofValue: address.sun_path) else { return nil }
+        withUnsafeMutableBytes(of: &address.sun_path) { raw in
+            raw.copyBytes(from: pathBytes)
+        }
+        return address
     }
 
     private func acceptLoop() {

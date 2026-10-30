@@ -150,6 +150,15 @@ do {
         log("MCP tools: \(core.mcpDefinitions.count)")
     }
 
+    core.setShutdownHandler {
+        log("shutdown requested by client")
+        // Let the response frame leave before the process goes away.
+        DispatchQueue.global(qos: .userInitiated).asyncAfter(deadline: .now() + 0.05) {
+            server.stop()
+            exit(0)
+        }
+    }
+
     log("lucasd \(core.version) listening on \(options.socketPath)")
     log("store: \(options.storePath)")
     log("tools: \(core.tools.definitions().map(\.name).joined(separator: ", "))")

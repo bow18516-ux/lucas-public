@@ -1,6 +1,7 @@
 import Combine
 import Foundation
 import JaplosProtocol
+import JaplosClient
 import PDFKit
 import AppKit
 

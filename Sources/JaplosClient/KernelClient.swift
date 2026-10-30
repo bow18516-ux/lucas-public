@@ -123,6 +123,13 @@ public final class KernelClient: @unchecked Sendable {
         (try? perform(.kernelStatus, arguments: .object([:]), timeout: timeout))?["version"]?.stringValue
     }
 
+    /// Ask the daemon to exit. Deliberately does not go through `call`, which
+    /// would restart a daemon that happened to be down.
+    @discardableResult
+    public func shutdown(timeout: TimeInterval = 2) -> Bool {
+        (try? perform(.kernelShutdown, arguments: .object([:]), timeout: timeout)) != nil
+    }
+
     /// Full `kernel.status` payload, used by the build handshake.
     public func daemonStatus(timeout: TimeInterval = 1.5) -> JSONValue? {
         try? perform(.kernelStatus, arguments: .object([:]), timeout: timeout)
@@ -291,15 +298,23 @@ public final class KernelClient: @unchecked Sendable {
 }
 
 public enum DaemonController {
+    /// Serialises launches: concurrent requests that all find a dead socket
+    /// must produce one daemon, not one each.
+    private static let startLock = NSLock()
+
     /// Starts `lucasd` when the socket is not answering yet.
     public static func ensureRunning(
         client: KernelClient,
         logURL: URL? = nil
     ) throws {
+        startLock.lock()
+        defer { startLock.unlock() }
+
+        // Someone may have started it while we waited for the lock.
         if client.ping() {
             if isCurrentBuild(client.daemonStatus()) { return }
-            _ = try? client.perform(.kernelShutdown, arguments: .object([:]), timeout: 2)
-            usleep(300_000)
+            client.shutdown()
+            waitUntilStopped(client: client)
         }
 
         guard let executable = locateDaemon() else {
@@ -338,6 +353,26 @@ public enum DaemonController {
             usleep(120_000)
         }
         throw ClientError.cannotConnect("lucasd 启动超时")
+    }
+
+    /// The old daemon only notices `kernel.shutdown` on its next poll, and it
+    /// must be gone before a replacement binds the socket path. Ping until it
+    /// stops answering (3s), then SIGTERM the pid it reported.
+    static func waitUntilStopped(client: KernelClient, timeout: TimeInterval = 3) {
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            if !client.ping(timeout: 0.4) { return }
+            usleep(100_000)
+        }
+        guard let pid = client.daemonStatus(timeout: 0.4)?["pid"]?.doubleValue, pid > 1 else {
+            return
+        }
+        kill(pid_t(pid), SIGTERM)
+        let hard = Date().addingTimeInterval(2)
+        while Date() < hard {
+            if !client.ping(timeout: 0.4) { return }
+            usleep(100_000)
+        }
     }
 
     /// Marketing version alone cannot tell two builds apart: the daemon must

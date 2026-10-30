@@ -22,6 +22,7 @@ public final class KernelCore: @unchecked Sendable {
     private var _modelHandler: ((KernelRequest) async -> KernelResponse)?
     private var _streamingChatHandler: ((KernelRequest, @escaping (KernelResponse) -> Void, @escaping StreamApprovalProvider) async -> Void)?
     private var _shutdownRequested = false
+    private var _shutdownHandler: (() -> Void)?
 
     public init(storePath: String, workspace: URL? = nil) throws {
         self.store = try KernelStore(path: storePath)
@@ -97,6 +98,12 @@ public final class KernelCore: @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
         return _shutdownRequested
+    }
+
+    /// Called after `kernel.shutdown` is answered; the daemon stops serving and
+    /// exits instead of waiting for the next 0.5s poll.
+    public func setShutdownHandler(_ handler: @escaping () -> Void) {
+        lock.withLock { _shutdownHandler = handler }
     }
 
     public func setChatHandler(_ handler: @escaping (KernelRequest) async -> KernelResponse) {
@@ -190,6 +197,7 @@ public final class KernelCore: @unchecked Sendable {
                 return .success(.object([
                     "version": .string(version),
                     "build": .string(ProductBuild.current),
+                    "pid": .number(Double(getpid())),
                     "executable": .object([
                         "path": .string(ProductBuild.executablePath),
                         "modifiedAt": ProductBuild.executableModifiedAt.map(JSONValue.number) ?? .null,
@@ -209,7 +217,11 @@ public final class KernelCore: @unchecked Sendable {
                 return .success(.object(["pong": .bool(true)]), requestID: requestID)
 
             case .kernelShutdown:
-                lock.withLock { _shutdownRequested = true }
+                let handler: (() -> Void)? = lock.withLock {
+                    _shutdownRequested = true
+                    return _shutdownHandler
+                }
+                handler?()
                 return .success(.object(["shuttingDown": .bool(true)]), requestID: requestID)
 
             case .policyGrantsList:

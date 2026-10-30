@@ -2,6 +2,7 @@ import AppKit
 import SwiftUI
 import UniformTypeIdentifiers
 import JaplosProtocol
+import JaplosClient
 
 /// One typographic + spacing scale for every settings page.
 enum SettingsMetrics {
