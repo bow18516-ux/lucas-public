@@ -65,6 +65,30 @@ enum DaemonError: Error, CustomStringConvertible {
     }
 }
 
+
+/// Create Japlos-shaped Application Support subdirs (empty scaffolds; safe/idempotent).
+func ensureSupportTree(_ support: URL) {
+    let fm = FileManager.default
+    let names = [
+        "self-healing",
+        "credentials",
+        "Caches",
+        "DownloadStaging",
+        "feishu",
+        "Prompts",
+        "Injection",
+        "BuiltinSkills",
+        "bin",
+    ]
+    for name in names {
+        let url = support.appendingPathComponent(name, isDirectory: true)
+        try? fm.createDirectory(at: url, withIntermediateDirectories: true)
+    }
+    let logs = FileManager.default.homeDirectoryForCurrentUser
+        .appendingPathComponent("Library/Logs/Lucas", isDirectory: true)
+    try? fm.createDirectory(at: logs, withIntermediateDirectories: true)
+}
+
 func log(_ message: String) {
     let stamp = ISO8601.string(from: Date())
     FileHandle.standardError.write(Data("[\(stamp)] \(message)\n".utf8))
@@ -74,6 +98,7 @@ do {
     let options = try parseOptions()
     let support = defaultSupportDirectory()
     try FileManager.default.createDirectory(at: support, withIntermediateDirectories: true)
+    ensureSupportTree(support)
 
     let seededPrompts = PromptLibrary.seedOverridesIfNeeded()
     let seededScenes = SceneRouter.seedScenesIfNeeded()

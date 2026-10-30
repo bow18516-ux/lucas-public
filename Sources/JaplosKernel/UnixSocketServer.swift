@@ -175,6 +175,15 @@ public final class UnixSocketServer: @unchecked Sendable {
             return
         }
 
+        if let deny = peerTeamIDDenialReason(client) {
+            let response = KernelResponse.failure(
+                .permissionDenied(deny),
+                requestID: UUID().uuidString
+            )
+            _ = try? write(response, to: client)
+            return
+        }
+
         do {
             let payload = try FrameCodec.readFrame(from: client, timeout: 600)
             let request = try ProtocolCoding.decode(KernelRequest.self, from: payload)
@@ -373,5 +382,65 @@ public final class UnixSocketServer: @unchecked Sendable {
         let result = getsockopt(client, 0 /* SOL_LOCAL */, 0x001 /* LOCAL_PEERCRED */, &credential, &length)
         guard result == 0 else { return false }
         return credential.cr_uid == getuid()
+    }
+
+    /// Optional codesign Team-ID gate. Off unless `LUCAS_REQUIRE_TEAM_ID` is set
+    /// (comma-separated Team IDs; use `adhoc` to allow ad-hoc signed clients).
+    /// Default off so local debug builds keep working.
+    private func peerTeamIDDenialReason(_ client: Int32) -> String? {
+        let raw = ProcessInfo.processInfo.environment["LUCAS_REQUIRE_TEAM_ID"]?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard !raw.isEmpty else { return nil }
+        let allowed = Set(
+            raw.split(separator: ",")
+                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                .filter { !$0.isEmpty }
+        )
+        guard !allowed.isEmpty else { return nil }
+
+        var pid: pid_t = 0
+        var length = socklen_t(MemoryLayout<pid_t>.size)
+        // LOCAL_PEERPID = 0x002 on Darwin
+        let result = getsockopt(client, 0 /* SOL_LOCAL */, 0x002 /* LOCAL_PEERPID */, &pid, &length)
+        guard result == 0, pid > 0 else {
+            return "Cannot resolve kernel client process for Team ID check"
+        }
+
+        var pathBuffer = [CChar](repeating: 0, count: Int(MAXPATHLEN))
+        let pathLen = proc_pidpath(pid, &pathBuffer, UInt32(MAXPATHLEN))
+        guard pathLen > 0 else {
+            return "Cannot resolve executable path for pid \(pid)"
+        }
+        let exePath = String(cString: pathBuffer)
+
+        let task = Process()
+        task.executableURL = URL(fileURLWithPath: "/usr/bin/codesign")
+        task.arguments = ["-dv", "--verbose=2", exePath]
+        let pipe = Pipe()
+        task.standardError = pipe
+        task.standardOutput = pipe
+        do {
+            try task.run()
+            task.waitUntilExit()
+        } catch {
+            return "codesign probe failed for pid \(pid)"
+        }
+
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        let text = String(data: data, encoding: .utf8) ?? ""
+        var team: String?
+        for line in text.split(whereSeparator: \.isNewline) {
+            let s = String(line)
+            if s.hasPrefix("TeamIdentifier=") {
+                team = String(s.dropFirst("TeamIdentifier=".count))
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                break
+            }
+        }
+        let resolved = (team == nil || team == "not set") ? "adhoc" : (team ?? "unknown")
+        if allowed.contains(resolved) || allowed.contains("*") {
+            return nil
+        }
+        return "Kernel client Team ID \(resolved) not in LUCAS_REQUIRE_TEAM_ID allow-list"
     }
 }

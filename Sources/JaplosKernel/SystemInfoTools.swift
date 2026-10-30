@@ -274,11 +274,22 @@ public struct AppSupportPathsTool: KernelTool {
         }
         let logs = FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent("Library/Logs/Lucas", isDirectory: true)
+        func dir(_ name: String) -> JSONValue {
+            .string(home.appendingPathComponent(name, isDirectory: true).path)
+        }
         return .object([
             "applicationSupport": .string(home.path),
             "store": .string(home.appendingPathComponent("kernel.sqlite3").path),
             "socket": .string(home.appendingPathComponent("kernel.sock").path),
-            "selfHealing": .string(home.appendingPathComponent("self-healing", isDirectory: true).path),
+            "selfHealing": dir("self-healing"),
+            "credentials": dir("credentials"),
+            "caches": dir("Caches"),
+            "downloadStaging": dir("DownloadStaging"),
+            "feishu": dir("feishu"),
+            "prompts": dir("Prompts"),
+            "injection": dir("Injection"),
+            "builtinSkills": dir("BuiltinSkills"),
+            "bin": dir("bin"),
             "logs": .string(logs.path),
         ])
     }
@@ -367,6 +378,36 @@ public struct UserDefaultsTool: KernelTool {
         case .array(let items): return items.map(plist(from:))
         case .object(let obj): return obj.mapValues { plist(from: $0) }
         }
+    }
+}
+
+
+// MARK: - Uptime
+
+public struct SystemUptimeTool: KernelTool {
+    public init() {}
+
+    public var definition: ToolDefinition {
+        ToolDefinition(
+            name: "system.uptime",
+            title: "系统运行时间",
+            summary: "返回本机自启动以来的秒数（ProcessInfo.systemUptime）。",
+            inputSchema: .object([
+                "type": "object",
+                "properties": .object([:]),
+                "additionalProperties": false,
+            ]),
+            capability: Capability.systemRead,
+            risk: .low
+        )
+    }
+
+    public func invoke(arguments: JSONValue, context: ToolContext) async throws -> JSONValue {
+        let seconds = ProcessInfo.processInfo.systemUptime
+        return .object([
+            "seconds": .number(seconds),
+            "hours": .number(seconds / 3600.0),
+        ])
     }
 }
 
