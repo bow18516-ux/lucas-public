@@ -118,9 +118,15 @@ public struct MCPToolInfo: Sendable {
 public protocol MCPClientProtocol: AnyObject {
     var config: MCPServerConfig { get }
     var cachedTools: [MCPToolInfo] { get }
+    /// "ready" while the transport can serve, "exited" once it is gone.
+    var state: String { get }
     func start() async throws
     func callTool(_ name: String, arguments: JSONValue) async throws -> JSONValue
     func stop()
+}
+
+extension MCPClientProtocol {
+    public var state: String { "ready" }
 }
 
 // MARK: - stdio transport
@@ -141,6 +147,7 @@ public final class MCPStdioClient: MCPClientProtocol, @unchecked Sendable {
     private var nextID = 1
     private var pending: [Int: CheckedContinuation<JSONValue, Error>] = [:]
     private var closed = false
+    private var exitStatus: Int32?
 
     public init(config: MCPServerConfig) {
         self.config = config
@@ -156,6 +163,20 @@ public final class MCPStdioClient: MCPClientProtocol, @unchecked Sendable {
             try process.run()
         } catch {
             throw MCPError.spawnFailed(error.localizedDescription)
+        }
+        // A child that dies must flip the client to "exited" and fail all
+        // waiters; without this the next tool call waits for its 120s timeout.
+        process.terminationHandler = { [weak self] finished in
+            guard let self else { return }
+            self.lock.lock()
+            self.closed = true
+            self.exitStatus = finished.terminationStatus
+            let waiting = self.pending
+            self.pending.removeAll()
+            self.lock.unlock()
+            for continuation in waiting.values {
+                continuation.resume(throwing: MCPError.transport("server exited"))
+            }
         }
         startReader()
 
@@ -179,6 +200,17 @@ public final class MCPStdioClient: MCPClientProtocol, @unchecked Sendable {
             "name": .string(name),
             "arguments": arguments,
         ]), timeout: 120)
+    }
+
+    public var state: String {
+        lock.lock()
+        defer { lock.unlock() }
+        return closed ? "exited" : "ready"
+    }
+
+    /// Child pid, for diagnostics and for tests that need to kill it.
+    public var pid: pid_t? {
+        process.isRunning ? process.processIdentifier : nil
     }
 
     public func stop() {
@@ -269,6 +301,9 @@ public final class MCPStdioClient: MCPClientProtocol, @unchecked Sendable {
                     self.handle(line)
                 }
             }
+            self.lock.lock()
+            self.closed = true
+            self.lock.unlock()
             self.resolveAll(with: .failure(MCPError.transport("server exited")))
         }
         thread.stackSize = 512 * 1024
@@ -478,8 +513,15 @@ public final class MCPManager: @unchecked Sendable {
 
     public var status: [JSONValue] {
         lock.lock()
-        defer { lock.unlock() }
-        return statusCache
+        let entries = statusCache
+        let live = clients
+        lock.unlock()
+        return entries.map { entry in
+            guard let id = entry["id"]?.stringValue, let client = live[id] else { return entry }
+            var object = entry.objectValue ?? [:]
+            object["state"] = .string(client.state)
+            return .object(object)
+        }
     }
 
     public func definition(named name: String) -> ToolDefinition? {
