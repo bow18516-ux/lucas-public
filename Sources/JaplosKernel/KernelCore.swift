@@ -189,6 +189,11 @@ public final class KernelCore: @unchecked Sendable {
                 let stats = try store.statistics()
                 return .success(.object([
                     "version": .string(version),
+                    "build": .string(ProductBuild.current),
+                    "executable": .object([
+                        "path": .string(ProductBuild.executablePath),
+                        "modifiedAt": ProductBuild.executableModifiedAt.map(JSONValue.number) ?? .null,
+                    ]),
                     "protocolVersion": .string(ProtocolVersion.current),
                     "startedAt": .string(ISO8601.string(from: startedAt)),
                     "storePath": .string(store.path),

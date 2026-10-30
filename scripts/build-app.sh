@@ -13,15 +13,20 @@ CONFIG="${1:-release}"
 APP="$ROOT/build/Lucas.app"
 CONTENTS="$APP/Contents"
 
-if [ -n "${LUCAS_VERSION:-}" ]; then
-    VERSION="$LUCAS_VERSION"
-else
-    VERSION="$(sed -n 's/.*static let marketing = "\([^"]*\)".*/\1/p' "$ROOT/Sources/JaplosProtocol/ProductVersion.swift")"
-fi
-if [ -z "$VERSION" ]; then
+MARKETING="$(sed -n 's/.*static let marketing = "\([^"]*\)".*/\1/p' "$ROOT/Sources/JaplosProtocol/ProductVersion.swift")"
+if [ -z "$MARKETING" ]; then
     echo "cannot read ProductVersion.marketing" >&2
     exit 1
 fi
+
+# Info.plist and the daemon's compiled-in version must agree, or an app and a
+# daemon from different versions can pass the handshake as "same version".
+if [ -n "${LUCAS_VERSION:-}" ] && [ "$LUCAS_VERSION" != "$MARKETING" ]; then
+    echo "refusing to build: LUCAS_VERSION=$LUCAS_VERSION does not match ProductVersion.marketing=$MARKETING" >&2
+    echo "  bump Sources/JaplosProtocol/ProductVersion.swift (and commit it) so the daemon reports the packaged version" >&2
+    exit 1
+fi
+VERSION="$MARKETING"
 BUILD_NUMBER="${LUCAS_BUILD:-$(date +%Y%m%d%H%M)}"
 # Local ./scripts/build-app.sh often runs without publish.sh; still pick up the
 # real feed from Config/release.env so 检查更新 does not hit example.com.

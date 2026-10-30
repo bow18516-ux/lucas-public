@@ -123,6 +123,21 @@ final class ApprovalSafetyTests: XCTestCase {
         }
     }
 
+    func testKernelStatusExposesBuildAndExecutable() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("lucas-status-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let core = try KernelCore(storePath: root.appendingPathComponent("kernel.sqlite3").path, workspace: root)
+        let response = await core.handle(KernelRequest(operation: .kernelStatus))
+        let result = try XCTUnwrap(response.result)
+        XCTAssertFalse((result["build"]?.stringValue ?? "").isEmpty)
+        let executable = try XCTUnwrap(result["executable"])
+        let path = try XCTUnwrap(executable["path"]?.stringValue)
+        XCTAssertTrue(path.hasPrefix("/"), path)
+        XCTAssertNotNil(executable["modifiedAt"]?.doubleValue)
+    }
+
     func testShellLargeOutputIsTruncatedInsteadOfTimingOut() async throws {
         let tool = ShellTool()
         let output = try await tool.invoke(

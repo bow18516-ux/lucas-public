@@ -123,6 +123,11 @@ public final class KernelClient: @unchecked Sendable {
         (try? perform(.kernelStatus, arguments: .object([:]), timeout: timeout))?["version"]?.stringValue
     }
 
+    /// Full `kernel.status` payload, used by the build handshake.
+    public func daemonStatus(timeout: TimeInterval = 1.5) -> JSONValue? {
+        try? perform(.kernelStatus, arguments: .object([:]), timeout: timeout)
+    }
+
     public func call(
         _ operation: KernelOperation,
         arguments: JSONValue = .object([:]),
@@ -292,7 +297,7 @@ public enum DaemonController {
         logURL: URL? = nil
     ) throws {
         if client.ping() {
-            if client.daemonVersion() == ProductVersion.marketing { return }
+            if isCurrentBuild(client.daemonStatus()) { return }
             _ = try? client.perform(.kernelShutdown, arguments: .object([:]), timeout: 2)
             usleep(300_000)
         }
@@ -333,6 +338,31 @@ public enum DaemonController {
             usleep(120_000)
         }
         throw ClientError.cannotConnect("lucasd 启动超时")
+    }
+
+    /// Marketing version alone cannot tell two builds apart: the daemon must
+    /// also report the same `CFBundleVersion`, come from the binary this app
+    /// would launch, and that binary must not have been replaced in place.
+    public static func isCurrentBuild(_ status: JSONValue?) -> Bool {
+        guard let status,
+              status["version"]?.stringValue == ProductVersion.marketing
+        else { return false }
+        let located = locateDaemon()
+        return DaemonHandshake.matches(
+            appBuild: ProductBuild.current,
+            daemonBuild: status["build"]?.stringValue,
+            expectedPath: located?.path,
+            daemonPath: status["executable"]?["path"]?.stringValue,
+            expectedModifiedAt: located.flatMap(modifiedAt),
+            daemonModifiedAt: status["executable"]?["modifiedAt"]?.doubleValue
+        )
+    }
+
+    private static func modifiedAt(_ url: URL) -> Double? {
+        guard let attributes = try? FileManager.default.attributesOfItem(atPath: url.path),
+              let date = attributes[.modificationDate] as? Date
+        else { return nil }
+        return date.timeIntervalSince1970
     }
 
     public static func locateDaemon() -> URL? {

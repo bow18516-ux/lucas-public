@@ -186,4 +186,36 @@ final class JaplosProtocolTests: XCTestCase {
         XCTAssertFalse(mail.contains(String(repeating: "b", count: 40)))
     }
 
+
+    func testDaemonHandshakeRequiresMatchingBuildPathAndMtime() {
+        XCTAssertTrue(DaemonHandshake.matches(
+            appBuild: "42", daemonBuild: "42",
+            expectedPath: "/tmp/Lucas.app/Contents/MacOS/lucasd",
+            daemonPath: "/tmp/Lucas.app/Contents/MacOS/lucasd",
+            expectedModifiedAt: 1_000, daemonModifiedAt: 1_000.5
+        ))
+        // Same marketing version, rebuilt package: only CFBundleVersion differs.
+        XCTAssertFalse(DaemonHandshake.matches(
+            appBuild: "43", daemonBuild: "42",
+            expectedPath: "/tmp/lucasd", daemonPath: "/tmp/lucasd",
+            expectedModifiedAt: 1_000, daemonModifiedAt: 1_000
+        ))
+        // A daemon from another checkout, or one replaced in place.
+        XCTAssertFalse(DaemonHandshake.matches(
+            appBuild: "42", daemonBuild: "42",
+            expectedPath: "/tmp/a/lucasd", daemonPath: "/tmp/b/lucasd",
+            expectedModifiedAt: 1_000, daemonModifiedAt: 1_000
+        ))
+        XCTAssertFalse(DaemonHandshake.matches(
+            appBuild: "42", daemonBuild: "42",
+            expectedPath: "/tmp/lucasd", daemonPath: "/tmp/lucasd",
+            expectedModifiedAt: 1_000, daemonModifiedAt: 1_030
+        ))
+        // A daemon too old to report `build` must not be trusted.
+        XCTAssertFalse(DaemonHandshake.matches(
+            appBuild: "42", daemonBuild: nil,
+            expectedPath: nil, daemonPath: nil,
+            expectedModifiedAt: nil, daemonModifiedAt: nil
+        ))
+    }
 }
