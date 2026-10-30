@@ -153,4 +153,7 @@ python3 scripts/kernel_rpc.py tool.invoke '{"name":"mcp.http.echo","arguments":{
 echo "16. model catalog"
 python3 scripts/kernel_rpc.py model.catalog '{}' | grep -q 'mock-model'
 
+echo "17. stop while an approval is pending"
+python3 scripts/stop_pending_check.py
+
 echo "✅ smoke test passed"

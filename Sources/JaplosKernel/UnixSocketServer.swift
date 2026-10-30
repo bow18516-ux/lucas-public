@@ -290,9 +290,13 @@ public final class UnixSocketServer: @unchecked Sendable {
                 let approved = message.arguments["approved"]?.boolValue ?? false
                 broker.resolve(callID: callID, approved: approved, source: "desktop")
             } catch {
+                // Order matters: resolve the pending approvals *before* waiting
+                // for the turn, otherwise a tool waiting on approval can only
+                // unwind after the wait times out.
                 writer.close()
+                broker.cancelAll()
                 cancellation.cancel()
-                _ = done.wait(timeout: .now() + 5)
+                _ = done.wait(timeout: .now() + 1)
                 break
             }
         }
