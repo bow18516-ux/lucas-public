@@ -35,6 +35,7 @@ public final class KernelCore: @unchecked Sendable {
         tools.register(contentsOf: SystemInfoTools.all())
         tools.register(contentsOf: DocumentTools.all())
         tools.register(contentsOf: ChannelTools.all(wechat: wechat, feishu: feishu))
+        tools.register(contentsOf: MemoryKnowledgeTools.all(store: store))
     }
 
     /// Ensure `self-healing/` under Application Support Lucas and append a boot ledger row.
@@ -450,6 +451,14 @@ public final class KernelCore: @unchecked Sendable {
 
             case .knowledgeDocumentsList:
                 let limit = request.arguments["limit"]?.intValue ?? 50
+                let library = request.arguments["library"]?.stringValue
+                let query = request.arguments["query"]?.stringValue ?? ""
+                if !query.isEmpty || (library != nil && library != "all" && !(library?.isEmpty ?? true)) {
+                    return .success(
+                        .array(try store.searchKnowledgeDocuments(query: query, library: library, limit: limit)),
+                        requestID: requestID
+                    )
+                }
                 return .success(.array(try store.listKnowledgeDocuments(limit: limit)), requestID: requestID)
 
             case .knowledgeDocumentsUpsert:
@@ -462,6 +471,23 @@ public final class KernelCore: @unchecked Sendable {
                 recordObject["title"] = .string(title)
                 if let body = request.arguments["body"]?.stringValue ?? request.arguments["text"]?.stringValue {
                     recordObject["body"] = .string(body)
+                }
+                if let library = request.arguments["library"]?.stringValue, !library.isEmpty {
+                    recordObject["library"] = .string(library)
+                } else if recordObject["library"] == nil {
+                    recordObject["library"] = .string("all")
+                }
+                if let fileType = request.arguments["fileType"]?.stringValue {
+                    recordObject["fileType"] = .string(fileType)
+                }
+                if let sourcePath = request.arguments["sourcePath"]?.stringValue {
+                    recordObject["sourcePath"] = .string(sourcePath)
+                }
+                if let extractStatus = request.arguments["extractStatus"]?.stringValue {
+                    recordObject["extractStatus"] = .string(extractStatus)
+                }
+                if let extractNote = request.arguments["extractNote"]?.stringValue {
+                    recordObject["extractNote"] = .string(extractNote)
                 }
                 let record = JSONValue.object(recordObject)
                 try store.upsertKnowledgeDocument(id: docID, title: title, record: record)

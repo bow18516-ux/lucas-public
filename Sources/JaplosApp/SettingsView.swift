@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import UniformTypeIdentifiers
 import JaplosProtocol
 
 /// One typographic + spacing scale for every settings page.
@@ -64,28 +65,37 @@ enum SettingsSection: String, CaseIterable, Identifiable {
     }
 }
 
-/// Nested rows under L1 「知识库」 — documents are live; upload types are scaffold.
+/// Nested rows under L1 「知识库」 — industry libraries, not file-type folders.
 enum KnowledgeNav: String, CaseIterable, Identifiable {
-    case documents = "全部文档"
-    case chatLogs = "聊天记录"
-    case markdown = "MD 文档"
-    case ppt = "PPT"
-    case spreadsheet = "表格"
+    case company = "公司资料"
+    case client = "客户与往来"
+    case all = "全部文件"
 
     var id: String { rawValue }
 
-    var icon: String {
+    var libraryID: String {
         switch self {
-        case .documents: return "doc.text"
-        case .chatLogs: return "bubble.left.and.bubble.right"
-        case .markdown: return "doc.richtext"
-        case .ppt: return "rectangle.on.rectangle.angled"
-        case .spreadsheet: return "tablecells"
+        case .company: return "company"
+        case .client: return "client"
+        case .all: return "all"
         }
     }
 
-    /// True when this row opens a real pane (not a placeholder).
-    var isLive: Bool { self == .documents }
+    var icon: String {
+        switch self {
+        case .company: return "building.2"
+        case .client: return "person.2"
+        case .all: return "doc.text"
+        }
+    }
+
+    var subtitle: String {
+        switch self {
+        case .company: return "公司介绍、产品、SOP 等必读材料"
+        case .client: return "客户资料与往来邮件/聊天记录"
+        case .all: return "全部知识文件；可用类型标签筛选"
+        }
+    }
 }
 
 
@@ -115,8 +125,12 @@ struct SettingsScreen: View {
         let lower = requested.lowercased()
         if requested == "记忆" || lower == "memory" {
             _destination = State(initialValue: .memory)
-        } else if requested == "知识库" || lower == "knowledge" || requested == "全部文档" {
-            _destination = State(initialValue: .knowledge(.documents))
+        } else if requested == "知识库" || lower == "knowledge" || requested == "全部文件" || requested == "全部文档" {
+            _destination = State(initialValue: .knowledge(.all))
+        } else if requested == "公司资料" || lower == "company" {
+            _destination = State(initialValue: .knowledge(.company))
+        } else if requested == "客户与往来" || lower == "client" {
+            _destination = State(initialValue: .knowledge(.client))
         } else if let kn = KnowledgeNav.allCases.first(where: { $0.rawValue == requested }) {
             _destination = State(initialValue: .knowledge(kn))
         } else {
@@ -399,10 +413,8 @@ struct SettingsScreen: View {
         switch destination {
         case .memory:
             MemorySettingsPane(model: model)
-        case .knowledge(.documents):
-            KnowledgeSettingsPane(model: model)
         case .knowledge(let kind):
-            KnowledgeUploadPlaceholderPane(kind: kind, model: model)
+            KnowledgeLibraryPane(nav: kind, model: model)
         case .settings(.model):
             ModelSettingsPane(model: model)
         case .settings(.tools):
@@ -2277,16 +2289,38 @@ struct MemorySettingsPane: View {
     }
 }
 
-struct KnowledgeSettingsPane: View {
+struct KnowledgeLibraryPane: View {
+    let nav: KnowledgeNav
     @ObservedObject var model: AppModel
     @State private var titleDraft = ""
     @State private var bodyDraft = ""
+    @State private var typeFilter: String = "全部"
+    @State private var importNote: String?
+
+    private static let typeFilters = ["全部", "md", "txt", "pdf", "csv", "xlsx", "pptx", "chat", "其他"]
+
+    private var visibleDocs: [AppModel.KnowledgeDocument] {
+        model.knowledgeDocuments.filter { doc in
+            if nav.libraryID != "all", doc.library != nav.libraryID {
+                return false
+            }
+            if typeFilter == "全部" { return true }
+            let ft = doc.fileType.lowercased()
+            if typeFilter == "其他" {
+                return !["md", "txt", "pdf", "csv", "xlsx", "pptx", "chat", "markdown"].contains(ft)
+            }
+            if typeFilter == "md" {
+                return ft == "md" || ft == "markdown"
+            }
+            return ft == typeFilter
+        }
+    }
 
     var body: some View {
         VStack(spacing: 0) {
             SettingsHeader(
-                title: "知识库",
-                subtitle: "本地文档条目（knowledge.documents），标题 + 正文持久化",
+                title: nav.rawValue,
+                subtitle: nav.subtitle + " · 上传后参与每轮检索；类型标签仅作筛选",
                 model: model
             )
 
@@ -2294,16 +2328,52 @@ struct KnowledgeSettingsPane: View {
                 VStack(alignment: .leading, spacing: SettingsMetrics.cardSpacing) {
                     VStack(alignment: .leading, spacing: 14) {
                         HStack(alignment: .firstTextBaseline, spacing: 8) {
-                            Image(systemName: "square.and.pencil")
+                            Image(systemName: "square.and.arrow.up")
                                 .font(.system(size: SettingsMetrics.bodySize))
                                 .foregroundStyle(Theme.textSecondary)
-                            Text("添加文档")
+                            Text("上传文件")
                                 .font(.system(size: SettingsMetrics.cardTitleSize, weight: .semibold))
                                 .foregroundStyle(Theme.textPrimary)
                             Spacer()
-                            Text("\(model.knowledgeDocuments.count) 篇")
+                            Text("\(visibleDocs.count) 篇")
                                 .font(.system(size: SettingsMetrics.captionSize, design: .monospaced))
                                 .foregroundStyle(Theme.textSecondary)
+                        }
+
+                        Text("支持 md / txt / pdf / csv；xlsx / pptx 会入库但正文抽取暂不完整。聊天导出可用 txt / md / json。")
+                            .font(.system(size: SettingsMetrics.captionSize))
+                            .foregroundStyle(Theme.textSecondary)
+
+                        HStack(spacing: 10) {
+                            Button("选择本地文件…") {
+                                pickAndImport()
+                            }
+                            .buttonStyle(.pressable)
+                            .font(.system(size: SettingsMetrics.cardSubtitleSize))
+                            .foregroundStyle(Color.black.opacity(0.85))
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 5)
+                            .background(Theme.accent, in: RoundedRectangle(cornerRadius: 6))
+
+                            if let importNote {
+                                Text(importNote)
+                                    .font(.system(size: SettingsMetrics.captionSize))
+                                    .foregroundStyle(Theme.textSecondary)
+                                    .lineLimit(2)
+                            }
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .topLeading)
+                    .panel(padding: SettingsMetrics.cardPadding)
+
+                    VStack(alignment: .leading, spacing: 14) {
+                        HStack(alignment: .firstTextBaseline, spacing: 8) {
+                            Image(systemName: "square.and.pencil")
+                                .font(.system(size: SettingsMetrics.bodySize))
+                                .foregroundStyle(Theme.textSecondary)
+                            Text("手动添加")
+                                .font(.system(size: SettingsMetrics.cardTitleSize, weight: .semibold))
+                                .foregroundStyle(Theme.textPrimary)
                         }
 
                         TextField("标题", text: $titleDraft)
@@ -2330,7 +2400,14 @@ struct KnowledgeSettingsPane: View {
                                 let body = bodyDraft
                                 titleDraft = ""
                                 bodyDraft = ""
-                                Task { await model.upsertKnowledgeDocument(title: title, body: body) }
+                                Task {
+                                    await model.upsertKnowledgeDocument(
+                                        title: title,
+                                        body: body,
+                                        library: nav.libraryID == "all" ? "all" : nav.libraryID,
+                                        fileType: "note"
+                                    )
+                                }
                             }
                             .buttonStyle(.pressable)
                             .font(.system(size: SettingsMetrics.cardSubtitleSize))
@@ -2345,25 +2422,64 @@ struct KnowledgeSettingsPane: View {
                     .panel(padding: SettingsMetrics.cardPadding)
 
                     VStack(alignment: .leading, spacing: 12) {
-                        Text("已保存")
-                            .font(.system(size: SettingsMetrics.cardTitleSize, weight: .semibold))
-                            .foregroundStyle(Theme.textPrimary)
+                        HStack {
+                            Text("已入库")
+                                .font(.system(size: SettingsMetrics.cardTitleSize, weight: .semibold))
+                                .foregroundStyle(Theme.textPrimary)
+                            Spacer()
+                        }
 
-                        if model.knowledgeDocuments.isEmpty {
-                            Text("暂无知识库文档。在上方填写标题与正文后点「保存」。")
+                        if nav == .all {
+                            ScrollView(.horizontal, showsIndicators: false) {
+                                HStack(spacing: 6) {
+                                    ForEach(Self.typeFilters, id: \.self) { tag in
+                                        let selected = typeFilter == tag
+                                        Button(tag) { typeFilter = tag }
+                                            .buttonStyle(.pressable)
+                                            .font(.system(size: SettingsMetrics.captionSize, weight: selected ? .semibold : .regular))
+                                            .foregroundStyle(selected ? Color.black.opacity(0.85) : Theme.textSecondary)
+                                            .padding(.horizontal, 10)
+                                            .padding(.vertical, 4)
+                                            .background(
+                                                selected ? Theme.accent : Color.white.opacity(0.06),
+                                                in: Capsule()
+                                            )
+                                    }
+                                }
+                            }
+                        }
+
+                        if visibleDocs.isEmpty {
+                            Text("暂无文档。上传本地文件或手动添加标题与正文。")
                                 .font(.system(size: SettingsMetrics.cardSubtitleSize))
                                 .foregroundStyle(Theme.textSecondary)
                         } else {
-                            ForEach(model.knowledgeDocuments) { doc in
+                            ForEach(visibleDocs) { doc in
                                 HStack(alignment: .top, spacing: 12) {
                                     VStack(alignment: .leading, spacing: 4) {
-                                        Text(doc.title)
-                                            .font(.system(size: SettingsMetrics.labelSize, weight: .medium))
-                                            .foregroundStyle(Theme.textPrimary)
+                                        HStack(spacing: 8) {
+                                            Text(doc.title)
+                                                .font(.system(size: SettingsMetrics.labelSize, weight: .medium))
+                                                .foregroundStyle(Theme.textPrimary)
+                                            Text(libraryLabel(doc.library))
+                                                .font(.system(size: SettingsMetrics.captionSize))
+                                                .foregroundStyle(Theme.textSecondary)
+                                            if !doc.fileType.isEmpty {
+                                                Text(doc.fileType)
+                                                    .font(.system(size: SettingsMetrics.captionSize, design: .monospaced))
+                                                    .foregroundStyle(Theme.textSecondary.opacity(0.85))
+                                            }
+                                        }
+                                        if doc.extractStatus != "ok" && !doc.extractStatus.isEmpty {
+                                            Text(extractStatusLabel(doc))
+                                                .font(.system(size: SettingsMetrics.captionSize))
+                                                .foregroundStyle(Color.orange.opacity(0.9))
+                                        }
                                         if !doc.body.isEmpty {
                                             Text(doc.body)
                                                 .font(.system(size: SettingsMetrics.cardSubtitleSize))
                                                 .foregroundStyle(Theme.textSecondary)
+                                                .lineLimit(3)
                                                 .fixedSize(horizontal: false, vertical: true)
                                         }
                                     }
@@ -2378,7 +2494,7 @@ struct KnowledgeSettingsPane: View {
                                     .buttonStyle(.pressable)
                                 }
                                 .padding(.vertical, 6)
-                                if doc.id != model.knowledgeDocuments.last?.id {
+                                if doc.id != visibleDocs.last?.id {
                                     Divider().overlay(Theme.panelBorder.opacity(0.6))
                                 }
                             }
@@ -2391,65 +2507,54 @@ struct KnowledgeSettingsPane: View {
                 .padding(.bottom, 28)
             }
         }
-        .task { await model.loadKnowledgeDocuments() }
-    }
-}
-
-/// Scaffold for future knowledge upload types (chat logs / MD / PPT / sheets).
-/// Product intent: uploaded material is must-read context, used with 「记忆」 when answering.
-struct KnowledgeUploadPlaceholderPane: View {
-    let kind: KnowledgeNav
-    @ObservedObject var model: AppModel
-
-    var body: some View {
-        VStack(spacing: 0) {
-            SettingsHeader(
-                title: kind.rawValue,
-                subtitle: "上传后作为模型回答时的必读上下文，与「记忆」一起生效。当前类型的上传尚未接入。",
-                model: model
-            )
-
-            ScrollView {
-                VStack(alignment: .leading, spacing: SettingsMetrics.cardSpacing) {
-                    VStack(alignment: .leading, spacing: 14) {
-                        HStack(spacing: 8) {
-                            Image(systemName: kind.icon)
-                                .font(.system(size: SettingsMetrics.bodySize))
-                                .foregroundStyle(Theme.textSecondary)
-                            Text("即将支持")
-                                .font(.system(size: SettingsMetrics.cardTitleSize, weight: .semibold))
-                                .foregroundStyle(Theme.textPrimary)
-                        }
-                        Text(placeholderCopy)
-                            .font(.system(size: SettingsMetrics.cardSubtitleSize))
-                            .foregroundStyle(Theme.textSecondary)
-                            .fixedSize(horizontal: false, vertical: true)
-                        Text("请先用「全部文档」手动添加标题 + 正文；上传能力就绪后再迁到此分类。")
-                            .font(.system(size: SettingsMetrics.captionSize))
-                            .foregroundStyle(Theme.textSecondary.opacity(0.85))
-                    }
-                    .frame(maxWidth: .infinity, alignment: .topLeading)
-                    .panel(padding: SettingsMetrics.cardPadding)
-                }
-                .padding(.horizontal, SettingsMetrics.pagePadding)
-                .padding(.bottom, 28)
-            }
-            Spacer(minLength: 0)
+        .task {
+            await model.loadKnowledgeDocuments(library: nav.libraryID == "all" ? nil : nav.libraryID)
         }
     }
 
-    private var placeholderCopy: String {
-        switch kind {
-        case .documents:
-            return ""
-        case .chatLogs:
-            return "计划：导入聊天记录（导出文本 / JSON），作为长期对话背景供模型必读。"
-        case .markdown:
-            return "计划：上传 .md / .markdown 文档，解析后写入知识库并参与回答检索。"
-        case .ppt:
-            return "计划：上传 PPT / PDF 幻灯片，抽取要点后作为必读资料。"
-        case .spreadsheet:
-            return "计划：上传表格（CSV / Excel），结构化后供模型引用。"
+    private func libraryLabel(_ id: String) -> String {
+        switch id {
+        case "company": return "公司"
+        case "client": return "客户"
+        default: return "全部"
+        }
+    }
+
+    private func extractStatusLabel(_ doc: AppModel.KnowledgeDocument) -> String {
+        switch doc.extractStatus {
+        case "partial":
+            return "正文抽取不完整" + (doc.extractNote.isEmpty ? "" : "：\(doc.extractNote)")
+        case "unsupported":
+            return "此格式暂不支持正文抽取，已登记文件" + (doc.extractNote.isEmpty ? "" : "：\(doc.extractNote)")
+        case "empty":
+            return "未读出正文"
+        default:
+            return doc.extractNote
+        }
+    }
+
+    private func pickAndImport() {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = false
+        panel.allowsMultipleSelection = true
+        panel.message = "选择要加入「\(nav.rawValue)」的本地文件"
+        var types: [UTType] = [.plainText, .utf8PlainText, .text, .pdf, .commaSeparatedText]
+        for ext in ["md", "markdown", "json", "csv", "xlsx", "xls", "pptx", "ppt", "txt"] {
+            if let t = UTType(filenameExtension: ext) { types.append(t) }
+        }
+        panel.allowedContentTypes = types
+        guard panel.runModal() == .OK else { return }
+        let urls = panel.urls
+        guard !urls.isEmpty else { return }
+        importNote = "正在导入 \(urls.count) 个文件…"
+        Task {
+            let result = await model.importKnowledgeFiles(
+                urls: urls,
+                library: nav.libraryID == "all" ? "all" : nav.libraryID
+            )
+            importNote = result
+            await model.loadKnowledgeDocuments(library: nav.libraryID == "all" ? nil : nav.libraryID)
         }
     }
 }

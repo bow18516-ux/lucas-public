@@ -1,6 +1,8 @@
 import Combine
 import Foundation
 import JaplosProtocol
+import PDFKit
+import AppKit
 
 @MainActor
 final class AppModel: ObservableObject {
@@ -95,6 +97,11 @@ final class AppModel: ObservableObject {
         var title: String
         var body: String
         var updatedAt: Date
+        var library: String
+        var fileType: String
+        var extractStatus: String
+        var extractNote: String
+        var sourcePath: String
     }
 
     struct MCPEventItem: Identifiable, Equatable {
@@ -470,47 +477,201 @@ final class AppModel: ObservableObject {
     }
 
 
-    func loadKnowledgeDocuments(limit: Int = 40) async {
+    func loadKnowledgeDocuments(limit: Int = 80, library: String? = nil) async {
         do {
+            var args: [String: JSONValue] = ["limit": .number(Double(limit))]
+            if let library, !library.isEmpty, library != "all" {
+                args["library"] = .string(library)
+            }
             let result = try await client.callAsync(
                 .knowledgeDocumentsList,
-                arguments: .object(["limit": .number(Double(limit))])
+                arguments: .object(args)
             )
             knowledgeDocuments = (result.arrayValue ?? []).compactMap { item in
                 guard let id = item["id"]?.stringValue else { return nil }
-                let title = item["title"]?.stringValue ?? ""
-                let body = item["record"]?["body"]?.stringValue
-                    ?? item["record"]?["text"]?.stringValue
+                let record = item["record"]
+                let title = item["title"]?.stringValue ?? record?["title"]?.stringValue ?? ""
+                let body = record?["body"]?.stringValue
+                    ?? record?["text"]?.stringValue
                     ?? item["body"]?.stringValue
                     ?? ""
                 let updated = item["updatedAt"]?.stringValue.flatMap(ISO8601.date(from:)) ?? Date()
-                return KnowledgeDocument(id: id, title: title, body: body, updatedAt: updated)
+                return KnowledgeDocument(
+                    id: id,
+                    title: title,
+                    body: body,
+                    updatedAt: updated,
+                    library: record?["library"]?.stringValue ?? "all",
+                    fileType: record?["fileType"]?.stringValue ?? "",
+                    extractStatus: record?["extractStatus"]?.stringValue ?? "ok",
+                    extractNote: record?["extractNote"]?.stringValue ?? "",
+                    sourcePath: record?["sourcePath"]?.stringValue ?? ""
+                )
             }
         } catch {
             // Soft-fail when kernel offline.
         }
     }
 
-    func upsertKnowledgeDocument(title: String, body: String, id: String? = nil) async {
+    func upsertKnowledgeDocument(
+        title: String,
+        body: String,
+        id: String? = nil,
+        library: String = "all",
+        fileType: String = "note",
+        extractStatus: String = "ok",
+        extractNote: String = "",
+        sourcePath: String = ""
+    ) async {
         let trimmedTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
         let trimmedBody = body.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedTitle.isEmpty else { return }
         do {
+            var record: [String: JSONValue] = [
+                "title": .string(trimmedTitle),
+                "body": .string(trimmedBody),
+                "library": .string(library),
+                "fileType": .string(fileType),
+                "extractStatus": .string(extractStatus),
+            ]
+            if !extractNote.isEmpty { record["extractNote"] = .string(extractNote) }
+            if !sourcePath.isEmpty { record["sourcePath"] = .string(sourcePath) }
             var args: [String: JSONValue] = [
                 "title": .string(trimmedTitle),
                 "body": .string(trimmedBody),
-                "record": .object([
-                    "title": .string(trimmedTitle),
-                    "body": .string(trimmedBody),
-                ]),
+                "library": .string(library),
+                "fileType": .string(fileType),
+                "extractStatus": .string(extractStatus),
+                "record": .object(record),
             ]
+            if !extractNote.isEmpty { args["extractNote"] = .string(extractNote) }
+            if !sourcePath.isEmpty { args["sourcePath"] = .string(sourcePath) }
             if let id, !id.isEmpty {
                 args["id"] = .string(id)
             }
             _ = try await client.callAsync(.knowledgeDocumentsUpsert, arguments: .object(args))
-            await loadKnowledgeDocuments()
+            await loadKnowledgeDocuments(library: library == "all" ? nil : library)
         } catch {
             errorText = (error as? ClientError)?.description ?? String(describing: error)
+        }
+    }
+
+    /// Import local files into knowledge_documents with best-effort text extract.
+    @discardableResult
+    func importKnowledgeFiles(urls: [URL], library: String) async -> String {
+        var ok = 0
+        var partial = 0
+        var failed = 0
+        let destRoot = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/Application Support/Lucas/KnowledgeFiles", isDirectory: true)
+        try? FileManager.default.createDirectory(at: destRoot, withIntermediateDirectories: true)
+
+        for url in urls {
+            let accessed = url.startAccessingSecurityScopedResource()
+            defer { if accessed { url.stopAccessingSecurityScopedResource() } }
+            let extracted = Self.extractKnowledgeFile(url: url)
+            let stamp = ISO8601.string(from: Date()).replacingOccurrences(of: ":", with: "-")
+            let destName = "\(stamp)_\(url.lastPathComponent)"
+            let dest = destRoot.appendingPathComponent(destName)
+            do {
+                if FileManager.default.fileExists(atPath: dest.path) {
+                    try FileManager.default.removeItem(at: dest)
+                }
+                try FileManager.default.copyItem(at: url, to: dest)
+            } catch {
+                // Still upsert even if copy fails; keep original path.
+            }
+            let storedPath = FileManager.default.fileExists(atPath: dest.path) ? dest.path : url.path
+            let title = url.deletingPathExtension().lastPathComponent
+            await upsertKnowledgeDocument(
+                title: title,
+                body: extracted.body,
+                library: library,
+                fileType: extracted.fileType,
+                extractStatus: extracted.status,
+                extractNote: extracted.note,
+                sourcePath: storedPath
+            )
+            switch extracted.status {
+            case "ok": ok += 1
+            case "partial", "unsupported", "empty": partial += 1
+            default: failed += 1
+            }
+        }
+        return "导入完成：完整 \(ok)，部分/未抽正文 \(partial)，失败 \(failed)"
+    }
+
+    private struct ExtractedKnowledge {
+        var body: String
+        var fileType: String
+        var status: String
+        var note: String
+    }
+
+    private static func extractKnowledgeFile(url: URL) -> ExtractedKnowledge {
+        let ext = url.pathExtension.lowercased()
+        switch ext {
+        case "md", "markdown", "txt", "text", "csv", "json", "log":
+            if let data = try? Data(contentsOf: url),
+               let text = String(data: data, encoding: .utf8)
+                ?? String(data: data, encoding: .isoLatin1) {
+                let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+                let fileType = (ext == "json" || ext == "log") ? (ext == "json" ? "chat" : "txt") : (ext == "markdown" ? "md" : ext)
+                if trimmed.isEmpty {
+                    return ExtractedKnowledge(body: "", fileType: fileType, status: "empty", note: "文件为空")
+                }
+                // Cap stored body to keep SQLite rows reasonable.
+                let capped = String(trimmed.prefix(200_000))
+                return ExtractedKnowledge(body: capped, fileType: fileType, status: "ok", note: "")
+            }
+            return ExtractedKnowledge(body: "", fileType: ext, status: "empty", note: "无法按文本读取")
+        case "pdf":
+            if let doc = PDFDocument(url: url) {
+                var chunks: [String] = []
+                for i in 0..<doc.pageCount {
+                    guard let page = doc.page(at: i), let s = page.string else { continue }
+                    chunks.append(s)
+                    if chunks.joined().count > 200_000 { break }
+                }
+                let body = String(chunks.joined(separator: "\n").prefix(200_000))
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                if body.isEmpty {
+                    return ExtractedKnowledge(body: "", fileType: "pdf", status: "empty", note: "PDF 无文本层（可能是扫描件）")
+                }
+                return ExtractedKnowledge(body: body, fileType: "pdf", status: "ok", note: "")
+            }
+            return ExtractedKnowledge(body: "", fileType: "pdf", status: "empty", note: "无法打开 PDF")
+        case "xlsx", "xls":
+            return ExtractedKnowledge(
+                body: "",
+                fileType: "xlsx",
+                status: "unsupported",
+                note: "表格正文抽取尚未接入；文件已登记，可稍后补正文"
+            )
+        case "pptx", "ppt":
+            return ExtractedKnowledge(
+                body: "",
+                fileType: "pptx",
+                status: "unsupported",
+                note: "幻灯片正文抽取尚未接入；文件已登记，可稍后补正文"
+            )
+        default:
+            if let data = try? Data(contentsOf: url),
+               let text = String(data: data, encoding: .utf8),
+               text.contains(where: { !$0.isWhitespace }) {
+                return ExtractedKnowledge(
+                    body: String(text.prefix(200_000)),
+                    fileType: ext.isEmpty ? "其他" : ext,
+                    status: "partial",
+                    note: "按纯文本尝试读取"
+                )
+            }
+            return ExtractedKnowledge(
+                body: "",
+                fileType: ext.isEmpty ? "其他" : ext,
+                status: "unsupported",
+                note: "不支持的格式"
+            )
         }
     }
 

@@ -111,10 +111,30 @@ public final class ChatService: @unchecked Sendable {
 
             let scene = SceneRouter.match(text)
             let tools = core.tools.definitions() + core.mcpDefinitions
-            let system = PromptLibrary.systemPrompt(scene: scene, tools: tools)
+            let history = try historyMessages(sessionID: session.id)
+            // Current user turn already persisted; count user roles in historyMessages
+            // (history includes the turn we just appended via store, depending on implementation).
+            let firstInSession = isFirstMessage
+
+            var system = PromptLibrary.systemPrompt(scene: scene, tools: tools)
+            system += "\n\n" + ContextInjector.policyGuidance
+            let injected = ContextInjector.build(
+                store: core.store,
+                query: text,
+                isFirstMessageInSession: firstInSession
+            )
+            if !injected.isEmpty {
+                system += "\n\n" + injected
+            }
+
+            _ = ContextInjector.maybeCaptureExplicitMemory(
+                store: core.store,
+                sessionID: session.id,
+                text: text
+            )
 
             var messages: [ModelMessage] = [.system(system)]
-            messages.append(contentsOf: try historyMessages(sessionID: session.id))
+            messages.append(contentsOf: history)
 
             let client = ModelClient(connection: connection)
             var steps: [JSONValue] = []

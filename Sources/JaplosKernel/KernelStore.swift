@@ -1170,6 +1170,96 @@ public final class KernelStore {
         try database.execute("DELETE FROM knowledge_documents WHERE id = ?;", [id])
     }
 
+    /// Keyword / substring retrieval over title + record body (no vector DB — honest v1).
+    public func searchKnowledgeDocuments(
+        query: String,
+        library: String? = nil,
+        limit: Int = 8
+    ) throws -> [JSONValue] {
+        let lim = max(1, min(limit, 40))
+        let docs = try listKnowledgeDocuments(limit: 300)
+        let q = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        let scored: [(Int, JSONValue)] = docs.compactMap { doc in
+            guard let obj = doc.objectValue else { return nil }
+            let record = obj["record"]?.objectValue ?? [:]
+            let lib = record["library"]?.stringValue ?? "all"
+            if let library, !library.isEmpty, library != "all", lib != library {
+                return nil
+            }
+            let title = obj["title"]?.stringValue ?? record["title"]?.stringValue ?? ""
+            let body = record["body"]?.stringValue ?? record["text"]?.stringValue ?? ""
+            let hay = (title + "\n" + body)
+            let score: Int
+            if q.isEmpty {
+                score = 1
+            } else {
+                score = Self.relevanceScore(haystack: hay, query: q)
+            }
+            guard score > 0 || q.isEmpty else { return nil }
+            return (score, doc)
+        }
+        let sorted: [(Int, JSONValue)]
+        if q.isEmpty {
+            sorted = scored
+        } else {
+            sorted = scored.sorted { $0.0 > $1.0 }
+        }
+        return Array(sorted.prefix(lim).map(\.1))
+    }
+
+    /// Substring search over memory content.
+    public func searchMemories(query: String, limit: Int = 12) throws -> [JSONValue] {
+        let lim = max(1, min(limit, 50))
+        let q = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        let all = try listMemories(sessionID: nil, limit: 200)
+        guard !q.isEmpty else { return Array(all.prefix(lim)) }
+        let scored = all.compactMap { item -> (Int, JSONValue)? in
+            let content = item["content"]?.stringValue ?? ""
+            let score = Self.relevanceScore(haystack: content, query: q)
+            guard score > 0 else { return nil }
+            return (score, item)
+        }
+        .sorted { $0.0 > $1.0 }
+        return Array(scored.prefix(lim).map(\.1))
+    }
+
+    /// Open agent tasks (not completed/cancelled) for follow-up nudges.
+    public func listOpenAgentTasks(limit: Int = 8) throws -> [JSONValue] {
+        let lim = max(1, min(limit, 40))
+        let rows = try listAgentTasks(sessionID: nil, limit: 80)
+        let open = rows.filter { item in
+            let state = (item["state"]?.stringValue ?? "").lowercased()
+            return state != "completed" && state != "done" && state != "cancelled" && state != "canceled"
+        }
+        return Array(open.prefix(lim))
+    }
+
+    private static func relevanceScore(haystack: String, query: String) -> Int {
+        let h = haystack.lowercased()
+        let q = query.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !q.isEmpty else { return 0 }
+        var score = 0
+        if h.contains(q) { score += 12 }
+        let separators = CharacterSet.whitespacesAndNewlines.union(.punctuationCharacters)
+        for token in q.components(separatedBy: separators) where token.count >= 2 {
+            if h.contains(token.lowercased()) { score += 3 }
+        }
+        // CJK bigrams when no whitespace tokens scored
+        if score == 0, q.count >= 2 {
+            var i = q.startIndex
+            while i < q.endIndex {
+                let j = q.index(i, offsetBy: 2, limitedBy: q.endIndex) ?? q.endIndex
+                if j > i {
+                    let bi = String(q[i..<j])
+                    if bi.count == 2, h.contains(bi) { score += 2 }
+                }
+                if j == q.endIndex { break }
+                i = q.index(after: i)
+            }
+        }
+        return score
+    }
+
     // MARK: - Subscriptions
 
     public func listSubscriptions(limit: Int = 50) throws -> [JSONValue] {
