@@ -1946,9 +1946,7 @@ struct AlarmsSettingsPane: View {
                                 .padding(.vertical, 7)
                                 .background(Color.white.opacity(0.05), in: RoundedRectangle(cornerRadius: 6))
                                 .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(Theme.panelBorder, lineWidth: 0.7))
-                            DatePicker("", selection: $fireAt)
-                                .labelsHidden()
-                                .datePickerStyle(.compact)
+                                .frame(maxWidth: .infinity)
                             Button("添加") {
                                 Task {
                                     await model.upsertAlarm(title: title, fireAt: fireAt)
@@ -1963,6 +1961,12 @@ struct AlarmsSettingsPane: View {
                             .padding(.vertical, 5)
                             .background(Theme.accent, in: RoundedRectangle(cornerRadius: 6))
                         }
+                        // Graphical calendar: month arrows jump by month (no stepper-field clicking).
+                        DatePicker("提醒时间", selection: $fireAt, displayedComponents: [.date, .hourAndMinute])
+                            .datePickerStyle(.graphical)
+                            .labelsHidden()
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .environment(\.locale, Locale.current)
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .panel(padding: SettingsMetrics.cardPadding)
