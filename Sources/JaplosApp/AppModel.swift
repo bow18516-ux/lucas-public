@@ -80,10 +80,13 @@ final class AppModel: ObservableObject {
 
     static let onboardingCompletedKey = "LucasOnboardingCompleted"
     static let onboardingSkippedKey = "LucasOnboardingSkipped"
+    static let unfinishedNudgeDayKey = "LucasUnfinishedNudgeDay"
     @Published var isTestingModel = false
     @Published var testResult: String?
     @Published var memoryNotes: [MemoryNote] = []
     @Published var recentTasks: [PersistedTask] = []
+    /// One-shot unfinished-task banner (cleared by dismiss / continue / day key).
+    @Published var unfinishedNudge: UnfinishedNudge?
     @Published var alarms: [AlarmItem] = []
     @Published var knowledgeDocuments: [KnowledgeDocument] = []
     @Published var mcpEvents: [MCPEventItem] = []
@@ -130,6 +133,12 @@ final class AppModel: ObservableObject {
         var content: String
         var kind: String
         var sessionID: String
+    }
+
+    struct UnfinishedNudge: Equatable {
+        var titles: [String]
+        var taskIDs: [String]
+        var dayKey: String
     }
 
     struct PersistedTask: Identifiable, Equatable {
@@ -206,6 +215,7 @@ final class AppModel: ObservableObject {
         await loadAlarms()
         await loadKnowledgeDocuments()
         await loadMCPEvents()
+        await considerUnfinishedNudge(reason: "launch")
     }
 
     // MARK: - Sessions
@@ -235,6 +245,7 @@ final class AppModel: ObservableObject {
             await loadSessions()
             await loadMemories()
             await loadRecentTasks()
+            await considerUnfinishedNudge(reason: "new_chat")
         } catch {
             errorText = String(describing: error)
         }
@@ -642,19 +653,27 @@ final class AppModel: ObservableObject {
             }
             return ExtractedKnowledge(body: "", fileType: "pdf", status: "empty", note: "无法打开 PDF")
         case "xlsx", "xls":
-            return ExtractedKnowledge(
-                body: "",
-                fileType: "xlsx",
-                status: "unsupported",
-                note: "表格正文抽取尚未接入；文件已登记，可稍后补正文"
-            )
+            if ext == "xls" {
+                return ExtractedKnowledge(
+                    body: "",
+                    fileType: "xlsx",
+                    status: "unsupported",
+                    note: "旧版 .xls（非 OOXML）暂不支持；请另存为 .xlsx 后重试"
+                )
+            }
+            let r = OfficeKnowledgeExtract.extractXLSX(url: url)
+            return ExtractedKnowledge(body: r.body, fileType: "xlsx", status: r.status, note: r.note)
         case "pptx", "ppt":
-            return ExtractedKnowledge(
-                body: "",
-                fileType: "pptx",
-                status: "unsupported",
-                note: "幻灯片正文抽取尚未接入；文件已登记，可稍后补正文"
-            )
+            if ext == "ppt" {
+                return ExtractedKnowledge(
+                    body: "",
+                    fileType: "pptx",
+                    status: "unsupported",
+                    note: "旧版 .ppt（非 OOXML）暂不支持；请另存为 .pptx 后重试"
+                )
+            }
+            let r = OfficeKnowledgeExtract.extractPPTX(url: url)
+            return ExtractedKnowledge(body: r.body, fileType: "pptx", status: r.status, note: r.note)
         default:
             if let data = try? Data(contentsOf: url),
                let text = String(data: data, encoding: .utf8),
@@ -794,6 +813,90 @@ final class AppModel: ObservableObject {
         } catch {
             // Soft-fail: task panel still shows in-memory steps.
         }
+    }
+
+    /// Surfaces a one-shot banner when open agent_tasks exist (once per calendar day).
+    /// Uses alarms when available so a soft follow-up fires later the same day.
+    func considerUnfinishedNudge(reason: String) async {
+        let dayKey = Self.calendarDayKey(for: Date())
+        if UserDefaults.standard.string(forKey: Self.unfinishedNudgeDayKey) == dayKey {
+            return
+        }
+        // Only nudge on empty chat surfaces (launch / new chat), not mid-thread.
+        guard messages.isEmpty else { return }
+
+        let open = await fetchOpenAgentTasks(limit: 6)
+        guard !open.isEmpty else { return }
+
+        let titles = open.map(\.title)
+        let ids = open.map(\.id)
+        unfinishedNudge = UnfinishedNudge(titles: titles, taskIDs: ids, dayKey: dayKey)
+        UserDefaults.standard.set(dayKey, forKey: Self.unfinishedNudgeDayKey)
+        AppLog.write("unfinishedNudge reason=\(reason) count=\(open.count)")
+
+        await ensureUnfinishedAlarm(titles: titles)
+    }
+
+    func dismissUnfinishedNudge() {
+        unfinishedNudge = nil
+    }
+
+    /// Prefills a continue prompt for the composer / send path.
+    func continueUnfinishedNudgePrompt() -> String {
+        guard let nudge = unfinishedNudge else {
+            return "继续上次未完成的事项"
+        }
+        let listed = nudge.titles.prefix(3).map { "· \($0)" }.joined(separator: "\n")
+        unfinishedNudge = nil
+        return "继续这些未完成事项：\n\(listed)\n请先回顾进度，问我要从哪一项接着做。"
+    }
+
+    private func fetchOpenAgentTasks(limit: Int) async -> [PersistedTask] {
+        do {
+            // No session filter — unfinished work across chats.
+            let result = try await client.callAsync(.agentTasksList, arguments: .object([
+                "limit": .number(80),
+            ]))
+            let all = (result.arrayValue ?? []).compactMap { item -> PersistedTask? in
+                guard
+                    let id = item["id"]?.stringValue,
+                    let title = item["title"]?.stringValue
+                else { return nil }
+                let state = (item["state"]?.stringValue ?? "").lowercased()
+                let terminal = ["completed", "done", "cancelled", "canceled"]
+                guard !terminal.contains(state) else { return nil }
+                let updated = item["updatedAt"]?.stringValue.flatMap(ISO8601.date(from:)) ?? Date()
+                return PersistedTask(
+                    id: id,
+                    title: title,
+                    state: item["state"]?.stringValue ?? "open",
+                    sessionID: item["sessionID"]?.stringValue ?? "",
+                    updatedAt: updated
+                )
+            }
+            return Array(all.prefix(limit))
+        } catch {
+            return []
+        }
+    }
+
+    private func ensureUnfinishedAlarm(titles: [String]) async {
+        // Skip if a same-day unfinished alarm already exists.
+        let marker = "未完成事项"
+        let already = alarms.contains { alarm in
+            alarm.enabled && alarm.title.contains(marker) && Calendar.current.isDateInToday(alarm.fireAt)
+        }
+        guard !already else { return }
+        let fire = Date().addingTimeInterval(2 * 60 * 60) // ~2h later
+        let summary = titles.prefix(2).joined(separator: "、")
+        let title = "\(marker)：\(summary)"
+        await upsertAlarm(title: String(title.prefix(80)), fireAt: fire, enabled: true)
+    }
+
+    private static func calendarDayKey(for date: Date) -> String {
+        let cal = Calendar.current
+        let c = cal.dateComponents([.year, .month, .day], from: date)
+        return String(format: "%04d-%02d-%02d", c.year ?? 0, c.month ?? 0, c.day ?? 0)
     }
 
     private func persistAgentTask(sessionID: String, steps: [ToolStep], preview: String) async {

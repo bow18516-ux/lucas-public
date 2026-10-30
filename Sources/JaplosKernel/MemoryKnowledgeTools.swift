@@ -98,7 +98,7 @@ private struct KnowledgeSearchTool: KernelTool {
         ToolDefinition(
             name: "knowledge.search",
             title: "搜索知识库",
-            summary: "按关键词检索知识库文档（公司资料、客户往来、上传文件）。回邮件/答业务问题前必须先搜相关资料。",
+            summary: "检索知识库文档（本地混合：NLEmbedding 语义 + FTS/关键词）。回邮件/答业务问题前必须先搜相关资料。",
             inputSchema: .object([
                 "type": "object",
                 "properties": .object([
@@ -137,7 +137,7 @@ private struct KnowledgeSearchTool: KernelTool {
         return .object([
             "count": .number(Double(trimmed.count)),
             "items": .array(trimmed),
-            "retrieval": .string("keyword"),
+            "retrieval": .string(store.knowledgeRetrievalBackend()),
         ])
     }
 }

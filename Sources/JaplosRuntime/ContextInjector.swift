@@ -3,7 +3,7 @@ import JaplosKernel
 import JaplosProtocol
 
 /// Builds per-turn memory / knowledge / open-task context blocks for the system prompt.
-/// Retrieval is keyword-based (no vector DB) — honest v1.
+/// Knowledge retrieval is hybrid (NLEmbedding + FTS5 + keyword) when available.
 public enum ContextInjector {
     public static func build(
         store: KernelStore,
@@ -26,7 +26,7 @@ public enum ContextInjector {
 
     public static let policyGuidance = """
     记忆与知识库（动态）：
-    - 系统会注入与本轮相关的记忆和知识摘要；不够用时调用 memory.search / knowledge.search / knowledge.read。
+    - 系统会注入与本轮相关的记忆和知识摘要（知识库为本地混合检索）；不够用时调用 memory.search / knowledge.search / knowledge.read。
     - 用户说出长期偏好、决定、公司/客户事实时，用 memory.save 写入；知识库文件由用户在设置里上传，你只检索与引用。
     - 知识库会持续更新：不要假设自己已经读过全部，回答业务问题前先检索。
     - 若注入了「未完成事项」，在合适时机主动问要不要继续；不要每次开场都机械复读。

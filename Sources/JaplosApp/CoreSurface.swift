@@ -579,6 +579,9 @@ struct CenterColumn: View {
 
     private var conversationBody: some View {
         LazyVStack(alignment: .leading, spacing: 20) {
+            if let nudge = model.unfinishedNudge {
+                unfinishedNudgeBanner(nudge)
+            }
             if model.messages.isEmpty {
                 emptyState
             }
@@ -612,6 +615,60 @@ struct CenterColumn: View {
                 .foregroundStyle(Theme.textSecondary)
         }
         .padding(.top, 8)
+    }
+
+    private func unfinishedNudgeBanner(_ nudge: AppModel.UnfinishedNudge) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .top, spacing: 8) {
+                Image(systemName: "arrow.uturn.backward.circle.fill")
+                    .foregroundStyle(Theme.accent)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("还有未完成的事项")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(Theme.textPrimary)
+                    Text(nudge.titles.prefix(3).joined(separator: " · "))
+                        .font(.system(size: 12))
+                        .foregroundStyle(Theme.textSecondary)
+                        .lineLimit(2)
+                }
+                Spacer(minLength: 0)
+            }
+            HStack(spacing: 8) {
+                Button {
+                    let prompt = model.continueUnfinishedNudgePrompt()
+                    draft = prompt
+                    model.send(prompt)
+                    draft = ""
+                } label: {
+                    Text("继续")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(Color.black.opacity(0.85))
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 6)
+                        .background(Theme.accent, in: Capsule())
+                }
+                .buttonStyle(.pressable)
+
+                Button {
+                    model.dismissUnfinishedNudge()
+                } label: {
+                    Text("稍后")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(Theme.textSecondary)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 6)
+                        .background(Color.white.opacity(0.06), in: Capsule())
+                }
+                .buttonStyle(.pressable)
+            }
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Theme.accent.opacity(0.08), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .strokeBorder(Theme.accent.opacity(0.25), lineWidth: 0.8)
+        )
     }
 
     private var composer: some View {

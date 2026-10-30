@@ -23,6 +23,7 @@ public final class KernelStore {
         self.database = try SQLiteDatabase(path: path)
         self.secrets = SecretStore(home: directory)
         try migrate()
+        try? rebuildKnowledgeFTSIfEmpty()
         migratePlaintextModelSecret()
     }
 
@@ -191,6 +192,15 @@ public final class KernelStore {
         );
         """)
         try database.execute("CREATE INDEX IF NOT EXISTS idx_knowledge_documents_updated ON knowledge_documents(updated_at DESC);")
+        // FTS5 keyword index (unicode61). CJK still leans on substring + NLEmbedding hybrid search.
+        try database.execute("""
+        CREATE VIRTUAL TABLE IF NOT EXISTS knowledge_fts USING fts5(
+            doc_id UNINDEXED,
+            title,
+            body,
+            tokenize = 'unicode61 remove_diacritics 2'
+        );
+        """)
         try database.execute("""
         CREATE TABLE IF NOT EXISTS subscriptions (
             id TEXT PRIMARY KEY NOT NULL,
@@ -1164,13 +1174,44 @@ public final class KernelStore {
             updated_at = excluded.updated_at,
             record_json = excluded.record_json;
         """, [id, title, now, encoded])
+        let body = record["body"]?.stringValue ?? record["text"]?.stringValue ?? ""
+        try syncKnowledgeFTS(id: id, title: title, body: body)
     }
 
     public func deleteKnowledgeDocument(id: String) throws {
         try database.execute("DELETE FROM knowledge_documents WHERE id = ?;", [id])
+        try? database.execute("DELETE FROM knowledge_fts WHERE doc_id = ?;", [id])
     }
 
-    /// Keyword / substring retrieval over title + record body (no vector DB — honest v1).
+    private func syncKnowledgeFTS(id: String, title: String, body: String) throws {
+        try database.execute("DELETE FROM knowledge_fts WHERE doc_id = ?;", [id])
+        // Cap FTS body so the index stays lean.
+        let capped = String(body.prefix(80_000))
+        try database.execute(
+            "INSERT INTO knowledge_fts(doc_id, title, body) VALUES (?, ?, ?);",
+            [id, title, capped]
+        )
+    }
+
+
+    /// One-shot: populate FTS from existing knowledge rows when the index is empty.
+    private func rebuildKnowledgeFTSIfEmpty() throws {
+        let ftsCount = (try? database.scalarInt("SELECT COUNT(*) FROM knowledge_fts;")) ?? 0
+        guard ftsCount == 0 else { return }
+        let docs = try listKnowledgeDocuments(limit: 500)
+        guard !docs.isEmpty else { return }
+        for doc in docs {
+            guard let obj = doc.objectValue else { continue }
+            let id = obj["id"]?.stringValue ?? ""
+            guard !id.isEmpty else { continue }
+            let title = obj["title"]?.stringValue ?? ""
+            let record = obj["record"]?.objectValue ?? [:]
+            let body = record["body"]?.stringValue ?? record["text"]?.stringValue ?? ""
+            try syncKnowledgeFTS(id: id, title: title, body: body)
+        }
+    }
+
+    /// Hybrid retrieval: keyword/substring (+ FTS5 boost) + offline NLEmbedding cosine when available.
     public func searchKnowledgeDocuments(
         query: String,
         library: String? = nil,
@@ -1179,32 +1220,91 @@ public final class KernelStore {
         let lim = max(1, min(limit, 40))
         let docs = try listKnowledgeDocuments(limit: 300)
         let q = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        let scored: [(Int, JSONValue)] = docs.compactMap { doc in
-            guard let obj = doc.objectValue else { return nil }
+        if q.isEmpty {
+            return Array(docs.prefix(lim))
+        }
+
+        let ftsIDs = (try? knowledgeFTSMatchIDs(query: q, limit: 40)) ?? []
+        let ftsBoost = Dictionary(uniqueKeysWithValues: ftsIDs.enumerated().map { ($0.element, 8 - min($0.offset, 7)) })
+
+        let queryVector = LocalEmbedding.vector(for: q)
+        let useEmbed = queryVector != nil
+
+        struct Hit {
+            var score: Double
+            var doc: JSONValue
+        }
+        var hits: [Hit] = []
+        hits.reserveCapacity(docs.count)
+
+        for doc in docs {
+            guard let obj = doc.objectValue else { continue }
             let record = obj["record"]?.objectValue ?? [:]
             let lib = record["library"]?.stringValue ?? "all"
             if let library, !library.isEmpty, library != "all", lib != library {
-                return nil
+                continue
             }
+            let id = obj["id"]?.stringValue ?? ""
             let title = obj["title"]?.stringValue ?? record["title"]?.stringValue ?? ""
             let body = record["body"]?.stringValue ?? record["text"]?.stringValue ?? ""
-            let hay = (title + "\n" + body)
-            let score: Int
-            if q.isEmpty {
-                score = 1
-            } else {
-                score = Self.relevanceScore(haystack: hay, query: q)
+            let hay = title + "\n" + body
+            let keyword = Double(Self.relevanceScore(haystack: hay, query: q))
+            let fts = Double(ftsBoost[id] ?? 0)
+
+            var semantic = 0.0
+            if let qv = queryVector {
+                let embedText = title + "\n" + String(body.prefix(800))
+                if let dv = LocalEmbedding.vector(for: embedText) {
+                    // Cosine in [-1,1] → [0,1], then scale.
+                    semantic = max(0, LocalEmbedding.cosineSimilarity(qv, dv)) * 20.0
+                }
             }
-            guard score > 0 || q.isEmpty else { return nil }
-            return (score, doc)
+
+            let score = keyword + fts + semantic
+            // Keep weak semantic-only hits only when similarity is meaningful.
+            if score <= 0 { continue }
+            if keyword == 0 && fts == 0 && semantic < 8 { continue }
+            hits.append(Hit(score: score, doc: doc))
         }
-        let sorted: [(Int, JSONValue)]
-        if q.isEmpty {
-            sorted = scored
-        } else {
-            sorted = scored.sorted { $0.0 > $1.0 }
+
+        // If embeddings unavailable and keyword miss everything, surface recent docs lightly.
+        if hits.isEmpty && !useEmbed {
+            return []
         }
-        return Array(sorted.prefix(lim).map(\.1))
+        hits.sort { $0.score > $1.score }
+        return Array(hits.prefix(lim).map(\.doc))
+    }
+
+    /// Active retrieval backend label for tools / inject copy.
+    public func knowledgeRetrievalBackend() -> String {
+        if LocalEmbedding.isAvailable {
+            return "hybrid:\(LocalEmbedding.backendName)+fts5+keyword"
+        }
+        return "fts5+keyword"
+    }
+
+    private func knowledgeFTSMatchIDs(query: String, limit: Int) throws -> [String] {
+        // Build a conservative FTS query: quote multi-char tokens joined with OR.
+        let separators = CharacterSet.whitespacesAndNewlines.union(.punctuationCharacters)
+        let tokens = query.components(separatedBy: separators)
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { $0.count >= 2 }
+            .prefix(8)
+        guard !tokens.isEmpty else { return [] }
+        let escaped = tokens.map { tok -> String in
+            let safe = tok.replacingOccurrences(of: "\"", with: "")
+            return "\"\(safe)\""
+        }
+        let match = escaped.joined(separator: " OR ")
+        let rows = try database.query(
+            """
+            SELECT doc_id FROM knowledge_fts
+            WHERE knowledge_fts MATCH ?
+            LIMIT ?;
+            """,
+            [match, limit]
+        )
+        return rows.compactMap { $0["doc_id"] as? String }
     }
 
     /// Substring search over memory content.
@@ -1810,7 +1910,7 @@ public final class KernelStore {
             "metadata", "configurations", "sessions", "turns", "permission_grants",
             "tool_invocations", "configuration_history", "custom_model_routes", "speech_profiles",
             "memories", "agent_tasks", "alarms", "mcp_events", "modules", "runs",
-            "knowledge_documents", "subscriptions", "context_snapshots", "cancellations",
+            "knowledge_documents", "knowledge_fts", "subscriptions", "context_snapshots", "cancellations",
             "capability_delegations", "information_revisions", "generated_tool_artifacts",
             "persistence_migrations", "information_types", "information_heads",
             "information_processors", "deliveries", "situations", "self_healing_events",

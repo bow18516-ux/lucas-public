@@ -19,7 +19,10 @@ let package = Package(
         .target(
             name: "JaplosKernel",
             dependencies: ["JaplosProtocol"],
-            linkerSettings: [.linkedLibrary("sqlite3")]
+            linkerSettings: [
+                .linkedLibrary("sqlite3"),
+                .linkedFramework("NaturalLanguage"),
+            ]
         ),
         .target(
             name: "JaplosRuntime",
