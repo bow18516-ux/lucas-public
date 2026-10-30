@@ -420,6 +420,7 @@ public enum SystemInfoTools {
             HostnameTool(),
             OSVersionTool(),
             AppSupportPathsTool(),
+            SystemUptimeTool(),
             UserDefaultsTool(),
         ]
     }
