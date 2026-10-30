@@ -90,7 +90,11 @@ public enum PromptLibrary {
         let relative = normalize(path)
         let overrideURL = overrideRoot().appendingPathComponent(relative)
         let bundledURL = bundledPromptsRoot()?.appendingPathComponent(relative)
-        if let raw = SeededOverride.text(override: overrideURL, bundled: bundledURL) {
+        if let raw = SeededOverride.text(
+            override: overrideURL,
+            bundled: bundledURL,
+            relativePath: "Prompts/\(relative)"
+        ) {
             let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
             if !trimmed.isEmpty {
                 return localizeProductName(trimmed)

@@ -48,6 +48,13 @@ UPDATES="$ROOT/updates"
 KEY="$ROOT/.secrets/sparkle_ed_key"
 APP="$ROOT/build/Lucas.app"
 
+# The seed manifest tells SeededOverride which prompt files an older release
+# copied out; a stale one makes legacy users keep an outdated prompt forever.
+if ! ./scripts/gen-seed-manifest.sh --check; then
+    echo "refusing to release: regenerate and commit Sources/JaplosRuntime/Resources/SeedManifest.json" >&2
+    exit 1
+fi
+
 if [ ! -f "$KEY" ]; then
     echo "missing $KEY (Sparkle EdDSA private key)" >&2
     exit 1

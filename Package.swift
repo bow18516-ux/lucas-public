@@ -32,6 +32,7 @@ let package = Package(
                 .copy("Resources/Prompts"),
                 .copy("Resources/Injection"),
                 .copy("Resources/BuiltinSkills"),
+                .copy("Resources/SeedManifest.json"),
             ]
         ),
         .executableTarget(

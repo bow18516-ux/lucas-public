@@ -1,0 +1,181 @@
+{
+  "Injection/scenes.json": [
+    "3a7d9b007aa5f1db46eb8dbbe8872bc968ad87c283908dad8daf16b912d017d5",
+    "e0b710a4d27d030d659400c5feec99b611a69ad0e2f94bd2201d34acccf48983"
+  ],
+  "Prompts/awakening/encounter.md": [
+    "5207d3d6f1e3a1e25367c26afafb6794855b30435636307ac57b2041e2744166"
+  ],
+  "Prompts/awakening/interaction.md": [
+    "3694491d490b84dcdc1cf48df7b9748ece7ee72bbf394b41c2be899771c40743"
+  ],
+  "Prompts/awakening/rules.md": [
+    "4ee8ed5c901a37ececc148d0baefb071fb3343ed34e50f58bd4cc9bb97c58438"
+  ],
+  "Prompts/communication/channels.md": [
+    "8a71ec889e6650b35578eab30cec4efbea017438fa46ace2433a3144cfa0d32a"
+  ],
+  "Prompts/communication/context-layers.md": [
+    "c392fbf71756562ebef84d129983d86bd6680dfef3805df7fa06a89b4306182a"
+  ],
+  "Prompts/communication/continuity.md": [
+    "510d5db5ecbc5ea93559db9b253282c957f59a575f8f353f16d3042d13909750"
+  ],
+  "Prompts/communication/current-turn.md": [
+    "7a9e6d45d15a68b80cd51890d7688459b744ca5d001e8b0f8727b7aeb4392c09"
+  ],
+  "Prompts/communication/expression-style.en.md": [
+    "12271b63c65c32fd779462899e2ea2d3f445a81793dbe0f7ef2d268058812f12"
+  ],
+  "Prompts/communication/final-speaking-reminder.en.md": [
+    "a40615eb686d76eaf71b413b11023a1ed4b2cba37b8453d94e694670b302deab"
+  ],
+  "Prompts/communication/spoken-reply.md": [
+    "e5990a52a273a43cd189677de2af3d97194e185e19e05a0543a5289351ba9a23"
+  ],
+  "Prompts/communication/voice-input.md": [
+    "dd8fa5c84d8eb477d408f9da843a945bf91dd64c90049c1032214ad4972821f1"
+  ],
+  "Prompts/communication/wechat.md": [
+    "9eff42cabe69090be3338392aa8d8b3ca3103755088a899d96fc08a8a80953bb",
+    "af9b4fd50f96d63798d96eafe20c78eec53174bb8aceeae768cccaf6aecbfeb5"
+  ],
+  "Prompts/context/alarm-policy.md": [
+    "d4cf21949db227d0f6c01e82941b593c46b35f6d9195b6e104161c4e7096ecf6"
+  ],
+  "Prompts/context/identity-policy.md": [
+    "5b36fa4e6a90d37d83e34b45da23ab552e0fb18f696bad13b8851f5d5b1d465c"
+  ],
+  "Prompts/context/situations.md": [
+    "b22c741e2186125a5d20669011fb317b9b820d614e831e065a9c7d93b92d847b"
+  ],
+  "Prompts/context/weather-evidence.md": [
+    "60deb072e292633418fd8811ee96c101c2bb55ae871bdb5bb2bb2423cbabf6d2"
+  ],
+  "Prompts/core/authorization.md": [
+    "17ad77e19a204ce399a9618d8ec5a51c2b277efbf6b2f354a22b564568298921"
+  ],
+  "Prompts/core/behavior.md": [
+    "7ae0dc4414f30d972d8ab554371dbea322fd60b3d74e347819df1b39e4ea4426"
+  ],
+  "Prompts/core/execution.md": [
+    "75b8c8f59ad34cdffcadc8820d33ad44cf3c106a1b14abd3747bbc0aebaadb9b"
+  ],
+  "Prompts/core/identity.md": [
+    "cefbc4346ee439e6c2bcfcd387e1889c71745bb7ebb78b988fd604b9aa4d027d"
+  ],
+  "Prompts/delivery/screenshot-existing.md": [
+    "3783ad66ec320690e7d0836fb2ae8fa3cff512500bbc2a985c15c766b8f4ef72"
+  ],
+  "Prompts/delivery/screenshot-new.md": [
+    "eacd72bb7aceaf2bda28e819cc3c82a7be1ed50a6819d550e68aa93a75ebf385"
+  ],
+  "Prompts/delivery/wechat-evidence.md": [
+    "b0fb083a243dd0edbd3897ccfeec1f1dfe0c737b06b276645092321cd3018645"
+  ],
+  "Prompts/delivery/wechat-pending.md": [
+    "0898b6a85f4279fa63f3ab3c777b0edfab9bb4553e51730fed1efadcfed68223"
+  ],
+  "Prompts/environment/music.md": [
+    "e158801e9fc195c9a5f2045d66af74d6833fb9ff2b82e594f597a7dad67e0302"
+  ],
+  "Prompts/environment/snapshot.md": [
+    "4c4223699731407a01827933a91cb25cb17e2224b4150222d82378ae5e75f286"
+  ],
+  "Prompts/execution/acknowledged.md": [
+    "b641eb68a96d10b6c3ba5bee2eed302e741cb3da46ea04eb25c087d33e93b48f"
+  ],
+  "Prompts/execution/cycle.md": [
+    "25ffa5f966a99d13e4124b7105323e2b68326de3b30df6bd9744d0ea8e924891"
+  ],
+  "Prompts/execution/handoff.md": [
+    "cf3c055b4bc4645725266ec54412e9712dbb73cd49d254e8c57c987714b3eccf"
+  ],
+  "Prompts/execution/loop-budget.md": [
+    "5d3c88ef8153a861e5d14cc587bd2dbb53ea9385c5c616c4150c58593c5c5be1"
+  ],
+  "Prompts/execution/routing.md": [
+    "5820b5f58089085dbc74111ce757830a5250a7feeba218d5faeb0a930c90a945"
+  ],
+  "Prompts/execution/supervision.md": [
+    "9449436cbc7c543c5dbd89e7cda0ea9b25e459f8d6c2bc6ae062481d90048ea4"
+  ],
+  "Prompts/execution/task-acceptance.md": [
+    "c8291ee9595068cab6ae83cbec6b6f3325118b319a010085cfc5eef33eaf5494"
+  ],
+  "Prompts/execution/task-context.md": [
+    "fa9de4a8aa58ef5fab6682c9cbc0dff161b565aec4e9c049c93facbba4d3162f"
+  ],
+  "Prompts/execution/task.md": [
+    "061abbfd78bc79321413bea79b50f9125d9a2f15259ae1413a77a681dd544da3"
+  ],
+  "Prompts/execution/tool-budget.md": [
+    "e01d453f63294ae338975e316d39f9c79af3889e40fecf72dc99a39778380a13"
+  ],
+  "Prompts/execution/tools-exhausted.md": [
+    "c4584cc0fb63282b292e719ac558e6063650932d836ef27686cd9d4af9b1a46f"
+  ],
+  "Prompts/execution/tools-wrapup.md": [
+    "ae0d9e6ca939b0963d211a3c4dd31f4929c991f9909a98235ec0b4cc7a076b10"
+  ],
+  "Prompts/knowledge/overview.md": [
+    "d03d44a7f5c635fbeeae42fb1d1913e278dd65c52a36bc76fd42f65d2a0e06a3"
+  ],
+  "Prompts/knowledge/search.md": [
+    "bb39131f0f1e7ff1f8ef4a259fb29bd15111289e53cf1b834d6ab9ec38eac4f4"
+  ],
+  "Prompts/media/attachments.md": [
+    "de2c59a91fcb52ab4363688ba5fbf92732f18b73c531964751f33ac0611ee8c0"
+  ],
+  "Prompts/media/image-reading.md": [
+    "08b0aaa449618f567db2cd1efbc1b52037dbd8bd2431291ef180ecb1b2b71239"
+  ],
+  "Prompts/tools/browser.md": [
+    "a3466f990700d522316abc16e18a2d3b2c1cbd6ce3fb22eba98b30a50933626d"
+  ],
+  "Prompts/tools/download.md": [
+    "44eec33ed0f10f613acc23bfa59ea4e75a05c0b318cda21981af175f0ecccbbc"
+  ],
+  "Prompts/tools/model-configuration.md": [
+    "c8b05b95aa128d4b964a5b8150db7355dd72f1cfb66f3b23c8725d831158c5f5"
+  ],
+  "Prompts/tools/model-default.md": [
+    "280cd94e411a818cc145946402988bf98002b37f970f32923f53df7282127d38"
+  ],
+  "Prompts/tools/model-index.md": [
+    "086a5ba8164fd07fc897c4f3215abceaa4020fb9f6bc9a9eb17b655c9243da53"
+  ],
+  "Prompts/tools/model-list.md": [
+    "0e315e2f20386a6340d0968a044d80af9b3d9d0cde95030c90b2e1b676e576a4"
+  ],
+  "Prompts/tools/model-select.md": [
+    "cb2afced5343f437794b80de1ed3844cbfb5e605b0ac475449abcd4b687b37de"
+  ],
+  "Prompts/tools/model-thinking.md": [
+    "14f7216161a1caadad99d0922954e7e541dd886afd520e9f9047e11d1b56d2df"
+  ],
+  "Prompts/tools/music.md": [
+    "314b8ab800701c5183fb7d5c338b26250f1eb613b4befbcf017bf0fa1c4b54ac"
+  ],
+  "Prompts/tools/pdf.md": [
+    "020c8a44cd2b59c3250f923f6da01ba34e27a5387a5714734789ac459bbe06ed"
+  ],
+  "Prompts/tools/schedule.md": [
+    "f34b04e483efd55a5b93e37ed9f7256325ff8e75e5573d5a8065a2c74d53e88e"
+  ],
+  "Prompts/tools/software.md": [
+    "29eac99998cdf9c159a9ae0284d4f6e53a01825b268c34ad6bcfb1506f11c367"
+  ],
+  "Prompts/tools/video.md": [
+    "26b3913641acf7960bd8ff16fc8035ee198f1a3f2a3adae91ee3ab8eac37c42f"
+  ],
+  "Prompts/tools/web-search.md": [
+    "494c8e3b21cd3029876b69a0c50bcf2f6c9b4018ba0d3226dc6f054897a5b466"
+  ],
+  "Prompts/variants/reply-considered.md": [
+    "6c260dfc2b4f05acf7d71048377eebce7e7334b8b5434ac481e032c64ccd8a46"
+  ],
+  "Prompts/variants/reply-direct.md": [
+    "c6b4ee51502e4a0674051c7020ca4ae3537ab7c883a30559a56a44f4687bc09e"
+  ]
+}

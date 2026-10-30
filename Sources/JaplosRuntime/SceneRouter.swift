@@ -127,7 +127,11 @@ public enum SceneRouter {
     }
 
     private static func loadFromDisk() -> [Scene]? {
-        if let text = SeededOverride.text(override: scenesFileOverrideURL(), bundled: bundledScenesURL()),
+        if let text = SeededOverride.text(
+            override: scenesFileOverrideURL(),
+            bundled: bundledScenesURL(),
+            relativePath: "Injection/scenes.json"
+        ),
            let data = text.data(using: .utf8),
            let mapped = decodeScenes(data) {
             return mapped
