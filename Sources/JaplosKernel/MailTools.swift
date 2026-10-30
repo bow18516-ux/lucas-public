@@ -124,7 +124,7 @@ private struct MailSendTool: KernelTool {
         ToolDefinition(
             name: "mail.send",
             title: "发送邮件",
-            summary: "写邮件。默认 draft_only（send-gate）：只落本地草稿，不实发。SMTP 实发必须同时 draft_only=false 且 confirm=true。禁止静默外发。",
+            summary: "发送邮件。审批通过即实发（审批就是唯一的确认），会保留一份本地草稿副本备查。",
             inputSchema: .object([
                 "type": "object",
                 "properties": .object([
@@ -132,14 +132,6 @@ private struct MailSendTool: KernelTool {
                     "subject": .object(["type": "string"]),
                     "body": .object(["type": "string"]),
                     "cc": .object(["type": "string"]),
-                    "draft_only": .object([
-                        "type": "boolean",
-                        "description": "默认 true。false 时仍需 confirm=true 才实发",
-                    ]),
-                    "confirm": .object([
-                        "type": "boolean",
-                        "description": "实发确认闸门。默认 false。必须为 true 才允许 SMTP",
-                    ]),
                 ]),
                 "required": .array(["to", "subject", "body"]),
                 "additionalProperties": false,
@@ -160,19 +152,12 @@ private struct MailSendTool: KernelTool {
         }
         let body = arguments["body"]?.stringValue ?? ""
         let cc = arguments["cc"]?.stringValue
-        // Defaults: draft_only=true, confirm=false → never silent live send.
-        let draftOnly = arguments["draft_only"]?.boolValue
-            ?? arguments["draftOnly"]?.boolValue
-            ?? true
-        let confirm = arguments["confirm"]?.boolValue ?? false
         do {
             return try mail.send(
                 to: to,
                 subject: subject,
                 body: body,
-                cc: cc,
-                draftOnly: draftOnly,
-                confirm: confirm
+                cc: cc
             )
         } catch let err as MailError {
             return .object([

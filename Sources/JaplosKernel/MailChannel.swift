@@ -5,7 +5,7 @@ import JaplosProtocol
 /// not MCP and not Gmail Pub/Sub.
 ///
 /// App password → SecretStore / Keychain. Account metadata → `mail/account.json` (0600).
-/// Outbound defaults to draft-only; live SMTP needs `confirm=true` and `draft_only=false`.
+/// Approval is the only confirmation: an approved `mail.send` sends through SMTP.
 public final class MailChannel: @unchecked Sendable {
     public enum Preset: String, CaseIterable, Sendable {
         case gmail
@@ -47,6 +47,25 @@ public final class MailChannel: @unchecked Sendable {
         }
 
         public var smtpPort: Int { 465 }
+    }
+
+    /// SMTP transport, injectable so tests can assert the send path without a server.
+    public typealias OutboundSender = (
+        _ host: String, _ port: Int, _ user: String, _ password: String,
+        _ from: String, _ recipients: [String], _ data: Data, _ timeout: TimeInterval
+    ) throws -> Void
+
+    public var outboundSender: OutboundSender = { host, port, user, password, from, recipients, data, timeout in
+        try SMTPClient.send(
+            host: host,
+            port: port,
+            user: user,
+            password: password,
+            from: from,
+            recipients: recipients,
+            data: data,
+            timeout: timeout
+        )
     }
 
     public struct Account: Codable, Sendable, Equatable {
@@ -101,6 +120,27 @@ public final class MailChannel: @unchecked Sendable {
         self.supportDirectory = supportDirectory
         try? FileManager.default.createDirectory(at: mailDir, withIntermediateDirectories: true)
         try? FileManager.default.createDirectory(at: draftsDir, withIntermediateDirectories: true)
+        pruneDrafts()
+    }
+
+    /// Draft copies older than a week are removed when the daemon starts.
+    @discardableResult
+    public func pruneDrafts(olderThanDays days: Int = 7, now: Date = Date()) -> Int {
+        let fileManager = FileManager.default
+        guard let files = try? fileManager.contentsOfDirectory(
+            at: draftsDir,
+            includingPropertiesForKeys: [.contentModificationDateKey]
+        ) else { return 0 }
+        let cutoff = now.addingTimeInterval(-Double(days) * 86_400)
+        var removed = 0
+        for file in files where file.pathExtension == "json" {
+            guard let values = try? file.resourceValues(forKeys: [.contentModificationDateKey]),
+                  let modified = values.contentModificationDate,
+                  modified < cutoff
+            else { continue }
+            if (try? fileManager.removeItem(at: file)) != nil { removed += 1 }
+        }
+        return removed
     }
 
     private var mailDir: URL {
@@ -393,14 +433,13 @@ public final class MailChannel: @unchecked Sendable {
         }.value
     }
 
-    /// Send-gate: default draft_only. Live SMTP only when confirm=true AND draft_only=false.
+    /// Sends through SMTP. The approval card is the only confirmation step, so
+    /// there is no second in-band `confirm` flag for a model to fill in.
     public func send(
         to: String,
         subject: String,
         body: String,
-        cc: String?,
-        draftOnly: Bool,
-        confirm: Bool
+        cc: String?
     ) throws -> JSONValue {
         let toTrim = to.trimmingCharacters(in: .whitespacesAndNewlines)
         let subjectTrim = subject.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -420,7 +459,6 @@ public final class MailChannel: @unchecked Sendable {
         let account = loadAccount()
         let from = account.email
         let draftID = UUID().uuidString
-        let gateBlocked = draftOnly || !confirm
         let draft: [String: JSONValue] = [
             "id": .string(draftID),
             "to": .string(toTrim),
@@ -429,7 +467,7 @@ public final class MailChannel: @unchecked Sendable {
             "body": .string(body),
             "from": .string(from),
             "createdAt": .string(ISO8601.string(from: Date())),
-            "sendGate": .string(gateBlocked ? "draft_only" : "live_requested"),
+            "sendGate": .string("approved_send"),
         ]
 
         try FileManager.default.createDirectory(at: draftsDir, withIntermediateDirectories: true)
@@ -439,20 +477,6 @@ public final class MailChannel: @unchecked Sendable {
             try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: draftURL.path)
         }
 
-        if gateBlocked {
-            return .object([
-                "ok": .bool(true),
-                "sent": .bool(false),
-                "draft_only": .bool(true),
-                "draft_id": .string(draftID),
-                "draft_path": .string(draftURL.path),
-                "to": .string(toTrim),
-                "subject": .string(subjectTrim),
-                "message": .string("已写入草稿（send-gate）。实发需 draft_only=false 且 confirm=true。"),
-                "next": .string("再次调用 mail.send，传入相同字段并设 draft_only=false, confirm=true。"),
-            ])
-        }
-
         let creds = try requireCreds()
         let fromAddr = from.isEmpty ? creds.email : from
         let raw = MailMIME.build(from: fromAddr, to: toTrim, cc: cc, subject: subjectTrim, body: body)
@@ -460,25 +484,18 @@ public final class MailChannel: @unchecked Sendable {
         if let cc, !cc.isEmpty {
             recipients.append(contentsOf: cc.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) })
         }
-        try SMTPClient.send(
-            host: creds.smtpHost,
-            port: creds.smtpPort,
-            user: creds.email,
-            password: creds.password,
-            from: fromAddr,
-            recipients: recipients,
-            data: raw,
-            timeout: 30
+        try outboundSender(
+            creds.smtpHost, creds.smtpPort, creds.email, creds.password,
+            fromAddr, recipients, raw, 30
         )
         return .object([
             "ok": .bool(true),
             "sent": .bool(true),
-            "draft_only": .bool(false),
             "draft_id": .string(draftID),
             "draft_path": .string(draftURL.path),
             "to": .string(toTrim),
             "subject": .string(subjectTrim),
-            "message": .string("已通过 SMTP 实发（confirm=true）。草稿副本仍保留备查。"),
+            "message": .string("已通过 SMTP 发送（审批即确认）。草稿副本保留备查。"),
         ])
     }
 
