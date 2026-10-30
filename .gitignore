@@ -8,7 +8,7 @@ run/
 # release secrets and generated feeds
 .secrets/
 updates/
-tools/
+/tools/
 .build/
 release.env
 .appcast-staging/

@@ -36,6 +36,17 @@ cp "$BIN_DIR/lucasd" "$CONTENTS/MacOS/lucasd"
 if [ -f "$ROOT/Assets/AppIcon.icns" ]; then
     cp "$ROOT/Assets/AppIcon.icns" "$CONTENTS/Resources/AppIcon.icns"
 fi
+
+# Modular Japlos prompt pack + scenes (also embedded via SPM Bundle.module in lucasd)
+PROMPT_SRC="$ROOT/Sources/JaplosRuntime/Resources"
+if [ -d "$PROMPT_SRC/Prompts" ]; then
+    rm -rf "$CONTENTS/Resources/Prompts"
+    cp -R "$PROMPT_SRC/Prompts" "$CONTENTS/Resources/Prompts"
+fi
+if [ -d "$PROMPT_SRC/Injection" ]; then
+    rm -rf "$CONTENTS/Resources/Injection"
+    cp -R "$PROMPT_SRC/Injection" "$CONTENTS/Resources/Injection"
+fi
 chmod +x "$CONTENTS/MacOS/Lucas" "$CONTENTS/MacOS/lucasd"
 
 # Sparkle ships as a framework next to the executable.

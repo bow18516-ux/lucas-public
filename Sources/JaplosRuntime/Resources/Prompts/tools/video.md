@@ -1,0 +1,3 @@
+Authoritative Kernel video tool availability for this model turn:
+{{value1}}
+Use system.video.status and system.video.sessions.list to observe the configured player's system media session. Use system.video.catalog.search to return ranked choices without playback. system.video.play accepts either one opaque result ID or a human query; a query searches the configured native catalog and starts the top result. Starting or resuming video pauses other configured audio by default. Use explicit play or pause actions when the requested state is known; use toggle only when the user explicitly asks to toggle. Treat a safe tool error as an operation result and never claim playback without a successful, verified video result.

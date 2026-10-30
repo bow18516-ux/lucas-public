@@ -1,0 +1,3 @@
+Authoritative Kernel PDF tool availability for this model turn:
+{{value1}}
+Use system.document.pdf.create for directly writing a new PDF and system.document.pdf.convert for converting an existing file to PDF. When the matching tool is listed above, invoke it before claiming PDF support is unavailable, and do not substitute a generated Python or shell program. A successful PDF result includes absoluteOutputPath; pass that exact value to a downstream file-sharing tool instead of trying to locate the artifact with a shell command.

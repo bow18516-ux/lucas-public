@@ -1,8 +1,12 @@
 import Foundation
 import JaplosProtocol
 
-/// Prompt fragments, assembled per turn. Users can override any fragment by
-/// dropping `<id>.md` into `~/Library/Application Support/Lucas/Prompts`.
+/// Modular prompt pack (Japlos SoT) + optional Application Support overrides.
+///
+/// Search order for each fragment path (e.g. `core/identity.md`):
+/// 1. `~/Library/Application Support/Lucas/Prompts/<path>`
+/// 2. Bundled `Resources/Prompts/<path>`
+/// 3. Hardcoded Lucas fallback (only for the five legacy fragment ids)
 public enum PromptLibrary {
     public static let identity = """
     你是 Lucas Agent，一个运行在用户 Mac 上的桌面 Agent。
@@ -40,6 +44,77 @@ public enum PromptLibrary {
     - 截屏、自动化等能力可能需要系统权限；失败时如实说明。
     """
 
+    /// Always-on Japlos core modules (relative to Prompts/).
+    public static let coreModules: [String] = [
+        "core/identity.md",
+        "core/behavior.md",
+        "core/execution.md",
+        "core/authorization.md",
+    ]
+
+    private static let legacyFallbacks: [String: String] = [
+        "identity": identity,
+        "behavior": behavior,
+        "execution": execution,
+        "response-style": responseStyle,
+        "tool-policy": toolPolicy,
+    ]
+
+    public static func supportRoot() -> URL {
+        if let override = ProcessInfo.processInfo.environment["LUCAS_CLONE_HOME"], !override.isEmpty {
+            return URL(fileURLWithPath: (override as NSString).expandingTildeInPath, isDirectory: true)
+        }
+        return FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/Application Support/Lucas", isDirectory: true)
+    }
+
+    public static func overrideRoot() -> URL {
+        supportRoot().appendingPathComponent("Prompts", isDirectory: true)
+    }
+
+    public static func bundledPromptsRoot() -> URL? {
+        if let url = Bundle.module.resourceURL?.appendingPathComponent("Prompts", isDirectory: true),
+           FileManager.default.fileExists(atPath: url.path) {
+            return url
+        }
+        // When running from an app bundle that copied the pack beside Resources.
+        if let url = Bundle.main.resourceURL?.appendingPathComponent("Prompts", isDirectory: true),
+           FileManager.default.fileExists(atPath: url.path) {
+            return url
+        }
+        return nil
+    }
+
+    /// Load a markdown fragment. `path` may be `core/identity.md` or legacy id `identity`.
+    public static func load(_ path: String) -> String? {
+        let relative = normalize(path)
+        let overrideURL = overrideRoot().appendingPathComponent(relative)
+        if let text = readMarkdown(overrideURL) {
+            return localizeProductName(text)
+        }
+        if let root = bundledPromptsRoot() {
+            let bundledURL = root.appendingPathComponent(relative)
+            if let text = readMarkdown(bundledURL) {
+                return localizeProductName(text)
+            }
+        }
+        let legacyID = (relative as NSString).deletingPathExtension
+            .replacingOccurrences(of: "core/", with: "")
+            .replacingOccurrences(of: "communication/", with: "")
+        if let fallback = legacyFallbacks[legacyID] ?? legacyFallbacks[relative] {
+            return fallback
+        }
+        return nil
+    }
+
+    /// Overrides are read per call so prompts can be edited without rebuilding.
+    public static func fragment(_ id: String, fallback: String) -> String {
+        if let text = load(id), !text.isEmpty { return text }
+        if let text = load("\(id).md"), !text.isEmpty { return text }
+        if let text = load("core/\(id).md"), !text.isEmpty { return text }
+        return fallback
+    }
+
     public static func toolCatalog(_ tools: [ToolDefinition]) -> String {
         guard !tools.isEmpty else { return "" }
         let lines = tools.map { "- \($0.name)：\($0.summary)" }.joined(separator: "\n")
@@ -48,7 +123,16 @@ public enum PromptLibrary {
 
     public static func sceneGuidance(_ scene: Scene?) -> String {
         guard let scene else { return "" }
-        return "当前场景：\(scene.name)。\n\(scene.extraPrompt)"
+        var parts: [String] = ["当前场景：\(scene.name)。"]
+        if !scene.extraPrompt.isEmpty {
+            parts.append(scene.extraPrompt)
+        }
+        for file in scene.promptFiles {
+            if let text = load(file), !text.isEmpty {
+                parts.append(text)
+            }
+        }
+        return parts.joined(separator: "\n\n")
     }
 
     public static func timeContext(now: Date = Date()) -> String {
@@ -59,34 +143,90 @@ public enum PromptLibrary {
         return "当前本机时间：\(formatter.string(from: now))（\(TimeZone.current.identifier)）。"
     }
 
-    /// Overrides are read per call so prompts can be edited without rebuilding.
-    public static func fragment(_ id: String, fallback: String) -> String {
-        let directory = FileManager.default
-            .homeDirectoryForCurrentUser
-            .appendingPathComponent("Library/Application Support/Lucas/Prompts", isDirectory: true)
-        let url = directory.appendingPathComponent("\(id).md")
-        if let text = try? String(contentsOf: url, encoding: .utf8), !text.isEmpty {
-            return text
-        }
-        return fallback
-    }
-
     public static func systemPrompt(
         scene: Scene?,
         tools: [ToolDefinition],
         now: Date = Date()
     ) -> String {
-        [
-            fragment("identity", fallback: identity),
-            fragment("behavior", fallback: behavior),
-            fragment("execution", fallback: execution),
-            fragment("response-style", fallback: responseStyle),
-            fragment("tool-policy", fallback: toolPolicy),
-            timeContext(now: now),
-            sceneGuidance(scene),
-            toolCatalog(tools),
-        ]
-        .filter { !$0.isEmpty }
-        .joined(separator: "\n\n")
+        var parts: [String] = []
+        for module in coreModules {
+            if let text = load(module), !text.isEmpty {
+                parts.append(text)
+            } else {
+                // Fall back to the corresponding legacy fragment when a core MD is missing.
+                let id = (module as NSString).lastPathComponent
+                    .replacingOccurrences(of: ".md", with: "")
+                if let fallback = legacyFallbacks[id] {
+                    parts.append(fallback)
+                }
+            }
+        }
+        // Keep response-style + tool-policy as lightweight always-on Lucas layers.
+        parts.append(fragment("response-style", fallback: responseStyle))
+        parts.append(fragment("tool-policy", fallback: toolPolicy))
+        parts.append(timeContext(now: now))
+        let guidance = sceneGuidance(scene)
+        if !guidance.isEmpty { parts.append(guidance) }
+        let catalog = toolCatalog(tools)
+        if !catalog.isEmpty { parts.append(catalog) }
+        return parts.filter { !$0.isEmpty }.joined(separator: "\n\n")
+    }
+
+    /// Copy bundled Prompts into Application Support when the override tree is empty.
+    /// Safe to call on every daemon start; does not overwrite existing files.
+    @discardableResult
+    public static func seedOverridesIfNeeded() -> Int {
+        guard let bundled = bundledPromptsRoot() else { return 0 }
+        let dest = overrideRoot()
+        let fm = FileManager.default
+        var created = 0
+        guard let enumerator = fm.enumerator(at: bundled, includingPropertiesForKeys: [.isRegularFileKey]) else {
+            return 0
+        }
+        for case let fileURL as URL in enumerator {
+            let name = fileURL.lastPathComponent
+            if name.hasPrefix("._") || name == ".DS_Store" { continue }
+            guard fileURL.pathExtension.lowercased() == "md" else { continue }
+            let relative = fileURL.path.replacingOccurrences(of: bundled.path + "/", with: "")
+            let target = dest.appendingPathComponent(relative)
+            if fm.fileExists(atPath: target.path) { continue }
+            do {
+                try fm.createDirectory(at: target.deletingLastPathComponent(), withIntermediateDirectories: true)
+                try fm.copyItem(at: fileURL, to: target)
+                created += 1
+            } catch {
+                continue
+            }
+        }
+        return created
+    }
+
+    // MARK: - Helpers
+
+    private static func normalize(_ path: String) -> String {
+        var value = path.trimmingCharacters(in: .whitespacesAndNewlines)
+        if value.hasPrefix("/") { value = String(value.dropFirst()) }
+        if !value.contains("/"), !value.hasSuffix(".md"), legacyFallbacks[value] != nil {
+            return value
+        }
+        if !value.hasSuffix(".md"), value.contains("/") {
+            value += ".md"
+        }
+        return value
+    }
+
+    private static func readMarkdown(_ url: URL) -> String? {
+        guard let text = try? String(contentsOf: url, encoding: .utf8) else { return nil }
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
+    }
+
+    /// Japlos pack still says Bailongma / Japlos in places; present as Lucas for this product.
+    private static func localizeProductName(_ text: String) -> String {
+        text
+            .replacingOccurrences(of: "Bailongma2.0", with: "Lucas")
+            .replacingOccurrences(of: "Bailongma", with: "Lucas")
+            .replacingOccurrences(of: "Japlos-v2", with: "Lucas")
+            .replacingOccurrences(of: "Japlos", with: "Lucas")
     }
 }

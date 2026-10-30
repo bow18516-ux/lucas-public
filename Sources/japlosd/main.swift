@@ -75,6 +75,12 @@ do {
     let support = defaultSupportDirectory()
     try FileManager.default.createDirectory(at: support, withIntermediateDirectories: true)
 
+    let seededPrompts = PromptLibrary.seedOverridesIfNeeded()
+    let seededScenes = SceneRouter.seedScenesIfNeeded()
+    if seededPrompts > 0 || seededScenes {
+        log("seeded prompt pack: \(seededPrompts) files, scenes=\(seededScenes)")
+    }
+
     let core = try KernelCore(storePath: options.storePath, workspace: options.workspace)
     let chat = ChatService(core: core)
     core.setChatHandler { request in await chat.handle(request) }

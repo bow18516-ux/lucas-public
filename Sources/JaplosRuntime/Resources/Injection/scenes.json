@@ -1,0 +1,193 @@
+{
+  "scenes": [
+    {
+      "enabled": true,
+      "id": "music",
+      "name": "播放音乐",
+      "pattern": "播放|帮我播放|单曲循环|单曲|放一首|来一首|音乐|歌曲|下一首|上一首|\\b(music|song|playback)\\b",
+      "responsePrompt": "系统提供的音乐状态可用且未过期时，直接使用，不要重复查询；状态缺失、过期、冲突或用户明确要求刷新时才查询。\n用户要求播放、换歌、暂停或继续播放时，必须执行对应工具，不能把已有播放状态当成本次操作成功。点歌时应核对歌曲和歌手。\n确认本次播放操作成功后，只回复播放表情，不回复文字。执行失败或结果不明确时，简短说明实际情况，不要用表情暗示成功。\n如果系统音量为 0，且能够确认没有其他音频正在播放，可以将音量调到 40%；无法确认时不要自动调整。",
+      "sources": [
+        "music",
+        "system.devices.audio"
+      ],
+      "tools": [
+        "system.music"
+      ],
+      "promptFiles": [
+        "tools/music.md"
+      ]
+    },
+    {
+      "enabled": true,
+      "id": "keyboard-mouse",
+      "name": "键盘和鼠标",
+      "pattern": "键盘|鼠标|\\b(keyboard|mouse)\\b",
+      "responsePrompt": "说人话，简介回答，问什么答什么，没问的不要答",
+      "sources": [
+        "system.devices.keyboards",
+        "system.devices.mice",
+        "system.devices.bluetooth"
+      ],
+      "tools": []
+    },
+    {
+      "enabled": true,
+      "id": "260B17FF-37FA-4C9B-B84D-F0A50AD06104",
+      "name": "打开应用程序",
+      "pattern": "打开",
+      "sources": [],
+      "tools": [
+        "system.application"
+      ],
+      "promptFiles": [
+        "tools/software.md"
+      ]
+    },
+    {
+      "enabled": true,
+      "id": "31ED3FCB-439F-4711-988F-AD92EBDB1D93",
+      "name": "回答的场景",
+      "pattern": "什么|哪些|哪一些",
+      "responsePrompt": "用户问什么你就只回答什么，像人一样回复，不要说其他废话",
+      "sources": [],
+      "tools": []
+    },
+    {
+      "enabled": true,
+      "id": "71B42360-B333-4FF2-B16F-FCED522A8A8E",
+      "name": "暂停音乐",
+      "pattern": "暂停",
+      "responsePrompt": "当用户要求暂停音乐时，调用音乐控制工具执行暂停。成功后，当前对话无需文字确认；若消息来自微信，则简短回复“已暂停”。如果执行失败或无法确认结果，应简短说明。不要将暂停其他任务的请求理解为暂停音乐。",
+      "sources": [],
+      "tools": [
+        "system.music"
+      ],
+      "promptFiles": [
+        "tools/music.md"
+      ]
+    },
+    {
+      "enabled": true,
+      "id": "ED6B866C-8918-473A-83F7-853C548F087F",
+      "name": "截屏",
+      "pattern": "截图|截|屏幕|桌面",
+      "responsePrompt": "因匹配到截字，所以自动注入截图工具，按需调用，如需回复与表达，通常不说废话，简洁不说分辨率，不说细节，一般只说“好了”",
+      "sources": [],
+      "tools": [
+        "system.screen.capture"
+      ],
+      "promptFiles": []
+    },
+    {
+      "id": "filesystem",
+      "name": "文件操作",
+      "enabled": true,
+      "pattern": "文件|目录|文件夹|读取|写入|保存到|\\b(file|folder|directory)\\b",
+      "tools": [
+        "system.filesystem",
+        "system.command.shell.execute"
+      ],
+      "sources": [],
+      "responsePrompt": "文件操作使用 system.filesystem；写入前确认路径，不要把大段内容塞进命令参数。"
+    },
+    {
+      "id": "shell",
+      "name": "执行命令",
+      "enabled": true,
+      "pattern": "命令|终端|\\bshell\\b|\\bcommand\\b|运行脚本",
+      "tools": [
+        "system.command.shell.execute"
+      ],
+      "sources": [],
+      "responsePrompt": "命令执行使用 system.command.shell.execute；先说明将要执行的命令，危险操作需用户确认。"
+    },
+    {
+      "id": "time",
+      "name": "时间",
+      "enabled": true,
+      "pattern": "几点|时间|日期|今天|\\b(time|date)\\b",
+      "tools": [
+        "system.time"
+      ],
+      "sources": [],
+      "responsePrompt": "涉及当前时间时先调用 system.time，不要凭记忆回答。"
+    },
+    {
+      "id": "audio",
+      "name": "系统音量",
+      "enabled": true,
+      "pattern": "音量|声音大小|静音|\\bvolume\\b",
+      "tools": [
+        "system.audio"
+      ],
+      "sources": [],
+      "responsePrompt": "音量控制使用 system.audio；设置前先用 get 读取当前值。"
+    },
+    {
+      "id": "download",
+      "name": "下载文件",
+      "enabled": true,
+      "pattern": "下载|保存.{0,4}链接|\\bhttps?://|\\bdownload\\b",
+      "tools": [
+        "system.download.fetch"
+      ],
+      "sources": [],
+      "responsePrompt": "下载使用 system.download.fetch：确认 URL 是 http(s)，默认保存到 ~/Downloads，完成后报告路径与大小。",
+      "promptFiles": [
+        "tools/download.md"
+      ]
+    },
+    {
+      "id": "pdf",
+      "name": "生成 PDF",
+      "enabled": true,
+      "pattern": "PDF|\\bpdf\\b|导出|生成.{0,6}文档|排版",
+      "tools": [
+        "system.document.pdf.create",
+        "system.filesystem"
+      ],
+      "sources": [],
+      "responsePrompt": "生成 PDF 使用 system.document.pdf.create；正文直接传文本，路径默认 ~/Downloads。",
+      "promptFiles": [
+        "tools/pdf.md"
+      ]
+    },
+    {
+      "id": "system-info",
+      "name": "系统状态",
+      "enabled": true,
+      "pattern": "窗口|进程|网络|IP|系统状态|占用|内存",
+      "tools": [
+        "system.window.list",
+        "system.process.list",
+        "system.network.info"
+      ],
+      "sources": [],
+      "responsePrompt": "系统状态优先用只读工具：system.window.list / system.process.list / system.network.info；先取数据再总结。"
+    },
+    {
+      "id": "notification",
+      "name": "系统通知",
+      "enabled": true,
+      "pattern": "通知|提醒我|完成后提醒",
+      "tools": [
+        "system.notification"
+      ],
+      "sources": [],
+      "responsePrompt": "需要提醒时使用 system.notification，标题简短、正文一句话。"
+    },
+    {
+      "id": "clipboard",
+      "name": "剪贴板",
+      "enabled": true,
+      "pattern": "剪贴板|复制|粘贴|\\bclipboard\\b",
+      "tools": [
+        "system.clipboard"
+      ],
+      "sources": [],
+      "responsePrompt": "剪贴板操作使用 system.clipboard。"
+    }
+  ],
+  "schemaVersion": 1,
+  "note": "Japlos SoT scenes (6) + Lucas supplemental; promptFiles are Lucas extensions"
+}

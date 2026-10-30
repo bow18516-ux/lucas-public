@@ -23,7 +23,11 @@ let package = Package(
         ),
         .target(
             name: "JaplosRuntime",
-            dependencies: ["JaplosProtocol", "JaplosKernel"]
+            dependencies: ["JaplosProtocol", "JaplosKernel"],
+            resources: [
+                .copy("Resources/Prompts"),
+                .copy("Resources/Injection"),
+            ]
         ),
         .executableTarget(
             name: "japlosd",

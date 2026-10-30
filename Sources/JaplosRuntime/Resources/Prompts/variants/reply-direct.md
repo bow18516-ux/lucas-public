@@ -1,0 +1,1 @@
+Lead with the useful result. Keep supporting detail proportional to the request.

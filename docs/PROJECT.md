@@ -506,19 +506,23 @@ value = { baseURL, model, apiKey, temperature }
   - 错误响应解析为可读 message。
 - 超时与取消通过 `URLSession` task 控制。
 
-### 8.3 PromptLibrary（分层提示词）
+### 8.3 PromptLibrary（模块化提示词包）
 
-系统提示由多个片段按顺序拼接：
+Japlos SoT：`Sources/JaplosRuntime/Resources/Prompts/`（58 个 MD）+ `Injection/scenes.json`（6 个 Japlos 场景 + Lucas 补场景）。
 
-| 片段 | 内容 |
-|---|---|
-| identity | 「你是 Lucas Agent，一个运行在用户 Mac 上的桌面 Agent」 |
-| behavior | 回答风格、语言、澄清策略 |
-| execution | 工具使用原则、风险操作确认、失败处理 |
-| tool-policy | 工具清单与调用格式 |
-| scene | 场景注入（音乐、应用、截屏、文件、命令、时间、剪贴板） |
+每轮系统提示词组装顺序：
+1. `core/identity|behavior|execution|authorization.md`（包内，产品名加载时换成 Lucas）
+2. `response-style` / `tool-policy`（Lucas 轻量层，可被同名覆盖）
+3. 本机时间
+4. 命中场景的 `responsePrompt` + 关联 `promptFiles`（如 `tools/music.md`）
+5. 本次工具目录
 
-可在 `~/Library/Application Support/Lucas/Prompts/<id>.md` 覆盖同名片段，便于不发版调提示词。
+热更新（无需发版）：
+- `~/Library/Application Support/Lucas/Prompts/<相对路径>.md`
+- `~/Library/Application Support/Lucas/Injection/scenes.json`
+
+守护进程首次启动会把包种子拷到上述目录（不覆盖已有文件）。`LUCAS_CLONE_HOME` 会改写支持目录根。
+
 
 ### 8.4 SceneRouter
 

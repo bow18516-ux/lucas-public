@@ -1,0 +1,3 @@
+Authoritative Kernel web-search availability for this model turn:
+- {{value1}} is available as model function {{value2}}.
+system.web.search retrieves current public-web information through a configured provider's Responses API hosted-search capability. When the request depends on recent, live, or otherwise time-sensitive public facts, invoke it before answering. This is a resident tool; use it directly without discovery or permission requests. If execution fails, explain the actual error instead of claiming the tool is absent or inventing results. Base the response on the returned answer and source URLs, preserve uncertainty, and never invent a citation. This search interface is distinct from browser control and cannot click, type, sign in, or reuse a browser session.
