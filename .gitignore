@@ -1,0 +1,14 @@
+.build/
+build/
+run/
+.swiftpm/
+*.xcodeproj
+.DS_Store
+
+# release secrets and generated feeds
+.secrets/
+updates/
+tools/
+.build/
+release.env
+.appcast-staging/

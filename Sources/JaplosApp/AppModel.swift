@@ -1,0 +1,443 @@
+import Combine
+import Foundation
+import JaplosProtocol
+
+@MainActor
+final class AppModel: ObservableObject {
+    struct ToolStep: Identifiable, Equatable {
+        let id = UUID()
+        var name: String
+        var ok: Bool
+        var detail: String
+    }
+
+    struct Message: Identifiable, Equatable {
+        let id: UUID
+        var role: String
+        var text: String
+        var steps: [ToolStep]
+        var createdAt: Date
+
+        init(id: UUID = UUID(), role: String, text: String, steps: [ToolStep] = [], createdAt: Date = Date()) {
+            self.id = id
+            self.role = role
+            self.text = text
+            self.steps = steps
+            self.createdAt = createdAt
+        }
+    }
+
+    struct Approval: Identifiable, Equatable {
+        let id = UUID()
+        var callID: String
+        var name: String
+        var title: String
+        var summary: String
+    }
+
+    struct ToolSummary: Identifiable, Equatable {
+        var name: String
+        var title: String
+        var risk: String
+        var id: String { name }
+    }
+
+    struct SessionSummary: Identifiable, Equatable {
+        var id: String
+        var title: String
+        var updatedAt: Date
+    }
+
+    @Published var sessions: [SessionSummary] = []
+    @Published var currentSessionID: String?
+    @Published var messages: [Message] = []
+    @Published var isSending = false
+    @Published var errorText: String?
+    @Published var statusText = "正在连接内核…"
+    @Published var connected = false
+    @Published var settings = ModelConnection(baseURL: "https://api.deepseek.com/v1", model: "", apiKey: "")
+    /// The stored key is never echoed back into the editable field.
+    @Published var storedAPIKey: String = ""
+    /// Whether the kernel actually has a saved model connection.
+    @Published var hasStoredConnection = false
+    @Published var tools: [ToolSummary] = []
+    @Published var availableModels: [String] = []
+    @Published var pendingApproval: Approval?
+    @Published var settingsPresented = false
+    @Published var onboardingPresented = false
+
+    static let onboardingCompletedKey = "LucasOnboardingCompleted"
+    static let onboardingSkippedKey = "LucasOnboardingSkipped"
+    @Published var isTestingModel = false
+    @Published var testResult: String?
+
+    let client: KernelClient
+    let voice = SpeechOutput()
+    private var sendTask: Task<Void, Never>?
+    private var currentStream: ChatStream?
+
+    init(socketPath: String = KernelClient.defaultSocketPath) {
+        self.client = KernelClient(socketPath: socketPath)
+    }
+
+    // MARK: - Lifecycle
+
+    private func migrateLegacyStoreIfNeeded() {
+        guard ProcessInfo.processInfo.environment["LUCAS_CLONE_HOME"] == nil else { return }
+        let fileManager = FileManager.default
+        let newHome = KernelClient.homeDirectory
+        let legacy = fileManager.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/Application Support/JaplosClone", isDirectory: true)
+        guard
+            !fileManager.fileExists(atPath: newHome.path),
+            fileManager.fileExists(atPath: legacy.path)
+        else { return }
+        do {
+            try fileManager.copyItem(at: legacy, to: newHome)
+            AppLog.write("migrated legacy store from \(legacy.path) to \(newHome.path)")
+        } catch {
+            AppLog.write("legacy store migration failed: \(error)")
+        }
+    }
+
+    func bootstrap() async {
+        migrateLegacyStoreIfNeeded()
+        AppLog.write("bootstrap start home=\(KernelClient.homeDirectory.path)")
+        statusText = "正在连接内核…"
+        let logURL = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/Logs/Lucas/lucasd.log")
+        do {
+            try await Task.detached(priority: .userInitiated) { [client, logURL] in
+                try DaemonController.ensureRunning(client: client, logURL: logURL)
+            }.value
+            connected = true
+            statusText = "已连接"
+            AppLog.write("bootstrap connected socket=\(client.socketPath)")
+        } catch {
+            connected = false
+            statusText = "未连接"
+            errorText = String(describing: error)
+            AppLog.write("bootstrap failed: \(error)")
+            return
+        }
+
+        await loadSettings()
+        presentOnboardingIfNeeded()
+        await loadTools()
+        await loadSessions()
+        if currentSessionID == nil {
+            await createSession()
+        } else if let id = currentSessionID {
+            await loadHistory(sessionID: id)
+        }
+    }
+
+    // MARK: - Sessions
+
+    func loadSessions() async {
+        do {
+            let result = try await client.callAsync(.chatSessionsList, arguments: .object(["limit": .number(50)]))
+            let list = (result.arrayValue ?? []).compactMap { item -> SessionSummary? in
+                guard let id = item["id"]?.stringValue, let title = item["title"]?.stringValue else { return nil }
+                let updated = item["updatedAt"]?.stringValue.flatMap(ISO8601.date(from:)) ?? Date()
+                return SessionSummary(id: id, title: title, updatedAt: updated)
+            }
+            sessions = list
+            if currentSessionID == nil { currentSessionID = list.first?.id }
+        } catch {
+            errorText = String(describing: error)
+        }
+    }
+
+    func createSession() async {
+        do {
+            let result = try await client.callAsync(.chatSessionCreate, arguments: .object(["title": .string("新对话")]))
+            guard let id = result["id"]?.stringValue else { return }
+            currentSessionID = id
+            messages = []
+            await loadSessions()
+        } catch {
+            errorText = String(describing: error)
+        }
+    }
+
+    func selectSession(_ id: String) async {
+        currentSessionID = id
+        messages = []
+        await loadHistory(sessionID: id)
+    }
+
+    func loadHistory(sessionID: String) async {
+        do {
+            let result = try await client.callAsync(
+                .chatHistory,
+                arguments: .object(["sessionID": .string(sessionID), "limit": .number(200)])
+            )
+            let turns = result.arrayValue ?? []
+            messages = turns.compactMap { turn in
+                guard
+                    let role = turn["role"]?.stringValue,
+                    role == "user" || role == "assistant",
+                    let text = turn["text"]?.stringValue,
+                    !text.isEmpty
+                else { return nil }
+                let created = turn["createdAt"]?.stringValue.flatMap(ISO8601.date(from:)) ?? Date()
+                return Message(role: role, text: text, createdAt: created)
+            }
+        } catch {
+            errorText = String(describing: error)
+        }
+    }
+
+    // MARK: - Chat
+
+    /// Starts a turn on a child task so `stop()` can cancel it.
+    func send(_ text: String) {
+        guard sendTask == nil else { return }
+        sendTask = Task { [weak self] in
+            await self?.performSend(text)
+            self?.sendTask = nil
+        }
+    }
+
+    func stop() {
+        sendTask?.cancel()
+        sendTask = nil
+        currentStream = nil
+        pendingApproval = nil
+        isSending = false
+    }
+
+    func resolveApproval(_ approved: Bool) {
+        guard let approval = pendingApproval else { return }
+        currentStream?.approve(callID: approval.callID, approved: approved)
+        pendingApproval = nil
+    }
+
+    private func performSend(_ text: String) async {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        if currentSessionID == nil { await createSession() }
+        guard let sessionID = currentSessionID else { return }
+
+        isSending = true
+        errorText = nil
+        voice.stop()
+        messages.append(Message(role: "user", text: trimmed))
+        messages.append(Message(role: "assistant", text: ""))
+        let index = messages.count - 1
+
+        do {
+            var finished = false
+            let stream = client.streamChat(sessionID: sessionID, text: trimmed)
+            currentStream = stream
+            for try await event in stream.events {
+                switch event["event"]?.stringValue {
+                case "delta":
+                    messages[index].text += event["text"]?.stringValue ?? ""
+                case "tool":
+                    messages[index].steps.append(ToolStep(
+                        name: event["name"]?.stringValue ?? "tool",
+                        ok: event["ok"]?.boolValue ?? false,
+                        detail: String((event["detail"]?.stringValue ?? "").prefix(220))
+                    ))
+                case "approval":
+                    pendingApproval = Approval(
+                        callID: event["callID"]?.stringValue ?? "",
+                        name: event["name"]?.stringValue ?? "tool",
+                        title: event["title"]?.stringValue ?? "",
+                        summary: AppModel.approvalSummary(event["arguments"])
+                    )
+                case "done":
+                    finished = true
+                    if let finalText = event["text"]?.stringValue, !finalText.isEmpty {
+                        messages[index].text = finalText
+                    }
+                    if let finalText = event["text"]?.stringValue, !finalText.isEmpty {
+                        voice.speak(finalText)
+                    }
+                    if let stepArray = event["steps"]?.arrayValue, !stepArray.isEmpty {
+                        messages[index].steps = stepArray.map { step in
+                            ToolStep(
+                                name: step["tool"]?.stringValue ?? "tool",
+                                ok: step["ok"]?.boolValue ?? false,
+                                detail: String((step["error"]?.stringValue ?? "").prefix(220))
+                            )
+                        }
+                    }
+                default:
+                    break
+                }
+            }
+
+            if Task.isCancelled {
+                if messages[index].text.isEmpty {
+                    messages[index].text = "（已停止）"
+                } else {
+                    messages[index].text += "\n\n（已停止）"
+                }
+            } else if !finished && messages[index].text.isEmpty {
+                messages[index].text = "（内核提前结束了响应）"
+            }
+            await loadSessions()
+        } catch is CancellationError {
+            if messages[index].text.isEmpty {
+                messages[index].text = "（已停止）"
+            } else {
+                messages[index].text += "\n\n（已停止）"
+            }
+        } catch {
+            let message = (error as? ClientError)?.description ?? String(describing: error)
+            if case .kernel(let failure) = error as? ClientError ?? .transport(""), failure.code == "model_not_configured" {
+                let completed = UserDefaults.standard.bool(forKey: Self.onboardingCompletedKey)
+                let skipped = UserDefaults.standard.bool(forKey: Self.onboardingSkippedKey)
+                if completed || skipped {
+                    settingsPresented = true
+                } else {
+                    onboardingPresented = true
+                }
+            }
+            errorText = message
+            if messages[index].text.isEmpty {
+                messages[index].text = "请求失败：\(message)"
+            } else {
+                messages[index].text += "\n\n（中断：\(message)）"
+            }
+        }
+        isSending = false
+    }
+
+    func refreshModels() async {
+        do {
+            let result = try await client.callAsync(.modelCatalog, arguments: .object([
+                "baseURL": .string(settings.baseURL),
+                "model": .string(settings.model),
+                "apiKey": .string(settings.apiKey),
+            ]), timeout: 45)
+            availableModels = (result["models"]?.arrayValue ?? []).compactMap { $0.stringValue }
+        } catch {
+            availableModels = []
+        }
+    }
+
+    func loadTools() async {
+        do {
+            let result = try await client.callAsync(.toolList, arguments: .object([:]))
+            tools = (result.arrayValue ?? []).compactMap { item in
+                guard let name = item["name"]?.stringValue else { return nil }
+                return ToolSummary(
+                    name: name,
+                    title: item["title"]?.stringValue ?? "",
+                    risk: item["risk"]?.stringValue ?? "low"
+                )
+            }
+        } catch {
+            // Tool catalog is informational; keep the UI usable.
+        }
+    }
+
+    // MARK: - Settings
+
+    func presentOnboardingIfNeeded() {
+        let forced = ProcessInfo.processInfo.environment["LUCAS_SHOW_ONBOARDING"] == "1"
+        let completed = UserDefaults.standard.bool(forKey: Self.onboardingCompletedKey)
+        let skipped = UserDefaults.standard.bool(forKey: Self.onboardingSkippedKey)
+        if forced || (!completed && !skipped && !hasStoredConnection) {
+            onboardingPresented = true
+        }
+    }
+
+    func skipOnboarding() {
+        UserDefaults.standard.set(true, forKey: Self.onboardingSkippedKey)
+        onboardingPresented = false
+    }
+
+    func loadSettings() async {
+        do {
+            let result = try await client.callAsync(.configurationList, arguments: .object([:]))
+            let entries = result.arrayValue ?? []
+            guard
+                let entry = entries.first(where: { $0["path"]?.stringValue == "agents.default.model.connection" }),
+                let value = entry["value"]
+            else { return }
+            let data = try ProtocolCoding.encode(value)
+            var decoded = try ProtocolCoding.decode(ModelConnection.self, from: data)
+            let keyConfigured = value["apiKeyConfigured"]?.boolValue ?? !(value["apiKey"]?.stringValue ?? "").isEmpty
+            storedAPIKey = keyConfigured ? "__stored__" : ""
+            decoded.apiKey = ""
+            settings = decoded
+            hasStoredConnection = !decoded.model.isEmpty && !decoded.baseURL.isEmpty && keyConfigured
+        } catch {
+            errorText = String(describing: error)
+        }
+    }
+
+    func saveSettings() async -> Bool {
+        let key = settings.apiKey
+        guard
+            !settings.baseURL.trimmingCharacters(in: .whitespaces).isEmpty,
+            !settings.model.trimmingCharacters(in: .whitespaces).isEmpty,
+            !key.isEmpty || !storedAPIKey.isEmpty
+        else {
+            errorText = "请填写 Base URL、模型和 API Key 后再保存"
+            return false
+        }
+        do {
+            let value = JSONValue.object([
+                "baseURL": .string(settings.baseURL),
+                "model": .string(settings.model),
+                "apiKey": .string(key),
+                "temperature": .number(settings.temperature),
+            ])
+            _ = try await client.callAsync(.configurationSet, arguments: .object([
+                "path": .string("agents.default.model.connection"),
+                "value": value,
+            ]))
+            storedAPIKey = "__stored__"
+            settings.apiKey = ""
+            hasStoredConnection = true
+            return true
+        } catch {
+            errorText = String(describing: error)
+            return false
+        }
+    }
+
+    func switchModel(_ id: String) async {
+        guard id != settings.model else { return }
+        settings.model = id
+        guard hasStoredConnection else { return }
+        _ = await saveSettings()
+    }
+
+    func testModel() async {
+        isTestingModel = true
+        testResult = nil
+        defer { isTestingModel = false }
+        do {
+            let result = try await client.callAsync(.modelTest, arguments: .object([
+                "baseURL": .string(settings.baseURL),
+                "model": .string(settings.model),
+                "apiKey": .string(settings.apiKey),
+            ]), timeout: 60)
+            if result["ok"]?.boolValue == true {
+                let latency = Int(result["latencyMilliseconds"]?.doubleValue ?? 0)
+                testResult = "连接成功 · \(latency) ms"
+            } else {
+                testResult = "失败：\(result["message"]?.stringValue ?? "未知错误")"
+            }
+        } catch {
+            testResult = "失败：\((error as? ClientError)?.description ?? String(describing: error))"
+        }
+    }
+
+    func dismissError() {
+        errorText = nil
+    }
+
+    static func approvalSummary(_ arguments: JSONValue?) -> String {
+        guard let arguments else { return "" }
+        let text = (try? arguments.encodedString()) ?? ""
+        return String(text.prefix(400))
+    }
+}

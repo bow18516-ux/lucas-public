@@ -1,0 +1,486 @@
+import AppKit
+import Foundation
+import JaplosProtocol
+
+// MARK: - Time
+
+public struct TimeTool: KernelTool {
+    public init() {}
+
+    public var definition: ToolDefinition {
+        ToolDefinition(
+            name: "system.time",
+            title: "当前时间",
+            summary: "读取本机当前日期、时间与时区。回答与时间相关的问题前先调用。",
+            inputSchema: .object([
+                "type": "object",
+                "properties": .object([:]),
+                "additionalProperties": false,
+            ]),
+            capability: Capability.root,
+            risk: .low
+        )
+    }
+
+    public func invoke(arguments: JSONValue, context: ToolContext) async throws -> JSONValue {
+        let now = Date()
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "zh_CN")
+        formatter.dateFormat = "yyyy-MM-dd HH:mm:ss"
+        formatter.timeZone = .current
+        return .object([
+            "iso8601": .string(ISO8601.string(from: now)),
+            "local": .string(formatter.string(from: now)),
+            "timeZone": .string(TimeZone.current.identifier),
+            "epochSeconds": .number(now.timeIntervalSince1970.rounded()),
+        ])
+    }
+}
+
+// MARK: - Shell
+
+public struct ShellTool: KernelTool {
+    public init() {}
+
+    public var definition: ToolDefinition {
+        ToolDefinition(
+            name: "system.command.shell.execute",
+            title: "执行 Shell 命令",
+            summary: "以当前用户身份用 /bin/zsh -lc 执行命令并返回 stdout/stderr/退出码。会真实改变系统状态，执行前确认命令安全。",
+            inputSchema: .object([
+                "type": "object",
+                "properties": .object([
+                    "command": .object(["type": "string", "description": "要执行的命令"]),
+                    "timeoutSeconds": .object(["type": "number", "minimum": 1, "maximum": 120]),
+                    "workingDirectory": .object(["type": "string"]),
+                ]),
+                "required": .array(["command"]),
+                "additionalProperties": false,
+            ]),
+            capability: Capability.processExecute,
+            risk: .high
+        )
+    }
+
+    public func invoke(arguments: JSONValue, context: ToolContext) async throws -> JSONValue {
+        guard let command = arguments["command"]?.stringValue, !command.isEmpty else {
+            throw ToolError.invalidArguments("command is required")
+        }
+        if let reason = DangerousCommand.blockReason(for: command) {
+            throw ToolError.denied("命令被安全策略拒绝：\(reason)。如确需执行，请拆分命令或改用其他工具。")
+        }
+        let timeout = min(max(arguments["timeoutSeconds"]?.doubleValue ?? 30, 1), 120)
+        let workingDirectory = arguments["workingDirectory"]?.stringValue
+
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/bin/zsh")
+        process.arguments = ["-lc", command]
+        if let workingDirectory {
+            process.currentDirectoryURL = URL(fileURLWithPath: (workingDirectory as NSString).expandingTildeInPath)
+        }
+        let stdout = Pipe()
+        let stderr = Pipe()
+        process.standardOutput = stdout
+        process.standardError = stderr
+
+        try process.run()
+
+        let deadline = Date().addingTimeInterval(timeout)
+        var timedOut = false
+        while process.isRunning && Date() < deadline {
+            usleep(40_000)
+        }
+        if process.isRunning {
+            timedOut = true
+            process.terminate()
+            usleep(250_000)
+            if process.isRunning {
+                kill(process.processIdentifier, SIGKILL)
+            }
+        }
+        process.waitUntilExit()
+
+        let outData = stdout.fileHandleForReading.readDataToEndOfFile()
+        let errData = stderr.fileHandleForReading.readDataToEndOfFile()
+        let limit = 32 * 1024
+        let outText = String(decoding: outData.prefix(limit), as: UTF8.self)
+        let errText = String(decoding: errData.prefix(limit), as: UTF8.self)
+
+        return .object([
+            "exitCode": .number(Double(process.terminationStatus)),
+            "stdout": .string(outText),
+            "stderr": .string(errText),
+            "timedOut": .bool(timedOut),
+            "truncated": .bool(outData.count > limit || errData.count > limit),
+        ])
+    }
+}
+
+// MARK: - Applications
+
+public struct ApplicationTool: KernelTool {
+    public init() {}
+
+    public var definition: ToolDefinition {
+        ToolDefinition(
+            name: "system.application",
+            title: "应用程序",
+            summary: "列出、启动或退出本机应用。action=list 列出已安装应用；action=open 用 name 或 path 启动；action=quit 按名称退出。",
+            inputSchema: .object([
+                "type": "object",
+                "properties": .object([
+                    "action": .object(["type": "string", "enum": .array(["list", "open", "quit"])]),
+                    "name": .object(["type": "string", "description": "应用名、Bundle ID 或 .app 绝对路径"]),
+                ]),
+                "required": .array(["action"]),
+                "additionalProperties": false,
+            ]),
+            capability: Capability.applicationsControl,
+            risk: .medium
+        )
+    }
+
+    public func invoke(arguments: JSONValue, context: ToolContext) async throws -> JSONValue {
+        guard let action = arguments["action"]?.stringValue else {
+            throw ToolError.invalidArguments("action is required")
+        }
+        switch action {
+        case "list":
+            return .object(["applications": .array(Self.installedApplications().map { app in
+                .object(["name": .string(app.name), "path": .string(app.path), "bundleID": .string(app.bundleID)])
+            })])
+        case "open":
+            guard let name = arguments["name"]?.stringValue, !name.isEmpty else {
+                throw ToolError.invalidArguments("name is required for open")
+            }
+            let url = try resolveApplication(named: name)
+            let configuration = NSWorkspace.OpenConfiguration()
+            configuration.activates = true
+            let running = try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<NSRunningApplication, Error>) in
+                NSWorkspace.shared.openApplication(at: url, configuration: configuration) { app, error in
+                    if let error {
+                        continuation.resume(throwing: ToolError.failed("open failed: \(error.localizedDescription)"))
+                    } else if let app {
+                        continuation.resume(returning: app)
+                    } else {
+                        continuation.resume(throwing: ToolError.failed("open returned no application"))
+                    }
+                }
+            }
+            return .object([
+                "opened": .string(running.localizedName ?? name),
+                "path": .string(url.path),
+                "pid": .number(Double(running.processIdentifier)),
+            ])
+        case "quit":
+            guard let name = arguments["name"]?.stringValue, !name.isEmpty else {
+                throw ToolError.invalidArguments("name is required for quit")
+            }
+            let matches = NSWorkspace.shared.runningApplications.filter { app in
+                app.localizedName == name || app.bundleIdentifier == name
+            }
+            guard !matches.isEmpty else {
+                throw ToolError.failed("No running application named \(name)")
+            }
+            var terminated: [String] = []
+            for app in matches where app.terminate() {
+                terminated.append(app.localizedName ?? name)
+            }
+            return .object(["terminated": .array(terminated.map(JSONValue.string))])
+        default:
+            throw ToolError.invalidArguments("Unknown action \(action)")
+        }
+    }
+
+    private func resolveApplication(named name: String) throws -> URL {
+        let expanded = (name as NSString).expandingTildeInPath
+        if expanded.hasSuffix(".app"), FileManager.default.fileExists(atPath: expanded) {
+            return URL(fileURLWithPath: expanded)
+        }
+        if name.contains("."), !name.contains(" ") {
+            if let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: name) {
+                return url
+            }
+        }
+        if let url = NSWorkspace.shared.urlForApplication(toOpen: URL(fileURLWithPath: "/Applications")) {
+            _ = url
+        }
+        let target = name.lowercased()
+        if let match = Self.installedApplications().first(where: {
+            $0.name.lowercased() == target || $0.name.lowercased().contains(target)
+        }) {
+            return URL(fileURLWithPath: match.path)
+        }
+        throw ToolError.failed("Application not found: \(name)")
+    }
+
+    struct InstalledApp {
+        var name: String
+        var path: String
+        var bundleID: String
+    }
+
+    static func installedApplications() -> [InstalledApp] {
+        let roots = [
+            "/Applications",
+            "/System/Applications",
+            "/System/Applications/Utilities",
+            (NSHomeDirectory() as NSString).appendingPathComponent("Applications"),
+        ]
+        var seen = Set<String>()
+        var result: [InstalledApp] = []
+        let fileManager = FileManager.default
+        for root in roots {
+            guard let entries = try? fileManager.contentsOfDirectory(atPath: root) else { continue }
+            for entry in entries.sorted() where entry.hasSuffix(".app") {
+                let path = (root as NSString).appendingPathComponent(entry)
+                guard !seen.contains(path) else { continue }
+                seen.insert(path)
+                let bundle = Bundle(path: path)
+                let bundleID = bundle?.bundleIdentifier ?? ""
+                let name = (entry as NSString).deletingPathExtension
+                result.append(InstalledApp(name: name, path: path, bundleID: bundleID))
+            }
+        }
+        return result
+    }
+}
+
+// MARK: - Filesystem
+
+public struct FilesystemTool: KernelTool {
+    public init() {}
+
+    public var definition: ToolDefinition {
+        ToolDefinition(
+            name: "system.filesystem",
+            title: "文件读写",
+            summary: "读取/写入/列目录。只允许访问用户主目录、/tmp 与 /Users/Shared。action=read|write|list。",
+            inputSchema: .object([
+                "type": "object",
+                "properties": .object([
+                    "action": .object(["type": "string", "enum": .array(["read", "write", "list"])]),
+                    "path": .object(["type": "string"]),
+                    "content": .object(["type": "string"]),
+                ]),
+                "required": .array(["action", "path"]),
+                "additionalProperties": false,
+            ]),
+            capability: Capability.filesystemWrite,
+            risk: .medium
+        )
+    }
+
+    public func invoke(arguments: JSONValue, context: ToolContext) async throws -> JSONValue {
+        guard
+            let action = arguments["action"]?.stringValue,
+            let rawPath = arguments["path"]?.stringValue
+        else {
+            throw ToolError.invalidArguments("action and path are required")
+        }
+        let url = try Self.allowedURL(path: rawPath)
+        let fileManager = FileManager.default
+
+        switch action {
+        case "read":
+            let attributes = try fileManager.attributesOfItem(atPath: url.path)
+            let size = (attributes[.size] as? NSNumber)?.intValue ?? 0
+            guard size <= 2 * 1024 * 1024 else {
+                throw ToolError.failed("File is too large to read (\(size) bytes, limit 2 MB)")
+            }
+            let data = try Data(contentsOf: url)
+            let text = String(decoding: data.prefix(256 * 1024), as: UTF8.self)
+            return .object([
+                "path": .string(url.path),
+                "bytes": .number(Double(size)),
+                "content": .string(text),
+                "truncated": .bool(data.count > 256 * 1024),
+            ])
+        case "write":
+            guard let content = arguments["content"]?.stringValue else {
+                throw ToolError.invalidArguments("content is required for write")
+            }
+            let data = Data(content.utf8)
+            guard data.count <= 2 * 1024 * 1024 else {
+                throw ToolError.failed("Content exceeds 2 MB write limit")
+            }
+            try fileManager.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try data.write(to: url, options: .atomic)
+            return .object(["path": .string(url.path), "bytes": .number(Double(data.count))])
+        case "list":
+            let entries = try fileManager.contentsOfDirectory(at: url, includingPropertiesForKeys: [.isDirectoryKey, .fileSizeKey, .contentModificationDateKey])
+            let items = entries.sorted { $0.lastPathComponent < $1.lastPathComponent }.prefix(300).map { entry -> JSONValue in
+                let values = try? entry.resourceValues(forKeys: [.isDirectoryKey, .fileSizeKey, .contentModificationDateKey])
+                return .object([
+                    "name": .string(entry.lastPathComponent),
+                    "path": .string(entry.path),
+                    "isDirectory": .bool(values?.isDirectory ?? false),
+                    "bytes": .number(Double(values?.fileSize ?? 0)),
+                    "modifiedAt": .string(values?.contentModificationDate.map(ISO8601.string(from:)) ?? ""),
+                ])
+            }
+            return .object(["path": .string(url.path), "entries": .array(Array(items))])
+        default:
+            throw ToolError.invalidArguments("Unknown action \(action)")
+        }
+    }
+
+    static func allowedRoots() -> [String] {
+        [
+            NSHomeDirectory(),
+            "/tmp",
+            "/private/tmp",
+            "/Users/Shared",
+        ].map { (($0 as NSString).resolvingSymlinksInPath) }
+    }
+
+    static func allowedURL(path: String) throws -> URL {
+        let expanded = (path as NSString).expandingTildeInPath
+        let url = URL(fileURLWithPath: expanded).standardizedFileURL
+        let resolved = URL(fileURLWithPath: (url.path as NSString).resolvingSymlinksInPath)
+        let allowed = allowedRoots().contains { root in
+            resolved.path == root || resolved.path.hasPrefix(root + "/")
+        }
+        guard allowed else {
+            throw ToolError.denied("Path is outside the allowed roots: \(resolved.path)")
+        }
+        return resolved
+    }
+}
+
+// MARK: - Screenshot
+
+public struct ScreenshotTool: KernelTool {
+    public init() {}
+
+    public var definition: ToolDefinition {
+        ToolDefinition(
+            name: "system.screen.capture",
+            title: "截屏",
+            summary: "截取当前屏幕并保存为 PNG，返回文件路径。需要系统「屏幕录制」权限。",
+            inputSchema: .object([
+                "type": "object",
+                "properties": .object([
+                    "path": .object(["type": "string", "description": "可选保存路径，默认保存在应用支持目录"]),
+                ]),
+                "additionalProperties": false,
+            ]),
+            capability: Capability.screenCapture,
+            risk: .medium
+        )
+    }
+
+    public func invoke(arguments: JSONValue, context: ToolContext) async throws -> JSONValue {
+        let capturesDirectory = FileManager.default
+            .homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/Application Support/Lucas/Captures", isDirectory: true)
+        try FileManager.default.createDirectory(at: capturesDirectory, withIntermediateDirectories: true)
+
+        let path: String
+        if let explicit = arguments["path"]?.stringValue, !explicit.isEmpty {
+            path = try FilesystemTool.allowedURL(path: explicit).path
+        } else {
+            let stamp = ISO8601.string(from: Date()).replacingOccurrences(of: ":", with: "-")
+            path = capturesDirectory.appendingPathComponent("capture-\(stamp).png").path
+        }
+
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/sbin/screencapture")
+        process.arguments = ["-x", path]
+        let stderr = Pipe()
+        process.standardError = stderr
+        try process.run()
+        process.waitUntilExit()
+
+        guard process.terminationStatus == 0, FileManager.default.fileExists(atPath: path) else {
+            let message = String(decoding: stderr.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+            throw ToolError.failed("screencapture failed (\(process.terminationStatus)): \(message)")
+        }
+        let size = (try? FileManager.default.attributesOfItem(atPath: path)[.size] as? NSNumber)?.intValue ?? 0
+        return .object(["path": .string(path), "bytes": .number(Double(size))])
+    }
+}
+
+// MARK: - Clipboard
+
+public struct ClipboardTool: KernelTool {
+    public init() {}
+
+    public var definition: ToolDefinition {
+        ToolDefinition(
+            name: "system.clipboard",
+            title: "剪贴板",
+            summary: "读取或写入系统剪贴板文本。action=get|set。",
+            inputSchema: .object([
+                "type": "object",
+                "properties": .object([
+                    "action": .object(["type": "string", "enum": .array(["get", "set"])]),
+                    "text": .object(["type": "string"]),
+                ]),
+                "required": .array(["action"]),
+                "additionalProperties": false,
+            ]),
+            capability: Capability.clipboardWrite,
+            risk: .medium
+        )
+    }
+
+    public func invoke(arguments: JSONValue, context: ToolContext) async throws -> JSONValue {
+        guard let action = arguments["action"]?.stringValue else {
+            throw ToolError.invalidArguments("action is required")
+        }
+        let pasteboard = NSPasteboard.general
+        switch action {
+        case "get":
+            return .object(["text": .string(pasteboard.string(forType: .string) ?? "")])
+        case "set":
+            guard let text = arguments["text"]?.stringValue else {
+                throw ToolError.invalidArguments("text is required for set")
+            }
+            pasteboard.clearContents()
+            pasteboard.setString(text, forType: .string)
+            return .object(["written": .number(Double(text.count))])
+        default:
+            throw ToolError.invalidArguments("Unknown action \(action)")
+        }
+    }
+}
+
+/// Always-on guard for catastrophic shell operations. This is deliberately
+/// conservative: it blocks the command, never silently rewrites it.
+public enum DangerousCommand {
+    private static let rules: [(pattern: String, reason: String)] = [
+        (#"(?i)\brm\s+(-[a-zA-Z]*r[a-zA-Z]*f|-[a-zA-Z]*f[a-zA-Z]*r)\s+(/|~|\$HOME)(\s|$)"#, "递归删除根目录或主目录"),
+        (#"(?i)\bsudo\b"#, "sudo 需要交互式密码"),
+        (#"(?i)\bmkfs(\.|\s)"#, "格式化磁盘"),
+        (#"(?i)\bdiskutil\s+(erase|reformat)"#, "擦除磁盘"),
+        (#"(?i)\bdd\b.*\bof=/dev/(disk|rdisk)"#, "直接写磁盘设备"),
+        (#"(?i)\b(shutdown|reboot|halt)\b"#, "关机或重启"),
+        (#"(?i):\(\)\s*\{\s*:\|:&\s*\}\s*;:"#, "fork bomb"),
+        (#"(?i)\bchmod\s+-R\s+777\s+/"#, "递归放开根目录权限"),
+    ]
+
+    public static func blockReason(for command: String) -> String? {
+        for rule in rules {
+            guard let regex = try? NSRegularExpression(pattern: rule.pattern) else { continue }
+            let range = NSRange(command.startIndex..<command.endIndex, in: command)
+            if regex.firstMatch(in: command, range: range) != nil {
+                return rule.reason
+            }
+        }
+        return nil
+    }
+}
+
+public enum BuiltinTools {
+    public static func all() -> [any KernelTool] {
+        [
+            TimeTool(),
+            ShellTool(),
+            ApplicationTool(),
+            FilesystemTool(),
+            ScreenshotTool(),
+            ClipboardTool(),
+        ]
+    }
+}
