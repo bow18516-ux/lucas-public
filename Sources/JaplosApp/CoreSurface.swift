@@ -194,46 +194,51 @@ struct TopBar: View {
 
     var body: some View {
         HStack(spacing: 10) {
-            RoundedRectangle(cornerRadius: 1.5)
-                .fill(LinearGradient(
-                    colors: [Theme.accent, Theme.accent.opacity(0.35)],
-                    startPoint: .top,
-                    endPoint: .bottom
-                ))
-                .frame(width: 3, height: 20)
+            HStack(spacing: 10) {
+                RoundedRectangle(cornerRadius: 1.5)
+                    .fill(LinearGradient(
+                        colors: [Theme.accent, Theme.accent.opacity(0.35)],
+                        startPoint: .top,
+                        endPoint: .bottom
+                    ))
+                    .frame(width: 3, height: 20)
 
-            HStack(alignment: .firstTextBaseline, spacing: 10) {
-                Text("LUCAS")
-                    .font(.system(size: 14, weight: .bold))
-                    .tracking(3.5)
-                    .foregroundStyle(Theme.textPrimary)
+                HStack(alignment: .firstTextBaseline, spacing: 10) {
+                    Text("LUCAS")
+                        .font(.system(size: 14, weight: .bold))
+                        .tracking(3.5)
+                        .foregroundStyle(Theme.textPrimary)
 
-                Text("v\(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "dev")")
-                    .font(.system(size: 9, weight: .semibold))
-                    .tracking(0.5)
-                    .foregroundStyle(Theme.accent)
-                    .padding(.horizontal, 7)
-                    .padding(.vertical, 3)
-                    .background(Theme.accent.opacity(0.14), in: Capsule())
-            }
-
-            Button {
-                model.settingsPresented = true
-            } label: {
-                Image(systemName: "gearshape")
-                    .font(.system(size: 14))
-                    .foregroundStyle(Theme.textSecondary)
-            }
-            .buttonStyle(.borderless)
-            .padding(.leading, 4)
-            .overlay(alignment: .topTrailing) {
-                if updateService.updateAvailable {
-                    Circle()
-                        .fill(Theme.accent)
-                        .frame(width: 6, height: 6)
-                        .offset(x: 3, y: -2)
+                    Text("v\(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "dev")")
+                        .font(.system(size: 9, weight: .semibold))
+                        .tracking(0.5)
+                        .foregroundStyle(Theme.accent)
+                        .padding(.horizontal, 7)
+                        .padding(.vertical, 3)
+                        .background(Theme.accent.opacity(0.14), in: Capsule())
                 }
+
+                Spacer(minLength: 8)
+
+                Button {
+                    model.settingsPresented = true
+                } label: {
+                    Image(systemName: "gearshape")
+                        .font(.system(size: 14))
+                        .foregroundStyle(Theme.textSecondary)
+                }
+                .buttonStyle(.borderless)
+                .overlay(alignment: .topTrailing) {
+                    if updateService.updateAvailable {
+                        Circle()
+                            .fill(Theme.accent)
+                            .frame(width: 6, height: 6)
+                            .offset(x: 3, y: -2)
+                    }
+                }
+                .help("设置")
             }
+            .frame(width: DashboardLayout.columnWidth, alignment: .leading)
 
             Spacer()
 
