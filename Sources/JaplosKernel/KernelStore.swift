@@ -87,6 +87,34 @@ public final class KernelStore {
         );
         """)
         try database.execute("CREATE INDEX IF NOT EXISTS idx_tool_invocations_time ON tool_invocations(created_at);")
+        try database.execute("""
+        CREATE TABLE IF NOT EXISTS configuration_history (
+            scope TEXT NOT NULL,
+            path TEXT NOT NULL,
+            revision INTEGER NOT NULL,
+            record_json TEXT NOT NULL,
+            PRIMARY KEY(scope, path, revision)
+        );
+        """)
+        try database.execute("""
+        CREATE TABLE IF NOT EXISTS custom_model_routes (
+            route_id TEXT PRIMARY KEY NOT NULL,
+            revision INTEGER NOT NULL,
+            created_at REAL NOT NULL,
+            created_by TEXT NOT NULL,
+            record_json TEXT NOT NULL
+        );
+        """)
+        try database.execute("""
+        CREATE TABLE IF NOT EXISTS speech_profiles (
+            profile_id TEXT PRIMARY KEY NOT NULL,
+            provider_id TEXT NOT NULL,
+            is_default INTEGER NOT NULL,
+            revision INTEGER NOT NULL,
+            updated_at REAL NOT NULL,
+            record_json TEXT NOT NULL
+        );
+        """)
     }
 
     // MARK: - Configuration
@@ -150,6 +178,146 @@ public final class KernelStore {
             updated_at = excluded.updated_at,
             updated_by = excluded.updated_by;
         """, [path, encoded, now, updatedBy])
+
+        let revisionRows = try database.query(
+            "SELECT revision FROM configurations WHERE path = ? LIMIT 1;",
+            [path]
+        )
+        let revision = (revisionRows.first?["revision"] as? Int64) ?? 1
+        let record = JSONValue.object([
+            "path": .string(path),
+            "revision": .number(Double(revision)),
+            "scope": .string("user"),
+            "updatedAt": .string(ISO8601.string(from: Date(timeIntervalSince1970: now))),
+            "updatedBy": .string(updatedBy),
+            "value": value,
+        ])
+        let recordJSON = String(data: try ProtocolCoding.encode(record), encoding: .utf8) ?? "{}"
+        try database.execute("""
+        INSERT OR REPLACE INTO configuration_history(scope, path, revision, record_json)
+        VALUES ('user', ?, ?, ?);
+        """, [path, revision, recordJSON])
+    }
+
+    public func configurationHistory(path: String? = nil, limit: Int = 50) throws -> [JSONValue] {
+        let rows: [[String: Any]]
+        if let path {
+            rows = try database.query(
+                """
+                SELECT scope, path, revision, record_json FROM configuration_history
+                WHERE path = ? ORDER BY revision DESC LIMIT ?;
+                """,
+                [path, limit]
+            )
+        } else {
+            rows = try database.query(
+                """
+                SELECT scope, path, revision, record_json FROM configuration_history
+                ORDER BY path ASC, revision DESC LIMIT ?;
+                """,
+                [limit]
+            )
+        }
+        return rows.compactMap { row in
+            guard
+                let recordJSON = row["record_json"] as? String,
+                let data = recordJSON.data(using: .utf8),
+                let value = try? ProtocolCoding.decode(JSONValue.self, from: data)
+            else { return nil }
+            return value
+        }
+    }
+
+    public func listCustomModelRoutes() throws -> [JSONValue] {
+        try database.query(
+            "SELECT route_id, revision, created_at, created_by, record_json FROM custom_model_routes ORDER BY created_at DESC;"
+        ).compactMap { row in
+            guard
+                let routeID = row["route_id"] as? String,
+                let revision = row["revision"] as? Int64,
+                let createdAt = row["created_at"] as? Double,
+                let createdBy = row["created_by"] as? String,
+                let recordJSON = row["record_json"] as? String,
+                let data = recordJSON.data(using: .utf8),
+                let record = try? ProtocolCoding.decode(JSONValue.self, from: data)
+            else { return nil }
+            return .object([
+                "routeID": .string(routeID),
+                "revision": .number(Double(revision)),
+                "createdAt": .string(ISO8601.string(from: Date(timeIntervalSince1970: createdAt))),
+                "createdBy": .string(createdBy),
+                "record": record,
+            ])
+        }
+    }
+
+    public func upsertCustomModelRoute(
+        routeID: String,
+        record: JSONValue,
+        createdBy: String = Principal.localUser
+    ) throws {
+        let encoded = String(data: try ProtocolCoding.encode(record), encoding: .utf8) ?? "{}"
+        let now = Date().timeIntervalSince1970
+        try database.execute("""
+        INSERT INTO custom_model_routes(route_id, revision, created_at, created_by, record_json)
+        VALUES (?, 1, ?, ?, ?)
+        ON CONFLICT(route_id) DO UPDATE SET
+            revision = custom_model_routes.revision + 1,
+            record_json = excluded.record_json,
+            created_by = excluded.created_by;
+        """, [routeID, now, createdBy, encoded])
+    }
+
+    public func deleteCustomModelRoute(routeID: String) throws {
+        try database.execute("DELETE FROM custom_model_routes WHERE route_id = ?;", [routeID])
+    }
+
+    public func listSpeechProfiles() throws -> [JSONValue] {
+        try database.query(
+            "SELECT profile_id, provider_id, is_default, revision, updated_at, record_json FROM speech_profiles ORDER BY is_default DESC, updated_at DESC;"
+        ).compactMap { row in
+            guard
+                let profileID = row["profile_id"] as? String,
+                let providerID = row["provider_id"] as? String,
+                let isDefault = row["is_default"] as? Int64,
+                let revision = row["revision"] as? Int64,
+                let updatedAt = row["updated_at"] as? Double,
+                let recordJSON = row["record_json"] as? String,
+                let data = recordJSON.data(using: .utf8),
+                let record = try? ProtocolCoding.decode(JSONValue.self, from: data)
+            else { return nil }
+            return .object([
+                "profileID": .string(profileID),
+                "providerID": .string(providerID),
+                "isDefault": .bool(isDefault != 0),
+                "revision": .number(Double(revision)),
+                "updatedAt": .string(ISO8601.string(from: Date(timeIntervalSince1970: updatedAt))),
+                "record": record,
+            ])
+        }
+    }
+
+    public func upsertSpeechProfile(
+        profileID: String,
+        providerID: String,
+        isDefault: Bool,
+        record: JSONValue
+    ) throws {
+        let encoded = String(data: try ProtocolCoding.encode(record), encoding: .utf8) ?? "{}"
+        let now = Date().timeIntervalSince1970
+        if isDefault {
+            try database.execute("UPDATE speech_profiles SET is_default = 0;")
+        }
+        try database.execute("""
+        INSERT INTO speech_profiles(profile_id, provider_id, is_default, revision, updated_at, record_json)
+        VALUES (?, ?, ?, 1, ?, ?)
+        ON CONFLICT(profile_id) DO UPDATE SET
+            provider_id = excluded.provider_id,
+            is_default = excluded.is_default,
+            revision = speech_profiles.revision + 1,
+            updated_at = excluded.updated_at,
+            record_json = excluded.record_json;
+        """, [profileID, providerID, isDefault ? 1 : 0, now, encoded])
     }
 
     /// Configuration without secrets; useful for UI and display.
@@ -179,7 +347,26 @@ public final class KernelStore {
             "baseURL": .string(connection.baseURL),
             "model": .string(connection.model),
             "temperature": .number(connection.temperature),
+            "displayName": .string(connection.displayName),
         ]), updatedBy: updatedBy)
+
+        let routeID = "custom.default"
+        let record = JSONValue.object([
+            "protocolKind": .string("openai.chat.completions"),
+            "profile": .object([
+                "id": .string(routeID),
+                "adapter": .string("openai.chat.completions"),
+                "baseURL": .string(connection.baseURL),
+                "displayName": .string(connection.displayName),
+                "credential": .string("store://" + Self.modelSecretAccount),
+                "models": .array([.string(connection.model)]),
+                "prefersStreaming": .bool(true),
+                "executionLocation": .string("remote"),
+                "temperature": .number(connection.temperature),
+                "version": .string("1.0.0"),
+            ]),
+        ])
+        try upsertCustomModelRoute(routeID: routeID, record: record, createdBy: updatedBy)
     }
 
     /// Moves a legacy plaintext `apiKey` out of SQLite into the secret backend.

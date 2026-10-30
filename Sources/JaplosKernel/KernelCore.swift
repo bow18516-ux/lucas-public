@@ -187,6 +187,17 @@ public final class KernelCore: @unchecked Sendable {
                 try store.setConfiguration(path: path, value: value, updatedBy: request.principal)
                 return .success(.object(["path": .string(path), "saved": .bool(true)]), requestID: requestID)
 
+            case .configurationHistory:
+                let path = request.arguments["path"]?.stringValue
+                let limit = request.arguments["limit"]?.intValue ?? 50
+                return .success(.array(try store.configurationHistory(path: path, limit: limit)), requestID: requestID)
+
+            case .modelRoutesList:
+                return .success(.array(try store.listCustomModelRoutes()), requestID: requestID)
+
+            case .speechProfilesList:
+                return .success(.array(try store.listSpeechProfiles()), requestID: requestID)
+
             case .chatSessionCreate:
                 let title = request.arguments["title"]?.stringValue ?? "新对话"
                 let session = try store.createSession(title: title)

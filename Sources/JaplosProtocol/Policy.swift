@@ -101,7 +101,7 @@ public enum CapabilityRouting {
             return Capability.root
         case .kernelShutdown, .policyGrantsList, .policyEvaluate:
             return Capability.root
-        case .configurationList, .configurationSet:
+        case .configurationList, .configurationSet, .configurationHistory:
             return Capability.root
         case .chatSessionCreate, .chatSessionsList, .chatSessionRename,
              .chatTurnAppend, .chatSend:
@@ -118,7 +118,7 @@ public enum CapabilityRouting {
             return Capability.toolRead
         case .mcpRefresh:
             return Capability.toolManage
-        case .modelTest, .modelCatalog:
+        case .modelTest, .modelCatalog, .modelRoutesList, .speechProfilesList:
             return Capability.modelInvoke
         default:
             return Capability.root
