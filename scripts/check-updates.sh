@@ -20,7 +20,11 @@ XML="$(curl "${CURL_ARGS[@]}" "$FEED")"
 
 export FEED_XML="$XML"
 export EXPECTED_VERSION="$EXPECTED"
-export PUBLIC_KEY_FILE="$ROOT/Config/sparkle_public_key.txt"
+PUBLIC_KEY_FILE="${LUCAS_PUBLIC_KEY_FILE:-$ROOT/Config/sparkle_public_key.txt}"
+if [ ! -f "$PUBLIC_KEY_FILE" ] && [ -f "$ROOT/sparkle_public_key.txt" ]; then
+    PUBLIC_KEY_FILE="$ROOT/sparkle_public_key.txt"
+fi
+export PUBLIC_KEY_FILE
 export DEEP="${LUCAS_CHECK_DEEP:-0}"
 export RESOLVE_IP="${LUCAS_CHECK_RESOLVE:-}"
 

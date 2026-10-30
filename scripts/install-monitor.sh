@@ -13,10 +13,15 @@ ACTION="${1:-install}"
 
 if [ "$ACTION" = "uninstall" ]; then
     launchctl bootout "gui/$(id -u)/$LABEL" 2>/dev/null || true
-    rm -f "$PLIST" "$STAGED"
+    rm -f "$PLIST" "$STAGED" "$MONITOR"
     echo "removed $LABEL"
     exit 0
 fi
+
+SUPPORT="$HOME/Library/Application Support/Lucas"
+BIN="$SUPPORT/bin"
+KEY_DST="$SUPPORT/sparkle_public_key.txt"
+MONITOR="$BIN/check-updates.sh"
 
 mkdir -p "$LOG_DIR" "$ROOT/Config" 2>/dev/null || true
 
@@ -30,12 +35,14 @@ cat > "$STAGED" <<PLIST
     <key>ProgramArguments</key>
     <array>
         <string>/bin/bash</string>
-        <string>$ROOT/scripts/check-updates.sh</string>
+        <string>$MONITOR</string>
     </array>
     <key>EnvironmentVariables</key>
     <dict>
         <key>LUCAS_CHECK_RESOLVE</key>
         <string>43.132.224.242</string>
+        <key>LUCAS_PUBLIC_KEY_FILE</key>
+        <string>$KEY_DST</string>
     </dict>
     <key>RunAtLoad</key>
     <true/>
