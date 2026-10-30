@@ -70,8 +70,16 @@ if [ -n "${LUCAS_NOTARY_PROFILE:-}" ]; then
     fi
     xcrun notarytool submit "/tmp/Lucas-$VERSION.zip" \
         --keychain-profile "$LUCAS_NOTARY_PROFILE" "${KEYCHAIN_ARGS[@]}" --wait
-    xcrun stapler staple "$APP"
-    xcrun stapler validate "$APP"
+
+    # Staple a clean extraction of the submitted zip. Stapling the build
+    # directory occasionally fails with "Error 73" after repeated rebuilds.
+    STAPLE_DIR="$(mktemp -d)"
+    ditto -x -k "/tmp/Lucas-$VERSION.zip" "$STAPLE_DIR"
+    xcrun stapler staple "$STAPLE_DIR/Lucas.app"
+    xcrun stapler validate "$STAPLE_DIR/Lucas.app"
+    rm -rf "$APP"
+    ditto "$STAPLE_DIR/Lucas.app" "$APP"
+    rm -rf "$STAPLE_DIR"
 else
     echo "warning: LUCAS_NOTARY_PROFILE not set; skipping notarization" >&2
 fi

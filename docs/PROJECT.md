@@ -1,6 +1,6 @@
 # Lucas Agent 项目文档
 
-> 适用版本：**0.5.3 (build 202610301010)** · 最后更新：2026-10-30
+> 适用版本：**0.5.4 (build 202610301026)** · 最后更新：2026-10-30
 > 读者：接手开发、构建、发布或运维的工程师。
 > 目标：读完这一篇，能独立完成「改代码 → 构建 → 公证 → 发布 → 用户更新」全流程。
 
@@ -41,12 +41,12 @@
 |---|---|
 | 产品名 | Lucas Agent |
 | Bundle ID | `com.lucas.app` |
-| 当前版本 | `0.5.3` |
-| Bundle 版本 | `202610301010`（时间戳） |
+| 当前版本 | `0.5.4` |
+| Bundle 版本 | `202610301026`（时间戳） |
 | 最低系统 | macOS 13.0 |
 | 架构 | arm64 |
 | 更新源 | `https://updates.okcue.app/lucas/appcast.xml` |
-| 下载页文件 | `https://updates.okcue.app/lucas/Lucas-0.5.3.dmg` |
+| 下载页文件 | `https://updates.okcue.app/lucas/Lucas-0.5.4.dmg` |
 | 代码位置 | `~/Desktop/japlosv2/clone`（SwiftPM 包） |
 | 原版参考 | `../REPORT.md`、`../extracted/` |
 
@@ -881,7 +881,7 @@ Lucas.app
 
 ### 13.5 更新说明（release notes）
 
-- 文件名必须与 zip 同名：`Lucas-0.5.3.html`。
+- 文件名必须与 zip 同名：`Lucas-0.5.4.html`。
 - 内容是 HTML 片段（`<ul><li>…</li></ul>` 即可），generate_appcast 会嵌入 `<description><![CDATA[…]]></description>`。
 - Sparkle 更新弹窗直接渲染这份 HTML。
 - App 内「在线更新」页会读取同一段 description，并把 HTML 转成纯文本展示。
@@ -895,7 +895,18 @@ Lucas.app
 5. App 退出、替换、自动重启；数据保留。
 6. 新版本启动后，在线更新页显示已是新版。
 
-### 13.7 常见失败
+### 13.7 staple 报 Error 73
+
+`stapler` 偶尔会在反复重建的 `build/Lucas.app` 上报 `Error 73`，但同一份 zip 解出来的 App 可以正常 staple。`release.sh` 已改为：
+
+1. 用提交公证的 zip 解压到临时目录
+2. 对临时目录里的 App 执行 `stapler`
+3. 用 stapled 的 App 替换 `build/Lucas.app`
+4. 再打最终 zip / DMG
+
+如果手工遇到，按同样步骤处理即可。
+
+### 13.8 常见失败
 
 | 现象 | 原因 |
 |---|---|
@@ -1035,7 +1046,7 @@ curl -I https://updates.okcue.app/lucas/appcast.xml
 cd ~/Desktop/japlosv2/clone
 
 # 1) 写更新说明（建议）
-cat > updates/Lucas-0.5.3.html <<'EOF'
+cat > updates/Lucas-0.5.4.html <<'EOF'
 <ul>
 <li>修复……</li>
 <li>新增……</li>
@@ -1093,8 +1104,8 @@ release.sh
 curl -sI https://updates.okcue.app/lucas/appcast.xml | head -3
 curl -s https://updates.okcue.app/lucas/appcast.xml | head -20
 curl -s --resolve updates.okcue.app:443:43.132.224.242 \
-  -o /tmp/Lucas.zip https://updates.okcue.app/lucas/Lucas-0.5.3.zip
-shasum -a 256 /tmp/Lucas.zip updates/Lucas-0.5.3.zip
+  -o /tmp/Lucas.zip https://updates.okcue.app/lucas/Lucas-0.5.4.zip
+shasum -a 256 /tmp/Lucas.zip updates/Lucas-0.5.4.zip
 ```
 
 ---
@@ -1336,9 +1347,9 @@ xcrun stapler validate build/Lucas.app
 | 用途 | URL |
 |---|---|
 | appcast | `https://updates.okcue.app/lucas/appcast.xml` |
-| 最新 DMG | `https://updates.okcue.app/lucas/Lucas-0.5.3.dmg` |
-| 最新 ZIP | `https://updates.okcue.app/lucas/Lucas-0.5.3.zip` |
-| 更新说明 | `https://updates.okcue.app/lucas/Lucas-0.5.3.html` |
+| 最新 DMG | `https://updates.okcue.app/lucas/Lucas-0.5.4.dmg` |
+| 最新 ZIP | `https://updates.okcue.app/lucas/Lucas-0.5.4.zip` |
+| 更新说明 | `https://updates.okcue.app/lucas/Lucas-0.5.4.html` |
 
 ### 20.3 术语
 
