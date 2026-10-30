@@ -47,6 +47,10 @@ if [ -d "$PROMPT_SRC/Injection" ]; then
     rm -rf "$CONTENTS/Resources/Injection"
     cp -R "$PROMPT_SRC/Injection" "$CONTENTS/Resources/Injection"
 fi
+if [ -d "$PROMPT_SRC/BuiltinSkills" ]; then
+    rm -rf "$CONTENTS/Resources/BuiltinSkills"
+    cp -R "$PROMPT_SRC/BuiltinSkills" "$CONTENTS/Resources/BuiltinSkills"
+fi
 chmod +x "$CONTENTS/MacOS/Lucas" "$CONTENTS/MacOS/lucasd"
 
 # Sparkle ships as a framework next to the executable.

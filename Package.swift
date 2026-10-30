@@ -27,6 +27,7 @@ let package = Package(
             resources: [
                 .copy("Resources/Prompts"),
                 .copy("Resources/Injection"),
+                .copy("Resources/BuiltinSkills"),
             ]
         ),
         .executableTarget(

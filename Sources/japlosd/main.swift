@@ -77,8 +77,9 @@ do {
 
     let seededPrompts = PromptLibrary.seedOverridesIfNeeded()
     let seededScenes = SceneRouter.seedScenesIfNeeded()
-    if seededPrompts > 0 || seededScenes {
-        log("seeded prompt pack: \(seededPrompts) files, scenes=\(seededScenes)")
+    let seededSkills = SkillPack.seedIfNeeded()
+    if seededPrompts > 0 || seededScenes || seededSkills > 0 {
+        log("seeded prompts=\(seededPrompts) scenes=\(seededScenes) skills=\(seededSkills)")
     }
 
     let core = try KernelCore(storePath: options.storePath, workspace: options.workspace)

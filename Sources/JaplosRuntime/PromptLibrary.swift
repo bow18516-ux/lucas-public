@@ -169,6 +169,8 @@ public enum PromptLibrary {
         if !guidance.isEmpty { parts.append(guidance) }
         let catalog = toolCatalog(tools)
         if !catalog.isEmpty { parts.append(catalog) }
+        let skills = skillCatalogSummary()
+        if !skills.isEmpty { parts.append(skills) }
         return parts.filter { !$0.isEmpty }.joined(separator: "\n\n")
     }
 
@@ -199,6 +201,13 @@ public enum PromptLibrary {
             }
         }
         return created
+    }
+
+    public static func skillCatalogSummary() -> String {
+        let skills = SkillPack.load()
+        guard !skills.isEmpty else { return "" }
+        let lines = skills.map { "- \($0.name)：\($0.summaryLine)" }.joined(separator: "\n")
+        return "可用内置 Skill（需要时按 SKILL.md 执行，不要假装已加载未声明的技能）：\n\(lines)"
     }
 
     // MARK: - Helpers

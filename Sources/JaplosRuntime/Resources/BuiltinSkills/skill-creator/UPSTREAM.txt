@@ -1,0 +1,6 @@
+Source: https://github.com/anthropics/skills/tree/34040c9c568585f6929bedeaad110ad08f079624/skills/skill-creator
+License: Apache-2.0 (see LICENSE.txt)
+Modified for Bailongma on 2026-09-15.
+The entrypoint and evaluation workflow are adapted for local runtime tools.
+Writing and improvement guidance is excerpted into references/writing.md.
+Claude CLI orchestration, platform-specific flows, and their helper scripts are not included.

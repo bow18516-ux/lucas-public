@@ -167,14 +167,14 @@ struct SettingsScreen: View {
             ModelSettingsPane(model: model)
         case .tools:
             ToolsSettingsPane(model: model)
+        case .skills:
+            SkillsSettingsPane(model: model)
         case .voice:
             VoiceSettingsPane(model: model, voice: voice)
         case .mcp:
             MCPSettingsPane(model: model)
         case .updates:
             UpdatesSettingsPane(updates: UpdateService.shared, model: model)
-        default:
-            PlaceholderPane(section: section, model: model)
         }
     }
 }
@@ -652,6 +652,170 @@ struct ToolsSettingsPane: View {
         }
     }
 }
+
+
+// MARK: - Skills settings
+
+struct SkillsSettingsPane: View {
+    @ObservedObject var model: AppModel
+    @State private var skills: [BuiltinSkill] = []
+    @State private var query = ""
+    @State private var selected: BuiltinSkill?
+
+    private var filtered: [BuiltinSkill] {
+        guard !query.isEmpty else { return skills }
+        return skills.filter {
+            $0.name.localizedCaseInsensitiveContains(query)
+                || $0.description.localizedCaseInsensitiveContains(query)
+        }
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            SettingsHeader(title: "Skill 列表", subtitle: "内置技能包（Japlos SoT），可在 Application Support 覆盖", model: model)
+
+            HStack(spacing: 10) {
+                TextField("搜索技能名称或说明", text: $query)
+                    .textFieldStyle(.plain)
+                    .font(.system(size: SettingsMetrics.cardSubtitleSize))
+                    .padding(8)
+                    .background(Color.white.opacity(0.04), in: RoundedRectangle(cornerRadius: 6))
+                    .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(Theme.panelBorder, lineWidth: 0.7))
+                Button {
+                    reload()
+                } label: {
+                    Label("刷新", systemImage: "arrow.clockwise")
+                        .font(.system(size: SettingsMetrics.captionSize))
+                }
+                .buttonStyle(.borderless)
+                .foregroundStyle(Theme.accent)
+                Button {
+                    NSWorkspace.shared.open(BuiltinSkillCatalog.supportSkillsRoot())
+                } label: {
+                    Label("打开目录", systemImage: "folder")
+                        .font(.system(size: SettingsMetrics.captionSize))
+                }
+                .buttonStyle(.borderless)
+                .foregroundStyle(Theme.accent)
+            }
+            .padding(.horizontal, SettingsMetrics.pagePadding)
+
+            Text("已装技能 · \(filtered.count) 个")
+                .font(.system(size: SettingsMetrics.captionSize))
+                .foregroundStyle(Theme.textSecondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, SettingsMetrics.pagePadding)
+                .padding(.top, 12)
+
+            if filtered.isEmpty {
+                Spacer()
+                VStack(spacing: 10) {
+                    Image(systemName: "square.stack.3d.up")
+                        .font(.system(size: SettingsMetrics.metricSize, weight: .light))
+                        .foregroundStyle(Theme.textSecondary.opacity(0.7))
+                    Text(skills.isEmpty ? "暂无技能包" : "没有匹配的技能")
+                        .font(.system(size: SettingsMetrics.bodySize, weight: .medium))
+                        .foregroundStyle(Theme.textPrimary)
+                    Text("启动 lucasd 后会把内置 BuiltinSkills 种子拷到 ~/Library/Application Support/Lucas/BuiltinSkills。")
+                        .font(.system(size: SettingsMetrics.captionSize))
+                        .foregroundStyle(Theme.textSecondary)
+                        .multilineTextAlignment(.center)
+                        .frame(maxWidth: 420)
+                }
+                Spacer()
+            } else {
+                HStack(alignment: .top, spacing: 0) {
+                    ScrollView {
+                        VStack(spacing: 6) {
+                            ForEach(filtered) { skill in
+                                Button {
+                                    selected = skill
+                                } label: {
+                                    HStack(alignment: .top, spacing: 10) {
+                                        Image(systemName: "sparkles.rectangle.stack")
+                                            .font(.system(size: SettingsMetrics.cardSubtitleSize))
+                                            .foregroundStyle(Theme.accent)
+                                            .frame(width: 20)
+                                        VStack(alignment: .leading, spacing: 2) {
+                                            Text(skill.name)
+                                                .font(.system(size: SettingsMetrics.cardSubtitleSize, weight: .medium, design: .monospaced))
+                                                .foregroundStyle(Theme.textPrimary)
+                                            Text(skill.summaryLine)
+                                                .font(.system(size: SettingsMetrics.captionSize))
+                                                .foregroundStyle(Theme.textSecondary)
+                                                .lineLimit(2)
+                                        }
+                                        Spacer()
+                                        Text(skill.source)
+                                            .font(.system(size: SettingsMetrics.microSize))
+                                            .foregroundStyle(Theme.textSecondary.opacity(0.8))
+                                    }
+                                    .padding(9)
+                                    .background(
+                                        (selected?.name == skill.name ? Theme.accent.opacity(0.10) : Color.white.opacity(0.025)),
+                                        in: RoundedRectangle(cornerRadius: 7)
+                                    )
+                                    .overlay(
+                                        RoundedRectangle(cornerRadius: 7)
+                                            .strokeBorder(
+                                                selected?.name == skill.name ? Theme.accent.opacity(0.5) : Theme.panelBorder,
+                                                lineWidth: 0.6
+                                            )
+                                    )
+                                }
+                                .buttonStyle(.borderless)
+                            }
+                        }
+                        .padding(.horizontal, SettingsMetrics.pagePadding)
+                        .padding(.vertical, 12)
+                    }
+                    .frame(maxWidth: selected == nil ? .infinity : 380)
+
+                    if let selected {
+                        Divider()
+                        ScrollView {
+                            VStack(alignment: .leading, spacing: 12) {
+                                Text(selected.name)
+                                    .font(.system(size: SettingsMetrics.bodySize, weight: .semibold, design: .monospaced))
+                                    .foregroundStyle(Theme.textPrimary)
+                                Text(selected.description)
+                                    .font(.system(size: SettingsMetrics.cardSubtitleSize))
+                                    .foregroundStyle(Theme.textSecondary)
+                                Text(selected.directory.path)
+                                    .font(.system(size: SettingsMetrics.microSize, design: .monospaced))
+                                    .foregroundStyle(Theme.textSecondary.opacity(0.8))
+                                    .textSelection(.enabled)
+                                Divider()
+                                Text(selected.body)
+                                    .font(.system(size: SettingsMetrics.captionSize))
+                                    .foregroundStyle(Theme.textPrimary)
+                                    .textSelection(.enabled)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                            }
+                            .padding(SettingsMetrics.pagePadding)
+                        }
+                    }
+                }
+            }
+        }
+        .onAppear(perform: reload)
+    }
+
+    private func reload() {
+        var extras: [URL] = []
+        if let bundled = Bundle.main.resourceURL?.appendingPathComponent("BuiltinSkills", isDirectory: true),
+           FileManager.default.fileExists(atPath: bundled.path) {
+            extras.append(bundled)
+        }
+        skills = BuiltinSkillCatalog.load(additionalRoots: extras)
+        if let selected, let match = skills.first(where: { $0.name == selected.name }) {
+            self.selected = match
+        } else {
+            self.selected = skills.first
+        }
+    }
+}
+
 
 // MARK: - Placeholder
 
