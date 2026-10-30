@@ -1,3 +1,4 @@
+import JaplosProtocol
 import AppKit
 import SwiftUI
 
@@ -274,8 +275,8 @@ struct LeftColumn: View {
     var body: some View {
         VStack(spacing: 14) {
             ModelCard(model: model)
-            MemoryCard()
-            CalendarCard()
+            MemoryCard(model: model)
+            CalendarCard(model: model)
             Spacer(minLength: 0)
         }
     }
@@ -304,13 +305,13 @@ struct ModelCard: View {
 
             VStack(spacing: 20) {
                 HStack(alignment: .top, spacing: 0) {
-                    stat("注册扩展", "0")
-                    stat("记忆", "0")
-                    stat("知识库", "0")
+                    stat("注册扩展", "\(model.tools.count)")
+                    stat("记忆", "\(model.sessions.count)")
+                    stat("知识库", "\(knowledgeCount)")
                 }
                 HStack(alignment: .top, spacing: 0) {
-                    stat("技能", "0")
-                    stat("MCP", "0")
+                    stat("技能", "\(skillCount)")
+                    stat("MCP", "\(mcpToolCount)")
                     stat("社交媒体", "0")
                 }
             }
@@ -336,6 +337,18 @@ struct ModelCard: View {
         .panel(padding: 18)
     }
 
+    private var mcpToolCount: Int {
+        model.tools.filter { $0.sourceLabel == "MCP" }.count
+    }
+
+    private var knowledgeCount: Int {
+        model.messages.filter { $0.role == "assistant" && $0.text.count >= 80 }.count
+    }
+
+    private var skillCount: Int {
+        BuiltinSkillCatalog.load().count
+    }
+
     private var providerName: String {
         let url = model.settings.baseURL.lowercased()
         if url.contains("deepseek") { return "DeepSeek" }
@@ -358,6 +371,29 @@ struct ModelCard: View {
 }
 
 struct MemoryCard: View {
+    @ObservedObject var model: AppModel
+
+    private var memories: [String] {
+        var items: [String] = []
+        for session in model.sessions.prefix(6) {
+            let title = session.title.trimmingCharacters(in: .whitespacesAndNewlines)
+            items.append(title.isEmpty ? "会话 \(session.id.prefix(8))" : title)
+        }
+        if items.isEmpty {
+            for message in model.messages.reversed() where message.role == "user" {
+                let clip = message.text.replacingOccurrences(of: "\n", with: " ")
+                if clip.isEmpty { continue }
+                items.append(String(clip.prefix(36)))
+                if items.count >= 5 { break }
+            }
+        }
+        return items
+    }
+
+    private var excerptCount: Int {
+        model.messages.filter { $0.role == "assistant" && !$0.text.isEmpty }.count
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
@@ -375,22 +411,43 @@ struct MemoryCard: View {
 
             RoundedRectangle(cornerRadius: 8)
                 .strokeBorder(Theme.panelBorder, style: StrokeStyle(lineWidth: 0.8, dash: [3, 3]))
-                .frame(height: 150)
+                .frame(minHeight: 150)
                 .overlay(alignment: .topLeading) {
-                    VStack(alignment: .leading, spacing: 8) {
-                        RoundedRectangle(cornerRadius: 2)
-                            .fill(Color.white.opacity(0.18))
-                            .frame(width: 7, height: 7)
-                        Text("暂无记忆")
-                            .font(.system(size: 10))
-                            .foregroundStyle(Theme.textSecondary.opacity(0.7))
+                    if memories.isEmpty {
+                        VStack(alignment: .leading, spacing: 8) {
+                            RoundedRectangle(cornerRadius: 2)
+                                .fill(Color.white.opacity(0.18))
+                                .frame(width: 7, height: 7)
+                            Text("暂无记忆")
+                                .font(.system(size: 10))
+                                .foregroundStyle(Theme.textSecondary.opacity(0.7))
+                            Text("对话与会话标题会显示在这里")
+                                .font(.system(size: 9))
+                                .foregroundStyle(Theme.textSecondary.opacity(0.55))
+                        }
+                        .padding(12)
+                    } else {
+                        VStack(alignment: .leading, spacing: 8) {
+                            ForEach(Array(memories.enumerated()), id: \.offset) { _, item in
+                                HStack(alignment: .top, spacing: 8) {
+                                    Circle()
+                                        .fill(Theme.accent.opacity(0.85))
+                                        .frame(width: 6, height: 6)
+                                        .padding(.top, 3)
+                                    Text(item)
+                                        .font(.system(size: 10))
+                                        .foregroundStyle(Theme.textPrimary.opacity(0.9))
+                                        .lineLimit(2)
+                                }
+                            }
+                        }
+                        .padding(12)
                     }
-                    .padding(12)
                 }
 
             HStack(spacing: 12) {
-                Label("记忆 0", systemImage: "square")
-                Label("知识摘录 0", systemImage: "square")
+                Label("记忆 \(memories.count)", systemImage: "square")
+                Label("知识摘录 \(excerptCount)", systemImage: "square")
                 Spacer()
             }
             .font(.system(size: 9))
@@ -402,10 +459,12 @@ struct MemoryCard: View {
 }
 
 struct CalendarCard: View {
+    @ObservedObject var model: AppModel
     @State private var monthOffset = 0
 
     private var calendar: Calendar {
         var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(identifier: "Asia/Shanghai") ?? .current
         calendar.firstWeekday = 2
         return calendar
     }
@@ -417,8 +476,27 @@ struct CalendarCard: View {
     private var monthTitle: String {
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "zh_CN")
+        formatter.timeZone = TimeZone(identifier: "Asia/Shanghai")
         formatter.dateFormat = "yyyy年M月"
         return formatter.string(from: monthDate)
+    }
+
+    private var activeDays: Set<Int> {
+        let comps = calendar.dateComponents([.year, .month], from: monthDate)
+        var days = Set<Int>()
+        for session in model.sessions {
+            let c = calendar.dateComponents([.year, .month, .day], from: session.updatedAt)
+            if c.year == comps.year, c.month == comps.month, let day = c.day {
+                days.insert(day)
+            }
+        }
+        for message in model.messages {
+            let c = calendar.dateComponents([.year, .month, .day], from: message.createdAt)
+            if c.year == comps.year, c.month == comps.month, let day = c.day {
+                days.insert(day)
+            }
+        }
+        return days
     }
 
     private var days: [Int?] {
@@ -469,7 +547,7 @@ struct CalendarCard: View {
             HStack {
                 HStack(spacing: 4) {
                     Circle().fill(Theme.accent).frame(width: 3, height: 3)
-                    Text("有日程")
+                    Text(activeDays.isEmpty ? "有会话的日期会点亮" : "本月有活动 \(activeDays.count) 天")
                 }
                 Spacer()
                 Text("北京时间")
@@ -485,16 +563,22 @@ struct CalendarCard: View {
         Group {
             if let day {
                 let isToday = monthOffset == 0 && calendar.component(.day, from: Date()) == day
-                Text("\(day)")
-                    .font(.system(size: 11, weight: isToday ? .semibold : .regular))
-                    .foregroundStyle(isToday ? Color.black.opacity(0.85) : Theme.textPrimary.opacity(0.85))
-                    .frame(width: 28, height: 28)
-                    .background(
-                        isToday ? Theme.accent : Color.clear,
-                        in: RoundedRectangle(cornerRadius: 6)
-                    )
+                let hasActivity = activeDays.contains(day)
+                VStack(spacing: 2) {
+                    Text("\(day)")
+                        .font(.system(size: 11, weight: isToday ? .semibold : .regular))
+                        .foregroundStyle(isToday ? Color.black.opacity(0.85) : Theme.textPrimary.opacity(0.85))
+                        .frame(width: 28, height: 28)
+                        .background(
+                            isToday ? Theme.accent : Color.clear,
+                            in: RoundedRectangle(cornerRadius: 6)
+                        )
+                    Circle()
+                        .fill(hasActivity ? Theme.accent : Color.clear)
+                        .frame(width: 3, height: 3)
+                }
             } else {
-                Color.clear.frame(height: 28)
+                Color.clear.frame(height: 34)
             }
         }
         .frame(maxWidth: .infinity)
@@ -990,6 +1074,19 @@ struct RightColumn: View {
         .panel()
     }
 
+    private var finishedTaskCount: Int {
+        model.messages.filter { !$0.steps.isEmpty }.count
+    }
+
+    private var sessionLabel: String {
+        if let id = model.currentSessionID,
+           let session = model.sessions.first(where: { $0.id == id }) {
+            let title = session.title.trimmingCharacters(in: .whitespacesAndNewlines)
+            return title.isEmpty ? "主会话" : String(title.prefix(12))
+        }
+        return "主会话"
+    }
+
     private var taskPanel: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 8) {
@@ -997,14 +1094,14 @@ struct RightColumn: View {
                     .font(.system(size: 11, weight: .medium))
                     .foregroundStyle(Theme.textSecondary)
 
-                Text("主会话")
+                Text(sessionLabel)
                     .font(.system(size: 10))
                     .foregroundStyle(Theme.textPrimary)
                     .padding(.horizontal, 7)
                     .padding(.vertical, 3)
                     .background(Color.white.opacity(0.07), in: Capsule())
 
-                Text("已结束 0")
+                Text("已结束 \(finishedTaskCount)")
                     .font(.system(size: 10))
                     .foregroundStyle(Theme.textSecondary.opacity(0.7))
 
@@ -1013,16 +1110,40 @@ struct RightColumn: View {
 
             RoundedRectangle(cornerRadius: 8)
                 .strokeBorder(Theme.panelBorder, style: StrokeStyle(lineWidth: 0.8, dash: [3, 3]))
-                .frame(height: 96)
-                .overlay {
-                    VStack(spacing: 4) {
-                        Text("暂无当前任务")
-                            .font(.system(size: 11))
-                            .foregroundStyle(Theme.textSecondary)
-                        Text("主会话 \(model.messages.count) 条消息")
-                            .font(.system(size: 9))
-                            .foregroundStyle(Theme.textSecondary.opacity(0.6))
+                .frame(minHeight: 96)
+                .overlay(alignment: .topLeading) {
+                    VStack(alignment: .leading, spacing: 8) {
+                        if model.isSending {
+                            HStack(spacing: 6) {
+                                ProgressView()
+                                    .controlSize(.mini)
+                                Text("正在执行本轮对话")
+                                    .font(.system(size: 11))
+                                    .foregroundStyle(Theme.textPrimary)
+                            }
+                        }
+                        if latestSteps.isEmpty && !model.isSending {
+                            Text("暂无当前任务")
+                                .font(.system(size: 11))
+                                .foregroundStyle(Theme.textSecondary)
+                            Text("主会话 \(model.messages.count) 条消息")
+                                .font(.system(size: 9))
+                                .foregroundStyle(Theme.textSecondary.opacity(0.6))
+                        } else {
+                            ForEach(latestSteps.prefix(3)) { step in
+                                HStack(spacing: 6) {
+                                    Circle()
+                                        .fill(step.ok ? Theme.success : Color.orange.opacity(0.85))
+                                        .frame(width: 5, height: 5)
+                                    Text(step.name)
+                                        .font(.system(size: 10, design: .monospaced))
+                                        .foregroundStyle(Theme.textPrimary)
+                                        .lineLimit(1)
+                                }
+                            }
+                        }
                     }
+                    .padding(12)
                 }
 
             HStack(spacing: 14) {
