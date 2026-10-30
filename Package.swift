@@ -24,6 +24,7 @@ let package = Package(
                 .linkedLibrary("sqlite3"),
                 .linkedFramework("NaturalLanguage"),
                 .linkedFramework("Network"),
+                .linkedFramework("Security"),
             ]
         ),
         .target(

@@ -507,8 +507,8 @@ public final class UnixSocketServer: @unchecked Sendable {
         if raw == "off" || raw == "0" { return nil }
         let allowed: Set<String>
         if raw.isEmpty {
-            guard let own = Self.ownTeamID(), own != "adhoc" else { return nil }
-            allowed = [own]
+            guard TeamIdentity.own != "adhoc" else { return nil }
+            allowed = [TeamIdentity.own]
         } else {
             allowed = Set(
                 raw.split(separator: ",")
@@ -520,55 +520,14 @@ public final class UnixSocketServer: @unchecked Sendable {
         return teamDenial(client: client, allowed: allowed)
     }
 
-    private static func ownTeamID() -> String? {
-        teamIdentifier(of: Bundle.main.executableURL?.path ?? CommandLine.arguments[0])
-    }
-
     private func teamDenial(client: Int32, allowed: Set<String>) -> String? {
-        var pid: pid_t = 0
-        var length = socklen_t(MemoryLayout<pid_t>.size)
-        // LOCAL_PEERPID = 0x002 on Darwin
-        let result = getsockopt(client, 0 /* SOL_LOCAL */, 0x002 /* LOCAL_PEERPID */, &pid, &length)
-        guard result == 0, pid > 0 else {
-            return "Cannot resolve kernel client process for Team ID check"
-        }
-
-        var pathBuffer = [CChar](repeating: 0, count: Int(MAXPATHLEN))
-        let pathLen = proc_pidpath(pid, &pathBuffer, UInt32(MAXPATHLEN))
-        guard pathLen > 0 else {
-            return "Cannot resolve executable path for pid \(pid)"
-        }
-        let exePath = String(cString: pathBuffer)
-        let resolved = Self.teamIdentifier(of: exePath) ?? "adhoc"
+        // The kernel already knows who connected; ask Security.framework instead
+        // of shelling out to codesign for every request.
+        let resolved = TeamIdentity.peer(of: client) ?? "adhoc"
         if allowed.contains(resolved) || allowed.contains("*") {
             return nil
         }
         return "Kernel client Team ID \(resolved) is not allowed"
     }
 
-    private static func teamIdentifier(of path: String) -> String? {
-        let task = Process()
-        task.executableURL = URL(fileURLWithPath: "/usr/bin/codesign")
-        task.arguments = ["-dv", "--verbose=2", path]
-        let pipe = Pipe()
-        task.standardError = pipe
-        task.standardOutput = pipe
-        do {
-            try task.run()
-        } catch {
-            return nil
-        }
-        let captured = ProcessPipes.drainBlocking(process: task, stdout: nil, stderr: pipe.fileHandleForReading, limit: 64 * 1024)
-        let text = String(decoding: captured.stderr, as: UTF8.self)
-        for line in text.split(whereSeparator: \.isNewline) {
-            let s = String(line)
-            if s.hasPrefix("TeamIdentifier=") {
-                let team = String(s.dropFirst("TeamIdentifier=".count))
-                    .trimmingCharacters(in: .whitespacesAndNewlines)
-                if team.isEmpty || team == "not set" { return "adhoc" }
-                return team
-            }
-        }
-        return "adhoc"
-    }
 }
