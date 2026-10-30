@@ -39,7 +39,10 @@ enum TeamIdentity {
               let staticCode
         else { return nil }
         var information: CFDictionary?
-        let flags = SecCSFlags(rawValue: kSecCSDynamicInformation)
+        // TeamIdentifier lives under kSecCSSigningInformation. Dynamic-only
+        // flags return hashes/format but leave the team field empty, which made
+        // signed lucasd look "adhoc" and disabled the peer Team ID gate.
+        let flags = SecCSFlags(rawValue: kSecCSSigningInformation)
         guard SecCodeCopySigningInformation(staticCode, flags, &information) == errSecSuccess,
               let info = information as? [String: Any]
         else { return nil }
