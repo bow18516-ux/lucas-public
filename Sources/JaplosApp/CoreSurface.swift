@@ -280,7 +280,6 @@ struct LeftColumn: View {
     var body: some View {
         VStack(spacing: 14) {
             ModelCard(model: model)
-            KnowledgeCard(model: model)
             CalendarCard(model: model)
             Spacer(minLength: 0)
         }
@@ -372,119 +371,6 @@ struct ModelCard: View {
                 .foregroundStyle(Theme.textPrimary)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-    }
-}
-
-struct KnowledgeCard: View {
-    @ObservedObject var model: AppModel
-    @State private var titleDraft = ""
-    @State private var bodyDraft = ""
-
-    private var items: [AppModel.KnowledgeDocument] {
-        Array(model.knowledgeDocuments.prefix(5))
-    }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack {
-                Text("知识库")
-                    .font(.system(size: 15, weight: .medium))
-                    .foregroundStyle(Theme.textPrimary)
-                Spacer()
-                Text("\(model.knowledgeDocuments.count) 篇")
-                    .font(.system(size: 10))
-                    .foregroundStyle(Theme.textSecondary)
-                    .padding(.horizontal, 7)
-                    .padding(.vertical, 2)
-                    .background(Color.white.opacity(0.05), in: Capsule())
-            }
-
-            RoundedRectangle(cornerRadius: 8)
-                .strokeBorder(Theme.panelBorder, style: StrokeStyle(lineWidth: 0.8, dash: [3, 3]))
-                .frame(minHeight: 120)
-                .overlay(alignment: .topLeading) {
-                    if items.isEmpty {
-                        VStack(alignment: .leading, spacing: 8) {
-                            RoundedRectangle(cornerRadius: 2)
-                                .fill(Color.white.opacity(0.18))
-                                .frame(width: 7, height: 7)
-                            Text("暂无文档")
-                                .font(.system(size: 11))
-                                .foregroundStyle(Theme.textSecondary.opacity(0.7))
-                            Text("标题 + 正文保存到 knowledge.documents")
-                                .font(.system(size: 10))
-                                .foregroundStyle(Theme.textSecondary.opacity(0.55))
-                        }
-                        .padding(12)
-                    } else {
-                        VStack(alignment: .leading, spacing: 8) {
-                            ForEach(items) { doc in
-                                HStack(alignment: .top, spacing: 8) {
-                                    Circle()
-                                        .fill(Theme.accent.opacity(0.85))
-                                        .frame(width: 6, height: 6)
-                                        .padding(.top, 3)
-                                    VStack(alignment: .leading, spacing: 2) {
-                                        Text(doc.title)
-                                            .font(.system(size: 11, weight: .medium))
-                                            .foregroundStyle(Theme.textPrimary.opacity(0.95))
-                                            .lineLimit(1)
-                                        if !doc.body.isEmpty {
-                                            Text(doc.body)
-                                                .font(.system(size: 10))
-                                                .foregroundStyle(Theme.textSecondary.opacity(0.85))
-                                                .lineLimit(2)
-                                        }
-                                    }
-                                    Spacer(minLength: 0)
-                                    Button {
-                                        Task { await model.deleteKnowledgeDocument(id: doc.id) }
-                                    } label: {
-                                        Image(systemName: "trash")
-                                            .font(.system(size: 10))
-                                            .foregroundStyle(Theme.textSecondary.opacity(0.7))
-                                    }
-                                    .buttonStyle(.pressable)
-                                    .help("删除")
-                                }
-                            }
-                        }
-                        .padding(12)
-                    }
-                }
-
-            VStack(alignment: .leading, spacing: 6) {
-                TextField("标题", text: $titleDraft)
-                    .textFieldStyle(.plain)
-                    .font(.system(size: 11))
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 5)
-                    .background(Color.white.opacity(0.04), in: RoundedRectangle(cornerRadius: 6))
-                TextField("正文…", text: $bodyDraft)
-                    .textFieldStyle(.plain)
-                    .font(.system(size: 11))
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 5)
-                    .background(Color.white.opacity(0.04), in: RoundedRectangle(cornerRadius: 6))
-                HStack {
-                    Spacer()
-                    Button("添加") {
-                        let title = titleDraft
-                        let body = bodyDraft
-                        titleDraft = ""
-                        bodyDraft = ""
-                        Task { await model.upsertKnowledgeDocument(title: title, body: body) }
-                    }
-                    .buttonStyle(.pressable)
-                    .font(.system(size: 11))
-                    .foregroundStyle(Theme.accent)
-                    .disabled(titleDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                }
-            }
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .panel(padding: 18)
-        .task { await model.loadKnowledgeDocuments() }
     }
 }
 

@@ -63,23 +63,29 @@ enum SettingsSection: String, CaseIterable, Identifiable {
 struct SettingsScreen: View {
     @ObservedObject var model: AppModel
     @ObservedObject var voice: SpeechOutput
-    /// Top-level sidebar destination: nested settings panes, or sibling 「记忆」.
+    /// Top-level sidebar destination: nested settings panes, or nested memory/knowledge panes.
     private enum SidebarDestination: Equatable {
         case settings(SettingsSection)
         case memory
+        case knowledge
     }
 
     @State private var destination: SidebarDestination
     /// Top-level 「设置」 group — default expanded so the eight panes stay one click away.
     @State private var settingsGroupExpanded = true
+    /// Top-level 「记忆」 group — default expanded (same pattern as 「设置」).
+    @State private var memoryGroupExpanded = true
     @ObservedObject private var updateService = UpdateService.shared
 
     init(model: AppModel, voice: SpeechOutput) {
         self.model = model
         self.voice = voice
         let requested = ProcessInfo.processInfo.environment["LUCAS_SETTINGS_SECTION"] ?? ""
-        if requested == "记忆" || requested.lowercased() == "memory" {
+        let lower = requested.lowercased()
+        if requested == "记忆" || lower == "memory" {
             _destination = State(initialValue: .memory)
+        } else if requested == "知识库" || lower == "knowledge" {
+            _destination = State(initialValue: .knowledge)
         } else {
             let section = SettingsSection.allCases.first { $0.rawValue == requested } ?? .model
             _destination = State(initialValue: .settings(section))
@@ -102,24 +108,8 @@ struct SettingsScreen: View {
 
     private var sidebar: some View {
         VStack(alignment: .leading, spacing: 0) {
-            Button {
-                model.settingsPresented = false
-            } label: {
-                HStack(spacing: 5) {
-                    Image(systemName: "arrow.left")
-                        .font(.system(size: SettingsMetrics.labelSize, weight: .medium))
-                    Text("返回主界面")
-                        .font(.system(size: SettingsMetrics.bodySize))
-                }
-                .foregroundStyle(Theme.accent)
-            }
-            .buttonStyle(.pressable)
-            .padding(.horizontal, 18)
-            .padding(.top, 54)
-            .padding(.bottom, 22)
-
             VStack(alignment: .leading, spacing: 4) {
-                // Top-level group: 「设置」 — room for more top-level siblings later.
+                // Top-level group: 「设置」
                 Button {
                     withAnimation(.easeInOut(duration: 0.18)) {
                         settingsGroupExpanded.toggle()
@@ -198,61 +188,142 @@ struct SettingsScreen: View {
                     }
                 }
 
-                // Sibling top-level: 「记忆」
-                let memorySelected = destination == .memory
+                // Top-level group: 「记忆」 — same expandable pattern as 「设置」
                 Button {
-                    destination = .memory
+                    withAnimation(.easeInOut(duration: 0.18)) {
+                        memoryGroupExpanded.toggle()
+                    }
                 } label: {
                     HStack(spacing: 8) {
-                        Color.clear.frame(width: 12)
+                        Image(systemName: memoryGroupExpanded ? "chevron.down" : "chevron.right")
+                            .font(.system(size: 11, weight: .semibold))
+                            .frame(width: 12)
                         Image(systemName: "brain.head.profile")
                             .font(.system(size: SettingsMetrics.navIconSize))
                             .frame(width: 22)
                         Text("记忆")
                             .font(.system(size: SettingsMetrics.navSize, weight: .semibold))
                         Spacer()
-                        if memorySelected {
-                            Circle()
-                                .fill(Theme.accent)
-                                .frame(width: 4, height: 4)
-                        }
                     }
-                    .foregroundStyle(memorySelected ? Theme.textPrimary : Theme.textSecondary)
+                    .foregroundStyle(Theme.textPrimary)
                     .padding(.horizontal, 12)
                     .padding(.vertical, 10)
-                    .background(
-                        memorySelected ? Theme.accent.opacity(0.10) : Color.clear,
-                        in: RoundedRectangle(cornerRadius: 7)
-                    )
-                    .overlay(alignment: .leading) {
-                        if memorySelected {
-                            Rectangle()
-                                .fill(Theme.accent)
-                                .frame(width: 2)
-                                .padding(.vertical, 6)
+                    .background(Color.clear, in: RoundedRectangle(cornerRadius: 7))
+                }
+                .buttonStyle(.pressable)
+
+                if memoryGroupExpanded {
+                    VStack(spacing: 2) {
+                        memoryNavItem(
+                            title: "记忆管理",
+                            icon: "note.text",
+                            selected: destination == .memory
+                        ) {
+                            destination = .memory
+                        }
+                        memoryNavItem(
+                            title: "知识库",
+                            icon: "books.vertical",
+                            selected: destination == .knowledge
+                        ) {
+                            destination = .knowledge
                         }
                     }
                 }
-                .buttonStyle(.pressable)
             }
             .padding(.horizontal, 10)
+            .padding(.top, 54)
 
-            Spacer()
+            Spacer(minLength: 12)
 
-            VStack(alignment: .leading, spacing: 2) {
-                Text("LUCAS")
-                    .font(.system(size: SettingsMetrics.cardSubtitleSize, weight: .semibold))
-                    .tracking(2)
-                    .foregroundStyle(Theme.textPrimary.opacity(0.8))
-                Text("v\(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "dev")")
-                    .font(.system(size: SettingsMetrics.captionSize))
-                    .foregroundStyle(Theme.textSecondary.opacity(0.7))
+            // Bottom-left: LUCAS identity card + 「返回主界面」 button card stacked under it.
+            VStack(alignment: .leading, spacing: 8) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("LUCAS")
+                        .font(.system(size: SettingsMetrics.cardSubtitleSize, weight: .semibold))
+                        .tracking(2)
+                        .foregroundStyle(Theme.textPrimary.opacity(0.85))
+                    Text("v\(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "dev")")
+                        .font(.system(size: SettingsMetrics.captionSize))
+                        .foregroundStyle(Theme.textSecondary.opacity(0.7))
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 14)
+                .padding(.vertical, 12)
+                .background(Theme.panel, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .strokeBorder(Theme.panelBorder, lineWidth: 0.8)
+                )
+
+                Button {
+                    model.settingsPresented = false
+                } label: {
+                    HStack(spacing: 8) {
+                        Image(systemName: "arrow.left")
+                            .font(.system(size: SettingsMetrics.labelSize, weight: .medium))
+                        Text("返回主界面")
+                            .font(.system(size: SettingsMetrics.bodySize, weight: .medium))
+                        Spacer(minLength: 0)
+                    }
+                    .foregroundStyle(Theme.accent)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 12)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(Theme.panel, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 10, style: .continuous)
+                            .strokeBorder(Theme.accent.opacity(0.35), lineWidth: 0.8)
+                    )
+                }
+                .buttonStyle(.pressable)
             }
-            .padding(.horizontal, 18)
+            .padding(.horizontal, 12)
             .padding(.bottom, 16)
         }
         .frame(maxHeight: .infinity, alignment: .top)
         .background(Theme.panel.opacity(0.35))
+    }
+
+    private func memoryNavItem(
+        title: String,
+        icon: String,
+        selected: Bool,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            HStack(spacing: 9) {
+                Image(systemName: icon)
+                    .font(.system(size: SettingsMetrics.navItemIconSize))
+                    .frame(width: 20)
+                Text(title)
+                    .font(.system(size: SettingsMetrics.navItemSize))
+                Spacer()
+                if selected {
+                    Circle()
+                        .fill(Theme.accent)
+                        .frame(width: 4, height: 4)
+                }
+            }
+            .foregroundStyle(selected ? Theme.textPrimary : Theme.textSecondary)
+            .padding(.leading, 28)
+            .padding(.trailing, 12)
+            .padding(.vertical, 9)
+            .background(
+                selected ? Theme.accent.opacity(0.10) : Color.clear,
+                in: RoundedRectangle(cornerRadius: 7)
+            )
+            .overlay(alignment: .leading) {
+                if selected {
+                    Rectangle()
+                        .fill(Theme.accent)
+                        .frame(width: 2)
+                        .padding(.vertical, 6)
+                        .padding(.leading, 16)
+                }
+            }
+        }
+        .buttonStyle(.pressable)
     }
 
     @ViewBuilder
@@ -260,6 +331,8 @@ struct SettingsScreen: View {
         switch destination {
         case .memory:
             MemorySettingsPane(model: model)
+        case .knowledge:
+            KnowledgeSettingsPane(model: model)
         case .settings(.model):
             ModelSettingsPane(model: model)
         case .settings(.tools):
@@ -2131,6 +2204,124 @@ struct MemorySettingsPane: View {
         .task {
             await model.loadMemories(limit: 100, scopedToCurrentSession: false)
         }
+    }
+}
+
+struct KnowledgeSettingsPane: View {
+    @ObservedObject var model: AppModel
+    @State private var titleDraft = ""
+    @State private var bodyDraft = ""
+
+    var body: some View {
+        VStack(spacing: 0) {
+            SettingsHeader(
+                title: "知识库",
+                subtitle: "本地文档条目（knowledge.documents），标题 + 正文持久化",
+                model: model
+            )
+
+            ScrollView {
+                VStack(alignment: .leading, spacing: SettingsMetrics.cardSpacing) {
+                    VStack(alignment: .leading, spacing: 14) {
+                        HStack(alignment: .firstTextBaseline, spacing: 8) {
+                            Image(systemName: "square.and.pencil")
+                                .font(.system(size: SettingsMetrics.bodySize))
+                                .foregroundStyle(Theme.textSecondary)
+                            Text("添加文档")
+                                .font(.system(size: SettingsMetrics.cardTitleSize, weight: .semibold))
+                                .foregroundStyle(Theme.textPrimary)
+                            Spacer()
+                            Text("\(model.knowledgeDocuments.count) 篇")
+                                .font(.system(size: SettingsMetrics.captionSize, design: .monospaced))
+                                .foregroundStyle(Theme.textSecondary)
+                        }
+
+                        TextField("标题", text: $titleDraft)
+                            .textFieldStyle(.plain)
+                            .font(.system(size: SettingsMetrics.bodySize))
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 8)
+                            .background(Color.white.opacity(0.05), in: RoundedRectangle(cornerRadius: 6))
+                            .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(Theme.panelBorder, lineWidth: 0.7))
+
+                        TextField("正文…", text: $bodyDraft, axis: .vertical)
+                            .textFieldStyle(.plain)
+                            .font(.system(size: SettingsMetrics.bodySize))
+                            .lineLimit(3...8)
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 8)
+                            .background(Color.white.opacity(0.05), in: RoundedRectangle(cornerRadius: 6))
+                            .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(Theme.panelBorder, lineWidth: 0.7))
+
+                        HStack {
+                            Spacer()
+                            Button("保存") {
+                                let title = titleDraft
+                                let body = bodyDraft
+                                titleDraft = ""
+                                bodyDraft = ""
+                                Task { await model.upsertKnowledgeDocument(title: title, body: body) }
+                            }
+                            .buttonStyle(.pressable)
+                            .font(.system(size: SettingsMetrics.cardSubtitleSize))
+                            .foregroundStyle(Color.black.opacity(0.85))
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 5)
+                            .background(Theme.accent, in: RoundedRectangle(cornerRadius: 6))
+                            .disabled(titleDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .topLeading)
+                    .panel(padding: SettingsMetrics.cardPadding)
+
+                    VStack(alignment: .leading, spacing: 12) {
+                        Text("已保存")
+                            .font(.system(size: SettingsMetrics.cardTitleSize, weight: .semibold))
+                            .foregroundStyle(Theme.textPrimary)
+
+                        if model.knowledgeDocuments.isEmpty {
+                            Text("暂无知识库文档。在上方填写标题与正文后点「保存」。")
+                                .font(.system(size: SettingsMetrics.cardSubtitleSize))
+                                .foregroundStyle(Theme.textSecondary)
+                        } else {
+                            ForEach(model.knowledgeDocuments) { doc in
+                                HStack(alignment: .top, spacing: 12) {
+                                    VStack(alignment: .leading, spacing: 4) {
+                                        Text(doc.title)
+                                            .font(.system(size: SettingsMetrics.labelSize, weight: .medium))
+                                            .foregroundStyle(Theme.textPrimary)
+                                        if !doc.body.isEmpty {
+                                            Text(doc.body)
+                                                .font(.system(size: SettingsMetrics.cardSubtitleSize))
+                                                .foregroundStyle(Theme.textSecondary)
+                                                .fixedSize(horizontal: false, vertical: true)
+                                        }
+                                    }
+                                    Spacer(minLength: 8)
+                                    Button {
+                                        Task { await model.deleteKnowledgeDocument(id: doc.id) }
+                                    } label: {
+                                        Image(systemName: "trash")
+                                            .font(.system(size: SettingsMetrics.captionSize))
+                                            .foregroundStyle(Color.red.opacity(0.8))
+                                    }
+                                    .buttonStyle(.pressable)
+                                }
+                                .padding(.vertical, 6)
+                                if doc.id != model.knowledgeDocuments.last?.id {
+                                    Divider().overlay(Theme.panelBorder.opacity(0.6))
+                                }
+                            }
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .topLeading)
+                    .panel(padding: SettingsMetrics.cardPadding)
+                }
+                .padding(.horizontal, SettingsMetrics.pagePadding)
+                .padding(.bottom, 28)
+            }
+        }
+        .task { await model.loadKnowledgeDocuments() }
     }
 }
 
