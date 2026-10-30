@@ -30,4 +30,13 @@ echo "feed:             ${LUCAS_FEED_URL:-<unset>}"
 echo "deploy:           ${LUCAS_DEPLOY_TARGET:-<unset>}"
 echo
 
-exec "$ROOT/scripts/release.sh" "$VERSION"
+# Generate release notes from git commits unless the author wrote them.
+"$ROOT/scripts/release-notes.sh" "$VERSION"
+
+"$ROOT/scripts/release.sh" "$VERSION"
+
+# Tag the published state so the next release notes only include new commits.
+if git -C "$ROOT" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    git -C "$ROOT" tag -a "v$VERSION" -m "Lucas Agent $VERSION" 2>/dev/null || true
+    echo "tagged v$VERSION"
+fi

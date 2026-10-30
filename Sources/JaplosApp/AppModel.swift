@@ -352,6 +352,13 @@ final class AppModel: ObservableObject {
         onboardingPresented = false
     }
 
+    func resetOnboarding() {
+        UserDefaults.standard.removeObject(forKey: Self.onboardingSkippedKey)
+        UserDefaults.standard.removeObject(forKey: Self.onboardingCompletedKey)
+        settingsPresented = false
+        onboardingPresented = true
+    }
+
     func loadSettings() async {
         do {
             let result = try await client.callAsync(.configurationList, arguments: .object([:]))

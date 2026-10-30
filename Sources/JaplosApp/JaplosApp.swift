@@ -220,6 +220,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         editMenu.addItem(withTitle: "全选", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
         editMenuItem.submenu = editMenu
 
+        let helpMenuItem = NSMenuItem()
+        mainMenu.addItem(helpMenuItem)
+        let helpMenu = NSMenu(title: "帮助")
+        helpMenu.addItem(withTitle: "重新显示新手引导", action: #selector(showOnboarding), keyEquivalent: "")
+        helpMenuItem.submenu = helpMenu
+
         let windowMenuItem = NSMenuItem()
         mainMenu.addItem(windowMenuItem)
         let windowMenu = NSMenu(title: "窗口")
@@ -234,6 +240,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func showMainWindow() {
         window?.makeKeyAndOrderFront(nil)
+    }
+
+    @MainActor @objc private func showOnboarding() {
+        model?.resetOnboarding()
+        window?.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
     }
 
     @MainActor @objc private func saveWindowSnapshot() {
