@@ -11,6 +11,7 @@ public final class KernelStore {
     public static let feishuVerificationTokenAccount = "feishu.verification_token"
     public static let feishuTenantAccessTokenAccount = "feishu.tenant_access_token"
     public static let wechatILinkBaseURLAccount = "wechat.ilink.base_url"
+    public static let mailAppPasswordAccount = "mail.imap.app_password"
 
     public let database: SQLiteDatabase
     public let path: String

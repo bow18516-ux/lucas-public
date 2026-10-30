@@ -92,6 +92,7 @@ final class AppModel: ObservableObject {
     @Published var mcpEvents: [MCPEventItem] = []
     @Published var wechatStatus: JSONValue = .object([:])
     @Published var feishuStatus: JSONValue = .object([:])
+    @Published var mailStatus: JSONValue = .object([:])
     @Published var storeTableCounts: [(name: String, count: Int)] = []
     @Published var lastSelfHealingEvent: SelfHealingEventSummary?
 
@@ -1590,6 +1591,14 @@ final class AppModel: ObservableObject {
                 "message": .string((error as? ClientError)?.description ?? String(describing: error)),
             ])
         }
+        do {
+            mailStatus = try await client.callAsync(.runtimeMailStatus, arguments: .object([:]))
+        } catch {
+            mailStatus = .object([
+                "state": .string("unavailable"),
+                "message": .string((error as? ClientError)?.description ?? String(describing: error)),
+            ])
+        }
     }
 
     func wechatConnect() async -> String {
@@ -1649,6 +1658,100 @@ final class AppModel: ObservableObject {
             let result = try await client.callAsync(.runtimeFeishuDisconnect, arguments: .object([:]))
             feishuStatus = result
             return result["message"]?.stringValue ?? "已断开"
+        } catch {
+            return (error as? ClientError)?.description ?? String(describing: error)
+        }
+    }
+
+
+    var mailStatusLabel: String {
+        let state = mailStatus["state"]?.stringValue ?? "unknown"
+        switch state {
+        case "connected": return "已连接"
+        case "configured": return "已配置"
+        case "disconnected": return "未连接"
+        case "unavailable": return "不可用"
+        default: return state
+        }
+    }
+
+    var mailStatusDetail: String {
+        if let msg = mailStatus["message"]?.stringValue, !msg.isEmpty { return msg }
+        if let action = mailStatus["action"]?.stringValue, !action.isEmpty { return action }
+        let email = mailStatus["email"]?.stringValue ?? ""
+        let pwd = mailStatus["passwordConfigured"]?.boolValue == true
+        return "\(email.isEmpty ? "未填地址" : email) · 密码 \(pwd ? "已存" : "未存")"
+    }
+
+    func mailConfigure(
+        preset: String,
+        email: String,
+        displayName: String,
+        password: String,
+        imapHost: String,
+        imapPort: String,
+        smtpHost: String,
+        smtpPort: String
+    ) async -> String {
+        var args: [String: JSONValue] = [
+            "preset": .string(preset),
+        ]
+        if !email.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            args["email"] = .string(email.trimmingCharacters(in: .whitespacesAndNewlines))
+        }
+        if !displayName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            args["displayName"] = .string(displayName.trimmingCharacters(in: .whitespacesAndNewlines))
+        }
+        if !password.isEmpty {
+            args["password"] = .string(password)
+        }
+        if !imapHost.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            args["imapHost"] = .string(imapHost.trimmingCharacters(in: .whitespacesAndNewlines))
+        }
+        if let p = Int(imapPort.trimmingCharacters(in: .whitespacesAndNewlines)), p > 0 {
+            args["imapPort"] = .number(Double(p))
+        }
+        if !smtpHost.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            args["smtpHost"] = .string(smtpHost.trimmingCharacters(in: .whitespacesAndNewlines))
+        }
+        if let p = Int(smtpPort.trimmingCharacters(in: .whitespacesAndNewlines)), p > 0 {
+            args["smtpPort"] = .number(Double(p))
+        }
+        do {
+            let result = try await client.callAsync(.runtimeMailConfigure, arguments: .object(args))
+            mailStatus = result
+            return result["message"]?.stringValue ?? "已保存"
+        } catch {
+            return (error as? ClientError)?.description ?? String(describing: error)
+        }
+    }
+
+    func mailConnect() async -> String {
+        do {
+            let result = try await client.callAsync(.runtimeMailConnect, arguments: .object([:]), timeout: 35)
+            mailStatus = result
+            return result["message"]?.stringValue
+                ?? (result["ok"]?.boolValue == true ? "已连接" : "连接失败")
+        } catch {
+            return (error as? ClientError)?.description ?? String(describing: error)
+        }
+    }
+
+    func mailDisconnect() async -> String {
+        do {
+            let result = try await client.callAsync(.runtimeMailDisconnect, arguments: .object([:]))
+            mailStatus = result
+            return result["message"]?.stringValue ?? "已断开"
+        } catch {
+            return (error as? ClientError)?.description ?? String(describing: error)
+        }
+    }
+
+    func mailClearSecrets() async -> String {
+        do {
+            let result = try await client.callAsync(.runtimeMailClearSecrets, arguments: .object([:]))
+            mailStatus = result
+            return result["message"]?.stringValue ?? "已清除密码"
         } catch {
             return (error as? ClientError)?.description ?? String(describing: error)
         }

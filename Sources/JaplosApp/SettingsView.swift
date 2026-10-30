@@ -1345,6 +1345,14 @@ struct ChannelsSettingsPane: View {
     @State private var feishuAppID = ""
     @State private var feishuAppSecret = ""
     @State private var feishuVerificationToken = ""
+    @State private var mailPreset = "gmail"
+    @State private var mailEmail = ""
+    @State private var mailDisplayName = ""
+    @State private var mailPassword = ""
+    @State private var mailImapHost = "imap.gmail.com"
+    @State private var mailImapPort = "993"
+    @State private var mailSmtpHost = "smtp.gmail.com"
+    @State private var mailSmtpPort = "465"
     @State private var busy = false
     @State private var banner: String?
 
@@ -1352,7 +1360,7 @@ struct ChannelsSettingsPane: View {
         VStack(spacing: 0) {
             SettingsHeader(
                 title: "通道",
-                subtitle: "微信 ClawBot（扫码）与飞书 Open API。无密钥时不会伪造已连接。",
+                subtitle: "微信 / 飞书 / 邮箱（IMAP·SMTP）。无密钥时不会伪造已连接；外发默认草稿闸门。",
                 model: model
             )
 
@@ -1368,6 +1376,7 @@ struct ChannelsSettingsPane: View {
                     }
                     wechatCard
                     feishuCard
+                    mailCard
                 }
                 .padding(.horizontal, SettingsMetrics.pagePadding)
                 .padding(.bottom, 24)
@@ -1537,6 +1546,204 @@ struct ChannelsSettingsPane: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .panel(padding: SettingsMetrics.cardPadding)
+    }
+
+
+    private var mailCard: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            HStack(spacing: 8) {
+                Image(systemName: "envelope.fill")
+                    .foregroundStyle(Theme.textSecondary)
+                Text("邮箱账户")
+                    .font(.system(size: SettingsMetrics.cardTitleSize, weight: .semibold))
+                    .foregroundStyle(Theme.textPrimary)
+                Spacer()
+                statusPill(model.mailStatusLabel)
+            }
+
+            Text(model.mailStatusDetail)
+                .font(.system(size: SettingsMetrics.cardSubtitleSize))
+                .foregroundStyle(Theme.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            // Presets
+            HStack(spacing: 8) {
+                ForEach(["gmail", "163", "qq", "exmail", "custom"], id: \.self) { id in
+                    let title: String = {
+                        switch id {
+                        case "gmail": return "Gmail"
+                        case "163": return "163"
+                        case "qq": return "QQ"
+                        case "exmail": return "企业"
+                        default: return "自定义"
+                        }
+                    }()
+                    Button {
+                        mailPreset = id
+                        applyMailPreset(id)
+                    } label: {
+                        Text(title)
+                            .font(.system(size: SettingsMetrics.captionSize, weight: .medium))
+                            .foregroundStyle(mailPreset == id ? Color.black.opacity(0.85) : Theme.textSecondary)
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 5)
+                            .background(
+                                mailPreset == id ? Theme.accent : Color.white.opacity(0.06),
+                                in: Capsule()
+                            )
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+
+            VStack(alignment: .leading, spacing: 10) {
+                labeledField("邮箱地址", text: $mailEmail, secure: false)
+                labeledField("显示名（可选）", text: $mailDisplayName, secure: false)
+                labeledField("应用密码 / 授权码", text: $mailPassword, secure: true)
+                if mailPreset == "custom" {
+                    labeledField("IMAP 主机", text: $mailImapHost, secure: false)
+                    labeledField("IMAP 端口", text: $mailImapPort, secure: false)
+                    labeledField("SMTP 主机", text: $mailSmtpHost, secure: false)
+                    labeledField("SMTP 端口", text: $mailSmtpPort, secure: false)
+                } else {
+                    Text("IMAP \(mailImapHost):\(mailImapPort) · SMTP \(mailSmtpHost):\(mailSmtpPort)")
+                        .font(.system(size: SettingsMetrics.captionSize))
+                        .foregroundStyle(Theme.textSecondary.opacity(0.85))
+                }
+            }
+
+            HStack(spacing: 10) {
+                Button {
+                    Task {
+                        busy = true
+                        defer { busy = false }
+                        banner = await model.mailConfigure(
+                            preset: mailPreset,
+                            email: mailEmail,
+                            displayName: mailDisplayName,
+                            password: mailPassword,
+                            imapHost: mailImapHost,
+                            imapPort: mailImapPort,
+                            smtpHost: mailSmtpHost,
+                            smtpPort: mailSmtpPort
+                        )
+                        mailPassword = ""
+                        await model.refreshChannelStatus()
+                        hydrateMailFromStatus()
+                    }
+                } label: {
+                    Text("保存账户")
+                        .font(.system(size: SettingsMetrics.bodySize, weight: .medium))
+                        .foregroundStyle(Color.black.opacity(0.85))
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 6)
+                        .background(Theme.accent, in: RoundedRectangle(cornerRadius: 7))
+                }
+                .buttonStyle(.plain)
+                .disabled(busy)
+
+                Button {
+                    Task {
+                        busy = true
+                        defer { busy = false }
+                        banner = await model.mailConnect()
+                        await model.refreshChannelStatus()
+                    }
+                } label: {
+                    Text("连接（IMAP 探测）")
+                        .font(.system(size: SettingsMetrics.bodySize))
+                        .foregroundStyle(Theme.accent)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 6)
+                        .background(Theme.accent.opacity(0.12), in: RoundedRectangle(cornerRadius: 7))
+                }
+                .buttonStyle(.plain)
+                .disabled(busy)
+
+                Button {
+                    Task {
+                        busy = true
+                        defer { busy = false }
+                        banner = await model.mailDisconnect()
+                        await model.refreshChannelStatus()
+                    }
+                } label: {
+                    Text("断开")
+                        .font(.system(size: SettingsMetrics.bodySize))
+                        .foregroundStyle(Theme.textSecondary)
+                }
+                .buttonStyle(.pressable)
+                .disabled(busy)
+
+                Button {
+                    Task {
+                        busy = true
+                        defer { busy = false }
+                        banner = await model.mailClearSecrets()
+                        await model.refreshChannelStatus()
+                    }
+                } label: {
+                    Text("清除密码")
+                        .font(.system(size: SettingsMetrics.bodySize))
+                        .foregroundStyle(Theme.textSecondary)
+                }
+                .buttonStyle(.pressable)
+                .disabled(busy)
+            }
+
+            Text("对齐 OpenClaw：应用密码进 SecretStore/Keychain，不进 git；连接前 IMAP LOGIN 探测。外发工具 mail.send 默认 draft_only，需 confirm=true 才 SMTP 实发。")
+                .font(.system(size: SettingsMetrics.captionSize))
+                .foregroundStyle(Theme.textSecondary.opacity(0.85))
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .panel(padding: SettingsMetrics.cardPadding)
+        .onAppear {
+            hydrateMailFromStatus()
+        }
+    }
+
+    private func applyMailPreset(_ id: String) {
+        switch id {
+        case "gmail":
+            mailImapHost = "imap.gmail.com"; mailImapPort = "993"
+            mailSmtpHost = "smtp.gmail.com"; mailSmtpPort = "465"
+        case "163":
+            mailImapHost = "imap.163.com"; mailImapPort = "993"
+            mailSmtpHost = "smtp.163.com"; mailSmtpPort = "465"
+        case "qq":
+            mailImapHost = "imap.qq.com"; mailImapPort = "993"
+            mailSmtpHost = "smtp.qq.com"; mailSmtpPort = "465"
+        case "exmail":
+            mailImapHost = "imap.exmail.qq.com"; mailImapPort = "993"
+            mailSmtpHost = "smtp.exmail.qq.com"; mailSmtpPort = "465"
+        default:
+            break
+        }
+    }
+
+    private func hydrateMailFromStatus() {
+        if let email = model.mailStatus["email"]?.stringValue, !email.isEmpty {
+            mailEmail = email
+        }
+        if let preset = model.mailStatus["preset"]?.stringValue, !preset.isEmpty {
+            mailPreset = preset
+        }
+        if let host = model.mailStatus["imapHost"]?.stringValue, !host.isEmpty {
+            mailImapHost = host
+        }
+        if let port = model.mailStatus["imapPort"]?.intValue {
+            mailImapPort = String(port)
+        }
+        if let host = model.mailStatus["smtpHost"]?.stringValue, !host.isEmpty {
+            mailSmtpHost = host
+        }
+        if let port = model.mailStatus["smtpPort"]?.intValue {
+            mailSmtpPort = String(port)
+        }
+        if let name = model.mailStatus["displayName"]?.stringValue {
+            mailDisplayName = name
+        }
     }
 
     private func statusPill(_ text: String) -> some View {

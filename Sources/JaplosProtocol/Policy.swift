@@ -146,7 +146,8 @@ public enum CapabilityRouting {
         case .runtimeWeChatStatus, .wechatLoginStatus, .wechatLoginEvents,
              .wechatConnectionList, .wechatConnectionRead, .wechatConnections,
              .runtimeFeishuStatus, .runtimeFeishuSession,
-             .feishuConnectionStatus, .feishuConnectionRead:
+             .feishuConnectionStatus, .feishuConnectionRead,
+             .runtimeMailStatus, .mailConnectionStatus:
             return Capability.channelRead
         case .runtimeWeChatConnect, .runtimeWeChatDisconnect, .runtimeWeChatVerify,
              .runtimeWeChatSendText, .runtimeWeChatSendFile,
@@ -155,7 +156,9 @@ public enum CapabilityRouting {
              .runtimeFeishuConnect, .runtimeFeishuDisconnect, .runtimeFeishuSendText,
              .feishuConfigurationOpen, .feishuConfigurationCancel,
              .feishuConnectionConfigure, .feishuConnectionDisconnect, .feishuConnectionManage,
-             .runtimeKnowledgeImportFeishu:
+             .runtimeKnowledgeImportFeishu,
+             .runtimeMailConfigure, .runtimeMailConnect, .runtimeMailDisconnect, .runtimeMailClearSecrets,
+             .mailConnectionConfigure, .mailConnectionConnect, .mailConnectionDisconnect:
             return Capability.channelManage
         default:
             return Capability.root

@@ -148,6 +148,17 @@ public extension KernelOperation {
     static let feishuConnectionManage = KernelOperation("feishu.connection.manage")
     static let runtimeKnowledgeImportFeishu = KernelOperation("runtime.knowledge.import_feishu")
 
+    // Mail IMAP/SMTP channel (OpenClaw-shaped; not MCP)
+    static let runtimeMailStatus = KernelOperation("runtime.mail.status")
+    static let runtimeMailConfigure = KernelOperation("runtime.mail.configure")
+    static let runtimeMailConnect = KernelOperation("runtime.mail.connect")
+    static let runtimeMailDisconnect = KernelOperation("runtime.mail.disconnect")
+    static let runtimeMailClearSecrets = KernelOperation("runtime.mail.clear_secrets")
+    static let mailConnectionStatus = KernelOperation("mail.connection.status")
+    static let mailConnectionConfigure = KernelOperation("mail.connection.configure")
+    static let mailConnectionConnect = KernelOperation("mail.connection.connect")
+    static let mailConnectionDisconnect = KernelOperation("mail.connection.disconnect")
+
     // Model
     static let modelTest = KernelOperation("model.test")
     static let modelCatalog = KernelOperation("model.catalog")

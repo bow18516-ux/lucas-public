@@ -10,6 +10,7 @@ public final class KernelCore: @unchecked Sendable {
     public let mcp: MCPManager
     public let wechat: WeChatChannel
     public let feishu: FeishuChannel
+    public let mail: MailChannel
     public let startedAt = Date()
     public let version = "1.0.0"
     public let workspace: URL
@@ -28,6 +29,7 @@ public final class KernelCore: @unchecked Sendable {
         let support = URL(fileURLWithPath: storePath).deletingLastPathComponent()
         self.wechat = WeChatChannel(store: store, supportDirectory: support)
         self.feishu = FeishuChannel(store: store, supportDirectory: support)
+        self.mail = MailChannel(store: store, supportDirectory: support)
         self.workspace = workspace ?? FileManager.default.homeDirectoryForCurrentUser
         try policy.bootstrap()
         tools.register(contentsOf: BuiltinTools.all())
@@ -35,6 +37,7 @@ public final class KernelCore: @unchecked Sendable {
         tools.register(contentsOf: SystemInfoTools.all())
         tools.register(contentsOf: DocumentTools.all())
         tools.register(contentsOf: ChannelTools.all(wechat: wechat, feishu: feishu))
+        tools.register(contentsOf: MailTools.all(mail: mail))
         tools.register(contentsOf: MemoryKnowledgeTools.all(store: store))
     }
 
@@ -877,6 +880,40 @@ public final class KernelCore: @unchecked Sendable {
 
             case .runtimeKnowledgeImportFeishu:
                 return .success(feishu.importKnowledgeStub(), requestID: requestID)
+
+            // MARK: Mail
+            case .runtimeMailStatus, .mailConnectionStatus:
+                return .success(try mail.status(), requestID: requestID)
+
+            case .runtimeMailConfigure, .mailConnectionConfigure:
+                let imapPort = request.arguments["imapPort"]?.intValue
+                    ?? request.arguments["imap_port"]?.intValue
+                let smtpPort = request.arguments["smtpPort"]?.intValue
+                    ?? request.arguments["smtp_port"]?.intValue
+                return .success(try mail.configure(
+                    preset: request.arguments["preset"]?.stringValue,
+                    email: request.arguments["email"]?.stringValue,
+                    displayName: request.arguments["displayName"]?.stringValue
+                        ?? request.arguments["display_name"]?.stringValue,
+                    password: request.arguments["password"]?.stringValue
+                        ?? request.arguments["appPassword"]?.stringValue
+                        ?? request.arguments["app_password"]?.stringValue,
+                    imapHost: request.arguments["imapHost"]?.stringValue
+                        ?? request.arguments["imap_host"]?.stringValue,
+                    imapPort: imapPort,
+                    smtpHost: request.arguments["smtpHost"]?.stringValue
+                        ?? request.arguments["smtp_host"]?.stringValue,
+                    smtpPort: smtpPort
+                ), requestID: requestID)
+
+            case .runtimeMailConnect, .mailConnectionConnect:
+                return .success(try await mail.connect(), requestID: requestID)
+
+            case .runtimeMailDisconnect, .mailConnectionDisconnect:
+                return .success(try mail.disconnect(), requestID: requestID)
+
+            case .runtimeMailClearSecrets:
+                return .success(try mail.clearSecrets(), requestID: requestID)
 
             case .speechSynthesize:
                 return await Self.synthesizeSpeech(request: request, store: store)
