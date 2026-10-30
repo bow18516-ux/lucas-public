@@ -192,26 +192,39 @@ sign_inside_out() {
     if [ -n "$entitlements" ]; then
         extra=(--entitlements "$entitlements")
     fi
-    # Sign nested code first. --deep is not a substitute for this order.
-    if [ -d "$CONTENTS/Frameworks" ]; then
-        while IFS= read -r -d '' item; do
-            codesign "${flags[@]}" "$item"
-        done < <(find "$CONTENTS/Frameworks" -depth \( -name '*.framework' -o -name '*.dylib' -o -type f -perm +111 \) -print0)
+    # Sparkle official inside-out order (nested bundles as units, not
+    # find-depth on their Mach-O executables). --force strips Sparkle's
+    # own entitlements unless Downloader keeps --preserve-metadata.
+    local sparkle="$CONTENTS/Frameworks/Sparkle.framework"
+    local sparkle_b="$sparkle/Versions/B"
+    if [ -d "$sparkle_b/XPCServices/Installer.xpc" ]; then
+        codesign "${flags[@]}" "$sparkle_b/XPCServices/Installer.xpc"
     fi
-    if [ -d "$CONTENTS/MacOS" ]; then
-        while IFS= read -r -d '' item; do
-            [ "$item" = "$CONTENTS/MacOS/Lucas" ] && continue
-            [ "$item" = "$CONTENTS/MacOS/JaplosApp" ] && continue
-            codesign "${flags[@]}" "$item"
-        done < <(find "$CONTENTS/MacOS" -type f -perm +111 -print0)
+    if [ -d "$sparkle_b/XPCServices/Downloader.xpc" ]; then
+        codesign "${flags[@]}" --preserve-metadata=entitlements \
+            "$sparkle_b/XPCServices/Downloader.xpc"
     fi
+    if [ -f "$sparkle_b/Autoupdate" ]; then
+        codesign "${flags[@]}" "$sparkle_b/Autoupdate"
+    fi
+    if [ -d "$sparkle_b/Updater.app" ]; then
+        codesign "${flags[@]}" "$sparkle_b/Updater.app"
+    fi
+    if [ -d "$sparkle" ]; then
+        codesign "${flags[@]}" "$sparkle"
+    fi
+    # Helper daemon: no app entitlements.
+    if [ -f "$CONTENTS/MacOS/lucasd" ]; then
+        codesign "${flags[@]}" "$CONTENTS/MacOS/lucasd"
+    fi
+    # Outer app last (main executable sealed with the bundle).
     codesign "${flags[@]}" "${extra[@]}" "$APP"
 }
 
 if [ -n "${LUCAS_SIGN_IDENTITY:-}" ]; then
     echo "signing with: $LUCAS_SIGN_IDENTITY"
     sign_inside_out "$LUCAS_SIGN_IDENTITY" "$ROOT/Config/Lucas.entitlements"
-    codesign --verify --strict --verbose=2 "$APP"
+    codesign --verify --deep --strict --verbose=2 "$APP"
 else
     echo "warning: ad-hoc signing; Sparkle updates will not install until the app is signed with a Developer ID" >&2
     sign_inside_out - "$ROOT/Config/Lucas.entitlements" >/dev/null 2>&1 || true

@@ -42,6 +42,14 @@ if [ -z "${LUCAS_NOTARY_PROFILE:-}" ] && [ -z "${LUCAS_ALLOW_UNNOTARIZED:-}" ]; 
     exit 1
 fi
 
+# Optional dedicated notary keychain (credentials live there via store-credentials).
+# Do not unlock with a password on the command line; unlock the keychain in the
+# session first, or use a login-keychain profile.
+NOTARY_KEYCHAIN_ARGS=()
+if [ -n "${LUCAS_NOTARY_KEYCHAIN:-}" ]; then
+    NOTARY_KEYCHAIN_ARGS+=(--keychain "$LUCAS_NOTARY_KEYCHAIN")
+fi
+
 BUILD_NUMBER="${LUCAS_BUILD:-$(date +%Y%m%d%H%M)}"
 DOWNLOAD_PREFIX="${LUCAS_DOWNLOAD_PREFIX:-${FEED_URL%appcast.xml}}"
 UPDATES="$ROOT/updates"
@@ -74,7 +82,8 @@ if [ -n "${LUCAS_NOTARY_PROFILE:-}" ]; then
     # Credentials live in the login keychain (xcrun notarytool store-credentials),
     # which the user session already unlocked: no password on the command line.
     xcrun notarytool submit "/tmp/Lucas-$VERSION.zip" \
-        --keychain-profile "$LUCAS_NOTARY_PROFILE" --wait
+        --keychain-profile "$LUCAS_NOTARY_PROFILE" \
+        "${NOTARY_KEYCHAIN_ARGS[@]}" --wait
 
     # Staple a clean extraction of the submitted zip. Stapling the build
     # directory occasionally fails with "Error 73" after repeated rebuilds.
@@ -116,6 +125,19 @@ echo "building dmg…"
 ./scripts/package-dmg.sh >/dev/null
 cp "$ROOT/build/Lucas-$VERSION.dmg" "$UPDATES/"
 echo "dmg:      $UPDATES/Lucas-$VERSION.dmg"
+
+if [ -n "${LUCAS_NOTARY_PROFILE:-}" ]; then
+    echo "notarizing dmg…"
+    xcrun notarytool submit "$UPDATES/Lucas-$VERSION.dmg" \
+        --keychain-profile "$LUCAS_NOTARY_PROFILE" \
+        "${NOTARY_KEYCHAIN_ARGS[@]}" --wait
+    xcrun stapler staple "$UPDATES/Lucas-$VERSION.dmg"
+    xcrun stapler validate "$UPDATES/Lucas-$VERSION.dmg"
+    # Keep build/ in sync with the stapled DMG source app already stapled above.
+    cp "$UPDATES/Lucas-$VERSION.dmg" "$ROOT/build/Lucas-$VERSION.dmg"
+else
+    echo "warning: skipping DMG notarization (no LUCAS_NOTARY_PROFILE)" >&2
+fi
 
 if [ -n "${LUCAS_DEPLOY_TARGET:-}" ]; then
     echo "uploading to $LUCAS_DEPLOY_TARGET"
