@@ -37,6 +37,26 @@ if [ -f "$ROOT/Assets/AppIcon.icns" ]; then
     cp "$ROOT/Assets/AppIcon.icns" "$CONTENTS/Resources/AppIcon.icns"
 fi
 
+# SPM resource bundle required by Bundle.module (lucasd seeds prompts/skills).
+# Without this, lucasd fatals: unable to find bundle named JaplosClone_JaplosRuntime
+RUNTIME_BUNDLE=""
+for cand in \
+    "$BIN_DIR/JaplosClone_JaplosRuntime.bundle" \
+    "$ROOT/.build/out/Products/$( [ "$CONFIG" = release ] && echo Release || echo Debug )/JaplosClone_JaplosRuntime.bundle" \
+    "$ROOT/.build/$CONFIG/JaplosClone_JaplosRuntime.bundle"
+do
+    if [ -d "$cand" ]; then RUNTIME_BUNDLE="$cand"; break; fi
+done
+if [ -n "$RUNTIME_BUNDLE" ]; then
+    rm -rf "$CONTENTS/Resources/JaplosClone_JaplosRuntime.bundle"
+    cp -R "$RUNTIME_BUNDLE" "$CONTENTS/Resources/JaplosClone_JaplosRuntime.bundle"
+    # CLI fallback when Bundle.main is the executable directory
+    rm -rf "$CONTENTS/MacOS/JaplosClone_JaplosRuntime.bundle"
+    cp -R "$RUNTIME_BUNDLE" "$CONTENTS/MacOS/JaplosClone_JaplosRuntime.bundle"
+else
+    echo "warning: JaplosClone_JaplosRuntime.bundle not found; lucasd may crash on start" >&2
+fi
+
 # Modular Japlos prompt pack + scenes (also embedded via SPM Bundle.module in lucasd)
 PROMPT_SRC="$ROOT/Sources/JaplosRuntime/Resources"
 if [ -d "$PROMPT_SRC/Prompts" ]; then
