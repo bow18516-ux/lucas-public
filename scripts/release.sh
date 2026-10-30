@@ -70,13 +70,10 @@ export LUCAS_ENABLE_AUTO_UPDATES=1
 if [ -n "${LUCAS_NOTARY_PROFILE:-}" ]; then
     echo "notarizing…"
     ditto -c -k --keepParent "$APP" "/tmp/Lucas-$VERSION.zip"
-    KEYCHAIN_ARGS=()
-    if [ -n "${LUCAS_NOTARY_KEYCHAIN:-}" ]; then
-        security unlock-keychain -p "${LUCAS_NOTARY_KEYCHAIN_PASSWORD:-}" "$LUCAS_NOTARY_KEYCHAIN"
-        KEYCHAIN_ARGS=(--keychain "$LUCAS_NOTARY_KEYCHAIN")
-    fi
+    # Credentials live in the login keychain (xcrun notarytool store-credentials),
+    # which the user session already unlocked: no password on the command line.
     xcrun notarytool submit "/tmp/Lucas-$VERSION.zip" \
-        --keychain-profile "$LUCAS_NOTARY_PROFILE" "${KEYCHAIN_ARGS[@]}" --wait
+        --keychain-profile "$LUCAS_NOTARY_PROFILE" --wait
 
     # Staple a clean extraction of the submitted zip. Stapling the build
     # directory occasionally fails with "Error 73" after repeated rebuilds.
