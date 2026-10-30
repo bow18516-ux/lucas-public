@@ -7,19 +7,20 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 LABEL="com.lucas.updates-check"
 PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"
+STAGED="$ROOT/Config/$LABEL.plist"
 LOG_DIR="$HOME/Library/Logs/Lucas"
 ACTION="${1:-install}"
 
 if [ "$ACTION" = "uninstall" ]; then
     launchctl bootout "gui/$(id -u)/$LABEL" 2>/dev/null || true
-    rm -f "$PLIST"
+    rm -f "$PLIST" "$STAGED"
     echo "removed $LABEL"
     exit 0
 fi
 
-mkdir -p "$HOME/Library/LaunchAgents" "$LOG_DIR"
+mkdir -p "$LOG_DIR" "$ROOT/Config" 2>/dev/null || true
 
-cat > "$PLIST" <<PLIST
+cat > "$STAGED" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -48,6 +49,17 @@ cat > "$PLIST" <<PLIST
 </plist>
 PLIST
 
+if [ ! -w "$HOME/Library/LaunchAgents" ] || [ ! -w "$HOME/Library/Logs/Lucas" ]; then
+    echo "sandbox cannot write ~/Library/LaunchAgents or ~/Library/Logs."
+    echo "prepared: $STAGED"
+    echo
+    echo "run these two lines in a normal Terminal to install:"
+    echo "  mkdir -p ~/Library/LaunchAgents ~/Library/Logs/Lucas"
+    echo "  cp \\"$STAGED\\" \\"$PLIST\\" && launchctl bootstrap gui/$(id -u) \\"$PLIST\\""
+    exit 0
+fi
+
+cp "$STAGED" "$PLIST"
 launchctl bootout "gui/$(id -u)/$LABEL" 2>/dev/null || true
 launchctl bootstrap "gui/$(id -u)" "$PLIST"
 launchctl kickstart -k "gui/$(id -u)/$LABEL"
