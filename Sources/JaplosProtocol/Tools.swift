@@ -203,19 +203,27 @@ public struct ModelConnection: Codable, Sendable, Equatable {
     public var temperature: Double
     /// Human label for the connection card (optional; empty falls back to host).
     public var displayName: String
+    /// DeepSeek OpenAI-compat: `thinking.type` enabled|disabled. Default on.
+    public var thinkingEnabled: Bool
+    /// DeepSeek OpenAI-compat: `reasoning_effort` low|high|max. Default high.
+    public var reasoningEffort: String
 
     public init(
         baseURL: String = "https://api.deepseek.com/v1",
-        model: String = "deepseek-chat",
+        model: String = "deepseek-flash",
         apiKey: String = "",
         temperature: Double = 0.3,
-        displayName: String = ""
+        displayName: String = "",
+        thinkingEnabled: Bool = true,
+        reasoningEffort: String = "high"
     ) {
         self.baseURL = baseURL
         self.model = model
         self.apiKey = apiKey
         self.temperature = temperature
         self.displayName = displayName
+        self.thinkingEnabled = thinkingEnabled
+        self.reasoningEffort = Self.normalizedEffort(reasoningEffort)
     }
 
     public init(from decoder: Decoder) throws {
@@ -225,6 +233,10 @@ public struct ModelConnection: Codable, Sendable, Equatable {
         apiKey = try container.decodeIfPresent(String.self, forKey: .apiKey) ?? ""
         temperature = try container.decodeIfPresent(Double.self, forKey: .temperature) ?? 0.3
         displayName = try container.decodeIfPresent(String.self, forKey: .displayName) ?? ""
+        thinkingEnabled = try container.decodeIfPresent(Bool.self, forKey: .thinkingEnabled) ?? true
+        reasoningEffort = Self.normalizedEffort(
+            try container.decodeIfPresent(String.self, forKey: .reasoningEffort) ?? "high"
+        )
     }
 
     public var isConfigured: Bool {
@@ -233,7 +245,23 @@ public struct ModelConnection: Codable, Sendable, Equatable {
 
     /// Never leak the key in logs or UI dumps.
     public var redactedDescription: String {
-        "\(baseURL) · \(model) · key=\(apiKey.isEmpty ? "missing" : "set")"
+        "\(baseURL) · \(model) · key=\(apiKey.isEmpty ? "missing" : "set") · thinking=\(thinkingEnabled ? "on" : "off")/\(reasoningEffort)"
+    }
+
+    /// True when this connection should emit DeepSeek thinking controls on chat requests.
+    public var usesDeepSeekThinkingAPI: Bool {
+        let url = baseURL.lowercased()
+        let mid = model.lowercased()
+        return url.contains("deepseek") || mid.hasPrefix("deepseek")
+    }
+
+    public static func normalizedEffort(_ raw: String) -> String {
+        switch raw.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
+        case "minimal", "low": return "low"
+        case "medium", "high", "xhigh": return "high"
+        case "max", "ultra": return "max"
+        default: return "high"
+        }
     }
 }
 

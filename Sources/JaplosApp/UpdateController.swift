@@ -11,9 +11,15 @@ final class UpdateService: ObservableObject {
     @Published private(set) var automaticallyChecks = false
     @Published private(set) var lastCheck: Date?
     @Published private(set) var latestVersion: String?
+    /// Numeric `sparkle:version` of the newest feed item (nil until a successful parse).
+    @Published private(set) var latestBuild: Int?
     @Published private(set) var updateAvailable = false
     @Published private(set) var releaseNotes: String?
     @Published private(set) var isCheckingFeed = false
+    /// Set when the last feed fetch/parse failed; cleared on success.
+    @Published private(set) var feedCheckError: String?
+    /// True after at least one successful appcast parse this session.
+    @Published private(set) var feedDidLoad = false
 
     let version: String
     let build: String
@@ -86,13 +92,14 @@ final class UpdateService: ObservableObject {
         lastCheck = controller.updater.lastUpdateCheckDate
     }
 
-    /// Prefer Sparkle's runtime override (UserDefaults `SUFeedURL`) so the
-    /// settings page parses the same feed the updater checks — e.g. after a
-    /// drill left defaults on 127.0.0.1 while Info.plist still points elsewhere.
+    /// Prefer Sparkle's runtime override (UserDefaults `SUFeedURL`) when it looks
+    /// like a real feed. Drill leftovers on 127.0.0.1 / localhost / example.com
+    /// must not silently replace Info.plist and fake an empty "no updates" state.
     private var resolvedFeedURL: String {
         if let override = UserDefaults.standard.string(forKey: "SUFeedURL")?
             .trimmingCharacters(in: .whitespacesAndNewlines),
-           !override.isEmpty {
+           !override.isEmpty,
+           !Self.isUnusableFeedURL(override) {
             return override
         }
         return feedURL
@@ -102,23 +109,60 @@ final class UpdateService: ObservableObject {
     /// version and a badge without opening Sparkle's update dialog.
     func refreshFeed() async {
         let urlString = resolvedFeedURL
-        guard isAvailable, !isPlaceholderFeed, let url = URL(string: urlString), !urlString.isEmpty else { return }
+        guard !isPlaceholderFeed, !urlString.isEmpty, let url = URL(string: urlString) else {
+            if isPlaceholderFeed || feedURL.isEmpty {
+                feedCheckError = unavailableReason
+            }
+            return
+        }
+        // Allow the settings page to read the feed even if Sparkle controller
+        // failed to start; still surface unavailable separately via isAvailable.
         isCheckingFeed = true
+        feedCheckError = nil
         defer { isCheckingFeed = false }
         do {
             var request = URLRequest(url: url)
             request.cachePolicy = .reloadIgnoringLocalCacheData
-            let (data, _) = try await URLSession.shared.data(for: request)
+            request.timeoutInterval = 20
+            let (data, response) = try await URLSession.shared.data(for: request)
+            if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
+                feedCheckError = "更新源返回 HTTP \(http.statusCode)"
+                updateAvailable = false
+                return
+            }
             let xml = String(decoding: data, as: UTF8.self)
 
-            guard let newest = Self.newestFeedItem(in: xml) else { return }
+            guard let newest = Self.newestFeedItem(in: xml) else {
+                feedCheckError = "更新源无法解析（未找到版本条目）"
+                updateAvailable = false
+                return
+            }
 
-            latestVersion = newest.shortVersion ?? String(newest.build)
-            updateAvailable = newest.build > (Int(build) ?? 0)
+            let short = newest.shortVersion ?? String(newest.build)
+            latestVersion = short
+            latestBuild = newest.build
+            let localBuild = Int(build) ?? 0
+            updateAvailable = newest.build > localBuild
             releaseNotes = newest.notes
+            feedDidLoad = true
+            feedCheckError = nil
+            lastCheck = Date()
         } catch {
-            // Feed may not exist yet; keep the last known values.
+            feedCheckError = "检查更新失败：\(error.localizedDescription)"
+            // Do not pretend we are up to date when the feed never loaded.
+            if !feedDidLoad {
+                updateAvailable = false
+            }
         }
+    }
+
+    /// Display label for the newest feed item, e.g. `0.5.6 (202610311011)`.
+    var latestVersionLabel: String? {
+        guard let short = latestVersion else { return nil }
+        if let build = latestBuild {
+            return "\(short) (\(build))"
+        }
+        return short
     }
 
     private func presentUnavailableAlert() {
@@ -137,8 +181,16 @@ final class UpdateService: ObservableObject {
     }
 
     private static func isPlaceholder(_ url: String) -> Bool {
-        let lowered = url.lowercased()
-        return lowered.contains("example.com") || lowered.contains("localhost") && lowered.contains("example")
+        isUnusableFeedURL(url)
+    }
+
+    private static func isUnusableFeedURL(_ url: String) -> Bool {
+        let lowered = url.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        if lowered.isEmpty { return true }
+        if lowered.contains("example.com") { return true }
+        if lowered.contains("127.0.0.1") { return true }
+        if lowered.contains("localhost") { return true }
+        return false
     }
 
     private struct FeedItem {

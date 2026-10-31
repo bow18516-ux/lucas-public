@@ -67,12 +67,16 @@ private struct DeepSeekModelOption: Identifiable, Hashable {
     let title: String
     let blurb: String
 
+    /// Official API ids (2026-10-31): deepseek-flash / deepseek-v4-pro.
+    /// Legacy deepseek-chat / deepseek-reasoner retired 2026-07-24 — do not list.
     static let catalog: [DeepSeekModelOption] = [
-        .init(id: "deepseek-chat", title: "DeepSeek Chat", blurb: "通用对话"),
-        .init(id: "deepseek-reasoner", title: "DeepSeek Reasoner", blurb: "深度推理"),
+        .init(id: "deepseek-flash", title: "DeepSeek V4.1 Flash", blurb: "V4.1 Flash-1017 · 快"),
+        .init(id: "deepseek-v4-pro", title: "DeepSeek V4 Pro", blurb: "V4-Pro-0813 · 强"),
     ]
 }
 
+/// UI 低/中/高 → DeepSeek `thinking` + `reasoning_effort`（不是温度）。
+/// 映射：低=low，中=high，高=max；默认思考开启。
 private enum ThinkingIntensity: String, CaseIterable, Identifiable {
     case low, medium, high
 
@@ -86,19 +90,31 @@ private enum ThinkingIntensity: String, CaseIterable, Identifiable {
         }
     }
 
-    /// Maps UX "思考强度" onto the existing temperature field (no schema change).
-    var temperature: Double {
+    var thinkingEnabled: Bool { true }
+
+    /// OpenAI ChatCompletions `reasoning_effort` after DeepSeek mapping table.
+    var reasoningEffort: String {
         switch self {
-        case .low: return 0.0
-        case .medium: return 0.3
-        case .high: return 0.8
+        case .low: return "low"
+        case .medium: return "high"
+        case .high: return "max"
         }
     }
 
-    static func from(temperature: Double) -> ThinkingIntensity {
-        if temperature <= 0.15 { return .low }
-        if temperature >= 0.55 { return .high }
-        return .medium
+    static func from(connection: ModelConnection) -> ThinkingIntensity {
+        if !connection.thinkingEnabled { return .low }
+        switch ModelConnection.normalizedEffort(connection.reasoningEffort) {
+        case "low": return .low
+        case "max": return .high
+        default: return .medium
+        }
+    }
+
+    func apply(to settings: inout ModelConnection) {
+        settings.thinkingEnabled = thinkingEnabled
+        settings.reasoningEffort = reasoningEffort
+        // Temperature is ignored in DeepSeek thinking mode; keep a mild default for non-thinking probes.
+        settings.temperature = 0.3
     }
 }
 
@@ -235,11 +251,15 @@ struct ModelSettingsPane: View {
         }
         let known = Set(DeepSeekModelOption.catalog.map(\.id))
         if !preserveModel || model.settings.model.isEmpty || !known.contains(model.settings.model) {
-            if !known.contains(model.settings.model) {
-                model.settings.model = DeepSeekModelOption.catalog[0].id
-            } else if model.settings.model.isEmpty {
-                model.settings.model = DeepSeekModelOption.catalog[0].id
-            }
+            model.settings.model = DeepSeekModelOption.catalog[0].id
+        }
+        // Migrate retired ids and ensure thinking defaults for DeepSeek requests.
+        if model.settings.reasoningEffort.trimmingCharacters(in: .whitespaces).isEmpty {
+            model.settings.reasoningEffort = "high"
+        }
+        model.settings.reasoningEffort = ModelConnection.normalizedEffort(model.settings.reasoningEffort)
+        if !preserveModel {
+            model.settings.thinkingEnabled = true
         }
     }
 
@@ -326,13 +346,13 @@ struct ModelSettingsPane: View {
                     ForEach(ThinkingIntensity.allCases) { level in
                         IntensityChip(
                             label: level.label,
-                            selected: ThinkingIntensity.from(temperature: model.settings.temperature) == level
+                            selected: ThinkingIntensity.from(connection: model.settings) == level
                         ) {
-                            model.settings.temperature = level.temperature
+                            level.apply(to: &model.settings)
                         }
                     }
                 }
-                Text("低更稳、高更发散；对应原先的采样温度，无需再调数字。")
+                Text("写入 DeepSeek thinking + reasoning_effort（低=low / 中=high / 高=max）；思考模式下温度无效。")
                     .font(.system(size: SettingsMetrics.captionSize))
                     .foregroundStyle(Theme.textSecondary.opacity(0.7))
             }
@@ -402,6 +422,12 @@ struct ModelSettingsPane: View {
                         if let m = record?["model"]?.stringValue { model.settings.model = m }
                         if let temp = record?["temperature"]?.doubleValue { model.settings.temperature = temp }
                         if let name = record?["displayName"]?.stringValue { model.settings.displayName = name }
+                        if let thinking = record?["thinkingEnabled"]?.boolValue {
+                            model.settings.thinkingEnabled = thinking
+                        }
+                        if let effort = record?["reasoningEffort"]?.stringValue {
+                            model.settings.reasoningEffort = ModelConnection.normalizedEffort(effort)
+                        }
                         if selectedProvider == .deepseek {
                             applyDeepSeekDefaults(preserveModel: true)
                         }

@@ -410,7 +410,9 @@ public final class ChatService: @unchecked Sendable {
                 requestedBaseURL: requestedURL,
                 requestedKey: requestKey
             ),
-            temperature: 0
+            temperature: 0,
+            thinkingEnabled: stored?.thinkingEnabled ?? true,
+            reasoningEffort: stored?.reasoningEffort ?? "high"
         )
     }
 

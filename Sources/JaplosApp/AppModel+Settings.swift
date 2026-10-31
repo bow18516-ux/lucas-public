@@ -69,6 +69,8 @@ extension AppModel {
                 "apiKey": .string(key),
                 "temperature": .number(settings.temperature),
                 "displayName": .string(settings.displayName),
+                "thinkingEnabled": .bool(settings.thinkingEnabled),
+                "reasoningEffort": .string(ModelConnection.normalizedEffort(settings.reasoningEffort)),
             ])
             _ = try await client.callAsync(.configurationSet, arguments: .object([
                 "path": .string("agents.default.model.connection"),
@@ -82,6 +84,8 @@ extension AppModel {
                 "temperature": .number(settings.temperature),
                 "displayName": .string(settings.displayName.isEmpty ? providerHint(for: settings.baseURL) : settings.displayName),
                 "protocol": .string("chat.completions"),
+                "thinkingEnabled": .bool(settings.thinkingEnabled),
+                "reasoningEffort": .string(ModelConnection.normalizedEffort(settings.reasoningEffort)),
             ])
             _ = try? await client.callAsync(.modelRoutesSet, arguments: .object([
                 "routeID": .string(routeID),

@@ -511,7 +511,7 @@ struct OnboardingView: View {
 
             field("模型") {
                 HStack(spacing: 8) {
-                    TextField("deepseek-chat", text: $model.settings.model)
+                    TextField("deepseek-flash", text: $model.settings.model)
                         .textFieldStyle(.plain)
                         .font(.system(size: 12, design: .monospaced))
                         .padding(9)
@@ -751,7 +751,7 @@ struct OnboardingView: View {
         switch name {
         case "DeepSeek":
             model.settings.baseURL = "https://api.deepseek.com/v1"
-            if model.settings.model.isEmpty { model.settings.model = "deepseek-chat" }
+            if model.settings.model.isEmpty { model.settings.model = "deepseek-flash" }
         case "MiMo":
             model.settings.baseURL = "https://api.xiaomimimo.com/v1"
             if model.settings.model.isEmpty { model.settings.model = "mimo-v2.5" }

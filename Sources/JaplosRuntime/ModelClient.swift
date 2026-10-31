@@ -78,6 +78,26 @@ public final class ModelClient {
         self.session = URLSession(configuration: configuration)
     }
 
+
+    /// DeepSeek Chat Completions: `thinking` + `reasoning_effort`.
+    /// Temperature is ignored in thinking mode (API docs); omit it then.
+    private func applySamplingControls(to body: inout [String: JSONValue]) {
+        if connection.usesDeepSeekThinkingAPI {
+            body["thinking"] = .object([
+                "type": .string(connection.thinkingEnabled ? "enabled" : "disabled"),
+            ])
+            if connection.thinkingEnabled {
+                body["reasoning_effort"] = .string(
+                    ModelConnection.normalizedEffort(connection.reasoningEffort)
+                )
+            } else {
+                body["temperature"] = .number(connection.temperature)
+            }
+        } else {
+            body["temperature"] = .number(connection.temperature)
+        }
+    }
+
     public func endpoint() throws -> URL {
         var base = connection.baseURL.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !base.isEmpty else { throw ModelError.invalidURL(connection.baseURL) }
@@ -124,9 +144,9 @@ public final class ModelClient {
         var body: [String: JSONValue] = [
             "model": .string(connection.model),
             "messages": .array(messages.map(Self.encode(message:))),
-            "temperature": .number(connection.temperature),
             "stream": .bool(false),
         ]
+        applySamplingControls(to: &body)
         if !tools.isEmpty {
             body["tools"] = .array(tools.map(Self.encode(tool:)))
             body["tool_choice"] = .string("auto")
@@ -188,9 +208,9 @@ public final class ModelClient {
         var body: [String: JSONValue] = [
             "model": .string(connection.model),
             "messages": .array(messages.map(Self.encode(message:))),
-            "temperature": .number(connection.temperature),
             "stream": .bool(true),
         ]
+        applySamplingControls(to: &body)
         if !tools.isEmpty {
             body["tools"] = .array(tools.map(Self.encode(tool:)))
             body["tool_choice"] = .string("auto")

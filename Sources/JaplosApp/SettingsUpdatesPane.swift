@@ -23,7 +23,7 @@ struct UpdatesSettingsPane: View {
                     currentCard
                     // Only show when a newer build exists. Hiding the card when
                     // already up to date avoids a fake "最新版本 0.5.3" row.
-                    if updates.updateAvailable, let latest = updates.latestVersion {
+                    if updates.updateAvailable, let latest = updates.latestVersionLabel ?? updates.latestVersion {
                         latestCard(latest)
                     }
                     automaticCard
@@ -96,25 +96,37 @@ struct UpdatesSettingsPane: View {
 
     @ViewBuilder
     private var statusLabel: some View {
-        if !updates.isAvailable {
-            Text(updates.unavailableReason)
-                .font(.system(size: SettingsMetrics.bodySize))
-                .foregroundStyle(Theme.textSecondary)
-        } else if updates.updateAvailable, let latest = updates.latestVersion {
-            Label("发现新版本 \(latest)", systemImage: "arrow.down.circle.fill")
-                .font(.system(size: SettingsMetrics.bodySize))
-                .foregroundStyle(Theme.accent)
-        } else if updates.isCheckingFeed {
+        if updates.isCheckingFeed {
             HStack(spacing: 6) {
                 ProgressView().controlSize(.mini)
                 Text("正在检查…")
                     .font(.system(size: SettingsMetrics.bodySize))
                     .foregroundStyle(Theme.textSecondary)
             }
-        } else {
-            Label("当前已是最新版本", systemImage: "checkmark.circle.fill")
+        } else if let error = updates.feedCheckError, !error.isEmpty {
+            Label(error, systemImage: "exclamationmark.triangle.fill")
                 .font(.system(size: SettingsMetrics.bodySize))
-                .foregroundStyle(Theme.success)
+                .foregroundStyle(Color.orange)
+                .lineLimit(2)
+        } else if updates.updateAvailable, let latest = updates.latestVersionLabel ?? updates.latestVersion {
+            Label("发现新版本 \(latest)", systemImage: "arrow.down.circle.fill")
+                .font(.system(size: SettingsMetrics.bodySize))
+                .foregroundStyle(Theme.accent)
+        } else if updates.feedDidLoad {
+            Label(
+                updates.latestVersionLabel.map { "已是最新版本（线上 \($0)）" } ?? "已是最新版本",
+                systemImage: "checkmark.circle.fill"
+            )
+            .font(.system(size: SettingsMetrics.bodySize))
+            .foregroundStyle(Theme.success)
+        } else if !updates.isAvailable {
+            Text(updates.unavailableReason)
+                .font(.system(size: SettingsMetrics.bodySize))
+                .foregroundStyle(Theme.textSecondary)
+        } else {
+            Text("尚未检查更新源，点右侧「检查更新」")
+                .font(.system(size: SettingsMetrics.bodySize))
+                .foregroundStyle(Theme.textSecondary)
         }
     }
 

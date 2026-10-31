@@ -717,6 +717,8 @@ public final class KernelStore: @unchecked Sendable {
             "model": .string(connection.model),
             "temperature": .number(connection.temperature),
             "displayName": .string(connection.displayName),
+            "thinkingEnabled": .bool(connection.thinkingEnabled),
+            "reasoningEffort": .string(ModelConnection.normalizedEffort(connection.reasoningEffort)),
         ]), updatedBy: updatedBy)
 
         let routeID = "custom.default"
@@ -732,6 +734,8 @@ public final class KernelStore: @unchecked Sendable {
                 "prefersStreaming": .bool(true),
                 "executionLocation": .string("remote"),
                 "temperature": .number(connection.temperature),
+                "thinkingEnabled": .bool(connection.thinkingEnabled),
+                "reasoningEffort": .string(ModelConnection.normalizedEffort(connection.reasoningEffort)),
                 "version": .string("1.0.0"),
             ]),
         ])
