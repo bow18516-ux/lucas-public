@@ -565,19 +565,27 @@ struct CenterColumn: View {
                         conversationBody
                     }
                     .scrollIndicators(.never)
-                    .onChange(of: model.messages.count) { _ in
-                        withAnimation(.easeOut(duration: 0.15)) {
-                            if model.isSending {
-                                proxy.scrollTo("thinking", anchor: .bottom)
-                            } else if let last = model.messages.last {
-                                proxy.scrollTo(last.id, anchor: .bottom)
-                            }
-                        }
-                    }
+                    // Follow the tail: count changes, every streamed delta
+                    // (last message text grows), thinking row removal, tool steps.
+                    .onChange(of: model.messages.count) { _ in scrollToTail(proxy, animated: true) }
+                    .onChange(of: model.messages.last?.text.count ?? 0) { _ in scrollToTail(proxy, animated: false) }
+                    .onChange(of: model.messages.last?.steps.count ?? 0) { _ in scrollToTail(proxy, animated: false) }
+                    .onChange(of: model.isSending) { _ in scrollToTail(proxy, animated: true) }
+                    .onAppear { scrollToTail(proxy, animated: false) }
                 }
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private static let tailID = "conversation-tail"
+
+    private func scrollToTail(_ proxy: ScrollViewProxy, animated: Bool) {
+        if animated {
+            withAnimation(.easeOut(duration: 0.15)) { proxy.scrollTo(Self.tailID, anchor: .bottom) }
+        } else {
+            proxy.scrollTo(Self.tailID, anchor: .bottom)
+        }
     }
 
     private var conversationBody: some View {
@@ -601,6 +609,11 @@ struct CenterColumn: View {
                 }
                 .id("thinking")
             }
+            // Bottom anchor + breathing room so the last line never sits
+            // flush against the composer.
+            Color.clear
+                .frame(height: 24)
+                .id(Self.tailID)
         }
         .padding(.vertical, 10)
         .padding(.horizontal, 20)
