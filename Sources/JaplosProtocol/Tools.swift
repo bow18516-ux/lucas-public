@@ -266,6 +266,78 @@ public struct ModelConnection: Codable, Sendable, Equatable {
 }
 
 
+
+/// OpenAI / DeepSeek `tools[].function.name` must match `^[a-zA-Z0-9_-]+$`.
+/// Kernel + MCP names keep dotted form internally; wire form is used only on the wire.
+public enum OpenAICompatibleToolName {
+    private static let allowed = CharacterSet(charactersIn:
+        "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-"
+    )
+
+    /// Replace every disallowed character (dots, spaces, CJK, …) with `_`.
+    public static func sanitize(_ name: String) -> String {
+        let mapped = String(name.unicodeScalars.map { allowed.contains($0) ? Character($0) : "_" })
+        var collapsed = mapped
+        while collapsed.contains("__") {
+            collapsed = collapsed.replacingOccurrences(of: "__", with: "_")
+        }
+        collapsed = collapsed.trimmingCharacters(in: CharacterSet(charactersIn: "_"))
+        return collapsed.isEmpty ? "tool" : collapsed
+    }
+
+    public static func isValid(_ name: String) -> Bool {
+        !name.isEmpty && name.unicodeScalars.allSatisfy { allowed.contains($0) }
+    }
+
+    /// Bidirectional map for one request's tool list (handles sanitize collisions).
+    public struct Codec: Sendable {
+        public let toWire: [String: String]
+        public let toCanonical: [String: String]
+
+        public init(tools: [ToolDefinition]) {
+            var toWire: [String: String] = [:]
+            var toCanonical: [String: String] = [:]
+            var used = Set<String>()
+            for tool in tools {
+                var wire = OpenAICompatibleToolName.sanitize(tool.name)
+                if used.contains(wire) {
+                    var n = 2
+                    while used.contains("\(wire)_\(n)") { n += 1 }
+                    wire = "\(wire)_\(n)"
+                }
+                used.insert(wire)
+                toWire[tool.name] = wire
+                toCanonical[wire] = tool.name
+            }
+            self.toWire = toWire
+            self.toCanonical = toCanonical
+        }
+
+        public func wireName(_ canonical: String) -> String {
+            toWire[canonical] ?? OpenAICompatibleToolName.sanitize(canonical)
+        }
+
+        public func canonicalName(_ wire: String) -> String {
+            toCanonical[wire] ?? wire
+        }
+
+        public func wireTools(_ tools: [ToolDefinition]) -> [ToolDefinition] {
+            tools.map { tool in
+                ToolDefinition(
+                    name: wireName(tool.name),
+                    title: tool.title,
+                    summary: tool.summary,
+                    inputSchema: tool.inputSchema,
+                    capability: tool.capability,
+                    risk: tool.risk,
+                    provider: tool.provider,
+                    approval: tool.approval
+                )
+            }
+        }
+    }
+}
+
 /// Resolves whether a tool call may run. Callers must pass a provider.
 /// There is no auto-approve default.
 public typealias StreamApprovalProvider = @Sendable (ToolCall, ToolDefinition) async -> Bool

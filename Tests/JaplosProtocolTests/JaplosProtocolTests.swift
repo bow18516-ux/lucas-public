@@ -218,4 +218,58 @@ final class JaplosProtocolTests: XCTestCase {
             expectedModifiedAt: nil, daemonModifiedAt: nil
         ))
     }
+
+    func testOpenAICompatibleToolNameSanitize() {
+        XCTAssertEqual(OpenAICompatibleToolName.sanitize("memory.save"), "memory_save")
+        XCTAssertEqual(OpenAICompatibleToolName.sanitize("system.url.open"), "system_url_open")
+        XCTAssertEqual(OpenAICompatibleToolName.sanitize("mcp.foo.bar.baz"), "mcp_foo_bar_baz")
+        XCTAssertEqual(OpenAICompatibleToolName.sanitize("工具 名称"), "tool")
+        XCTAssertEqual(OpenAICompatibleToolName.sanitize("播放 音乐"), "tool")
+        XCTAssertEqual(OpenAICompatibleToolName.sanitize("foo bar"), "foo_bar")
+        XCTAssertFalse(OpenAICompatibleToolName.isValid("memory.save"))
+        XCTAssertTrue(OpenAICompatibleToolName.isValid("memory_save"))
+        let spaced = OpenAICompatibleToolName.sanitize("a b.c")
+        XCTAssertEqual(spaced, "a_b_c")
+        XCTAssertTrue(OpenAICompatibleToolName.isValid(spaced))
+    }
+
+    func testOpenAICompatibleToolNameCodecRoundTrip() {
+        let tools = [
+            ToolDefinition(
+                name: "memory.save",
+                title: "Save",
+                summary: "save",
+                inputSchema: .object([:]),
+                capability: "memory"
+            ),
+            ToolDefinition(
+                name: "memory_save",
+                title: "Alt",
+                summary: "collision",
+                inputSchema: .object([:]),
+                capability: "memory"
+            ),
+            ToolDefinition(
+                name: "system.music",
+                title: "Music",
+                summary: "music",
+                inputSchema: .object([:]),
+                capability: "system"
+            ),
+        ]
+        let codec = OpenAICompatibleToolName.Codec(tools: tools)
+        XCTAssertEqual(codec.wireName("system.music"), "system_music")
+        XCTAssertEqual(codec.canonicalName(codec.wireName("system.music")), "system.music")
+        // Collision: both sanitize to memory_save — second gets suffix.
+        let wires = Set(tools.map { codec.wireName($0.name) })
+        XCTAssertEqual(wires.count, 3)
+        for tool in tools {
+            let wire = codec.wireName(tool.name)
+            XCTAssertTrue(OpenAICompatibleToolName.isValid(wire), wire)
+            XCTAssertEqual(codec.canonicalName(wire), tool.name)
+        }
+        let encoded = codec.wireTools(tools)
+        XCTAssertTrue(encoded.allSatisfy { OpenAICompatibleToolName.isValid($0.name) })
+    }
+
 }

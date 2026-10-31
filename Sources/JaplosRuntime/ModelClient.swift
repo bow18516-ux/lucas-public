@@ -141,14 +141,15 @@ public final class ModelClient {
         request.setValue("Bearer \(connection.apiKey)", forHTTPHeaderField: "Authorization")
         request.timeoutInterval = 180
 
+        let codec = OpenAICompatibleToolName.Codec(tools: tools)
         var body: [String: JSONValue] = [
             "model": .string(connection.model),
-            "messages": .array(messages.map(Self.encode(message:))),
+            "messages": .array(messages.map { Self.encode(message: $0, codec: codec) }),
             "stream": .bool(false),
         ]
         applySamplingControls(to: &body)
         if !tools.isEmpty {
-            body["tools"] = .array(tools.map(Self.encode(tool:)))
+            body["tools"] = .array(codec.wireTools(tools).map(Self.encode(tool:)))
             body["tool_choice"] = .string("auto")
         }
         request.httpBody = try ProtocolCoding.encode(JSONValue.object(body))
@@ -183,7 +184,7 @@ public final class ModelClient {
         }
 
         let text = message["content"]?.stringValue ?? ""
-        let toolCalls = Self.decodeToolCalls(message["tool_calls"])
+        let toolCalls = Self.decodeToolCalls(message["tool_calls"], codec: codec)
         let finish = choice["finish_reason"]?.stringValue ?? ""
         return ModelReply(text: text, toolCalls: toolCalls, finishReason: finish, usage: root["usage"])
     }
@@ -205,14 +206,15 @@ public final class ModelClient {
         request.setValue("text/event-stream", forHTTPHeaderField: "Accept")
         request.timeoutInterval = 180
 
+        let codec = OpenAICompatibleToolName.Codec(tools: tools)
         var body: [String: JSONValue] = [
             "model": .string(connection.model),
-            "messages": .array(messages.map(Self.encode(message:))),
+            "messages": .array(messages.map { Self.encode(message: $0, codec: codec) }),
             "stream": .bool(true),
         ]
         applySamplingControls(to: &body)
         if !tools.isEmpty {
-            body["tools"] = .array(tools.map(Self.encode(tool:)))
+            body["tools"] = .array(codec.wireTools(tools).map(Self.encode(tool:)))
             body["tool_choice"] = .string("auto")
         }
         request.httpBody = try ProtocolCoding.encode(JSONValue.object(body))
@@ -289,7 +291,11 @@ public final class ModelClient {
             } else {
                 arguments = .object([:])
             }
-            return ToolCall(id: partial.id, name: partial.name, arguments: arguments)
+            return ToolCall(
+                id: partial.id,
+                name: codec.canonicalName(partial.name),
+                arguments: arguments
+            )
         }
         return ModelReply(text: text, toolCalls: toolCalls, finishReason: finishReason, usage: usage)
     }
@@ -302,7 +308,10 @@ public final class ModelClient {
 
     // MARK: - Encoding
 
-    static func encode(message: ModelMessage) -> JSONValue {
+    static func encode(
+        message: ModelMessage,
+        codec: OpenAICompatibleToolName.Codec = OpenAICompatibleToolName.Codec(tools: [])
+    ) -> JSONValue {
         switch message {
         case .system(let text):
             return .object(["role": .string("system"), "content": .string(text)])
@@ -319,7 +328,7 @@ public final class ModelClient {
                         "id": .string(call.id),
                         "type": .string("function"),
                         "function": .object([
-                            "name": .string(call.name),
+                            "name": .string(codec.wireName(call.name)),
                             "arguments": .string((try? call.arguments.encodedString()) ?? "{}"),
                         ]),
                     ])
@@ -338,17 +347,23 @@ public final class ModelClient {
     }
 
     static func encode(tool: ToolDefinition) -> JSONValue {
-        .object([
+        let wire = OpenAICompatibleToolName.isValid(tool.name)
+            ? tool.name
+            : OpenAICompatibleToolName.sanitize(tool.name)
+        return .object([
             "type": .string("function"),
             "function": .object([
-                "name": .string(tool.name),
+                "name": .string(wire),
                 "description": .string(tool.summary),
                 "parameters": tool.inputSchema,
             ]),
         ])
     }
 
-    static func decodeToolCalls(_ value: JSONValue?) -> [ToolCall] {
+    static func decodeToolCalls(
+        _ value: JSONValue?,
+        codec: OpenAICompatibleToolName.Codec = OpenAICompatibleToolName.Codec(tools: [])
+    ) -> [ToolCall] {
         guard let array = value?.arrayValue else { return [] }
         return array.compactMap { item in
             guard
@@ -364,7 +379,7 @@ public final class ModelClient {
             } else {
                 arguments = .object([:])
             }
-            return ToolCall(id: id, name: name, arguments: arguments)
+            return ToolCall(id: id, name: codec.canonicalName(name), arguments: arguments)
         }
     }
 }

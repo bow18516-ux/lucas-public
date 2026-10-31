@@ -119,7 +119,11 @@ public enum PromptLibrary {
 
     public static func toolCatalog(_ tools: [ToolDefinition]) -> String {
         guard !tools.isEmpty else { return "" }
-        let lines = tools.map { "- \($0.name)：\($0.summary)" }.joined(separator: "\n")
+        // List wire names so the model calls the same ids sent in `tools[]`.
+        let codec = OpenAICompatibleToolName.Codec(tools: tools)
+        let lines = tools.map { tool in
+            "- \(codec.wireName(tool.name))：\(tool.summary)"
+        }.joined(separator: "\n")
         return "本次可用工具：\n\(lines)"
     }
 

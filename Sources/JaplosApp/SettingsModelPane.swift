@@ -184,7 +184,7 @@ struct ModelSettingsPane: View {
                             .foregroundStyle(Theme.textSecondary)
                     }
                 }
-                Text("保存后用于后续对话；连接是否可用以「检查」结果为准。")
+                Text("保存后用于后续对话；也可在下方 API Key 旁点「测试连接」验证。")
                     .font(.system(size: SettingsMetrics.cardSubtitleSize))
                     .foregroundStyle(Theme.textSecondary.opacity(0.8))
             }
@@ -197,7 +197,7 @@ struct ModelSettingsPane: View {
                     .foregroundStyle(Theme.accent)
             }
             .buttonStyle(.pressable)
-            .disabled(model.isTestingModel || !model.hasStoredConnection)
+            .disabled(model.isTestingModel || !canTestConnection)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .panel(padding: SettingsMetrics.cardPadding)
@@ -303,22 +303,68 @@ struct ModelSettingsPane: View {
                         .foregroundStyle(Theme.textSecondary)
                     Spacer()
                     HStack(spacing: 4) {
-                        Image(systemName: model.storedAPIKey.isEmpty ? "circle" : "checkmark.circle")
+                        Image(systemName: model.storedAPIKey.isEmpty ? "circle" : "checkmark.circle.fill")
                             .font(.system(size: SettingsMetrics.captionSize))
                         Text(model.storedAPIKey.isEmpty ? "未保存" : "已保存")
                     }
                     .font(.system(size: SettingsMetrics.captionSize))
-                    .foregroundStyle(Theme.textSecondary)
+                    .foregroundStyle(model.storedAPIKey.isEmpty ? Theme.textSecondary : Theme.success)
                 }
-                SecureField("输入新 Key 可替换，留空保持不变", text: $model.settings.apiKey)
-                    .textFieldStyle(.plain)
-                    .font(.system(size: SettingsMetrics.labelSize))
-                    .padding(9)
-                    .background(Color.white.opacity(0.04), in: RoundedRectangle(cornerRadius: 6))
-                    .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(Theme.panelBorder, lineWidth: 0.7))
-                Text("已保存的密钥不会回填。可在 platform.deepseek.com 创建 Key。")
-                    .font(.system(size: SettingsMetrics.captionSize))
-                    .foregroundStyle(Theme.textSecondary.opacity(0.7))
+                HStack(alignment: .center, spacing: 8) {
+                    SecureField("输入新 Key 可替换，留空保持不变", text: $model.settings.apiKey)
+                        .textFieldStyle(.plain)
+                        .font(.system(size: SettingsMetrics.labelSize))
+                        .padding(9)
+                        .background(Color.white.opacity(0.04), in: RoundedRectangle(cornerRadius: 6))
+                        .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(Theme.panelBorder, lineWidth: 0.7))
+                    Button {
+                        Task { await model.testModel() }
+                    } label: {
+                        HStack(spacing: 5) {
+                            if model.isTestingModel {
+                                ProgressView()
+                                    .controlSize(.small)
+                            } else {
+                                Image(systemName: "bolt.horizontal.circle")
+                                    .font(.system(size: 12, weight: .semibold))
+                            }
+                            Text(model.isTestingModel ? "测试中…" : "测试连接")
+                                .font(.system(size: SettingsMetrics.cardSubtitleSize, weight: .medium))
+                        }
+                        .foregroundStyle(canTestConnection ? Theme.accent : Theme.textSecondary.opacity(0.55))
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 9)
+                        .background(
+                            canTestConnection ? Theme.accent.opacity(0.12) : Color.white.opacity(0.03),
+                            in: RoundedRectangle(cornerRadius: 6)
+                        )
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 6)
+                                .strokeBorder(
+                                    canTestConnection ? Theme.accent.opacity(0.45) : Theme.panelBorder,
+                                    lineWidth: 0.8
+                                )
+                        )
+                    }
+                    .buttonStyle(.pressable)
+                    .disabled(model.isTestingModel || !canTestConnection)
+                    .help("用当前 Key（新填或已保存）对预填 Base URL 与所选模型发一次最小请求")
+                }
+                if let result = model.testResult {
+                    HStack(alignment: .top, spacing: 6) {
+                        Image(systemName: result.hasPrefix("连接成功") ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
+                            .font(.system(size: SettingsMetrics.captionSize))
+                            .foregroundStyle(result.hasPrefix("连接成功") ? Theme.success : Color.red.opacity(0.85))
+                        Text(result)
+                            .font(.system(size: SettingsMetrics.captionSize))
+                            .foregroundStyle(result.hasPrefix("连接成功") ? Theme.success : Color.red.opacity(0.85))
+                            .textSelection(.enabled)
+                    }
+                } else {
+                    Text("已保存的密钥不会回填。填 Key 后可点「测试连接」验证，无需先保存。")
+                        .font(.system(size: SettingsMetrics.captionSize))
+                        .foregroundStyle(Theme.textSecondary.opacity(0.7))
+                }
             }
 
             VStack(alignment: .leading, spacing: 8) {
@@ -357,11 +403,6 @@ struct ModelSettingsPane: View {
                     .foregroundStyle(Theme.textSecondary.opacity(0.7))
             }
 
-            if let result = model.testResult {
-                Text(result)
-                    .font(.system(size: SettingsMetrics.captionSize))
-                    .foregroundStyle(result.hasPrefix("连接成功") ? Theme.success : Color.red.opacity(0.85))
-            }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .panel(padding: SettingsMetrics.cardPadding)
@@ -487,6 +528,15 @@ struct ModelSettingsPane: View {
             return model.settings.displayName
         }
         return ModelProviderID.infer(from: model.settings.baseURL).title
+    }
+
+    /// New draft key or already-saved key + model + base URL.
+    private var canTestConnection: Bool {
+        let key = model.settings.apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        let hasKey = !key.isEmpty || !model.storedAPIKey.isEmpty
+        let hasModel = !model.settings.model.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        let hasURL = !model.settings.baseURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        return hasKey && hasModel && hasURL
     }
 }
 
