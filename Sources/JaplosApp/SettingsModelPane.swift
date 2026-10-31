@@ -4,24 +4,124 @@ import UniformTypeIdentifiers
 import JaplosProtocol
 import JaplosClient
 
+// MARK: - Provider catalog (DeepSeek shipping; others placeholder)
+
+private enum ModelProviderID: String, CaseIterable, Identifiable {
+    case deepseek
+    case glm
+    case qwen
+    case doubao
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .deepseek: return "DeepSeek"
+        case .glm: return "智谱 GLM"
+        case .qwen: return "通义千问"
+        case .doubao: return "豆包"
+        }
+    }
+
+    var subtitle: String {
+        switch self {
+        case .deepseek: return "已接入"
+        case .glm, .qwen, .doubao: return "即将支持"
+        }
+    }
+
+    var isAvailable: Bool {
+        self == .deepseek
+    }
+
+    var systemImage: String {
+        switch self {
+        case .deepseek: return "brain.head.profile"
+        case .glm: return "sparkles"
+        case .qwen: return "cloud"
+        case .doubao: return "leaf"
+        }
+    }
+
+    var defaultBaseURL: String {
+        switch self {
+        case .deepseek: return "https://api.deepseek.com/v1"
+        case .glm: return "https://open.bigmodel.cn/api/paas/v4"
+        case .qwen: return "https://dashscope.aliyuncs.com/compatible-mode/v1"
+        case .doubao: return "https://ark.cn-beijing.volces.com/api/v3"
+        }
+    }
+
+    static func infer(from baseURL: String) -> ModelProviderID {
+        let url = baseURL.lowercased()
+        if url.contains("deepseek") { return .deepseek }
+        if url.contains("bigmodel") || url.contains("zhipu") { return .glm }
+        if url.contains("dashscope") || url.contains("aliyun") { return .qwen }
+        if url.contains("volces") || url.contains("doubao") || url.contains("ark.cn") { return .doubao }
+        return .deepseek
+    }
+}
+
+private struct DeepSeekModelOption: Identifiable, Hashable {
+    let id: String
+    let title: String
+    let blurb: String
+
+    static let catalog: [DeepSeekModelOption] = [
+        .init(id: "deepseek-chat", title: "DeepSeek Chat", blurb: "通用对话"),
+        .init(id: "deepseek-reasoner", title: "DeepSeek Reasoner", blurb: "深度推理"),
+    ]
+}
+
+private enum ThinkingIntensity: String, CaseIterable, Identifiable {
+    case low, medium, high
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .low: return "低"
+        case .medium: return "中"
+        case .high: return "高"
+        }
+    }
+
+    /// Maps UX "思考强度" onto the existing temperature field (no schema change).
+    var temperature: Double {
+        switch self {
+        case .low: return 0.0
+        case .medium: return 0.3
+        case .high: return 0.8
+        }
+    }
+
+    static func from(temperature: Double) -> ThinkingIntensity {
+        if temperature <= 0.15 { return .low }
+        if temperature >= 0.55 { return .high }
+        return .medium
+    }
+}
+
 struct ModelSettingsPane: View {
     @ObservedObject var model: AppModel
-    @State private var protocolName = "Chat Completions"
-    @State private var savedNote = "配置已同步"
+    @State private var selectedProvider: ModelProviderID = .deepseek
+    @State private var savedNote = "选择厂商后填写 Key 并保存"
     @State private var savedRoutes: [JSONValue] = []
-
-    private let protocols = ["Chat Completions", "Responses"]
 
     var body: some View {
         VStack(spacing: 0) {
-            SettingsHeader(title: "大模型设置", subtitle: "管理模型服务、连接与默认对话模型", model: model)
+            SettingsHeader(title: "大模型设置", subtitle: "先选厂商，再填该厂商需要的字段", model: model)
 
             ScrollView {
                 VStack(alignment: .leading, spacing: SettingsMetrics.cardSpacing) {
                     currentCard
-                    configuredCard
+                    providerGalleryCard
+                    if selectedProvider.isAvailable {
+                        deepseekFormCard
+                    } else {
+                        comingSoonCard
+                    }
                     routesCard
-                    connectionCard
                 }
                 .padding(.horizontal, SettingsMetrics.pagePadding)
                 .padding(.bottom, 20)
@@ -29,12 +129,243 @@ struct ModelSettingsPane: View {
 
             bottomBar
         }
-        .task { await reloadRoutes() }
+        .task {
+            selectedProvider = ModelProviderID.infer(from: model.settings.baseURL)
+            if selectedProvider == .deepseek {
+                applyDeepSeekDefaults(preserveModel: true)
+            }
+            await reloadRoutes()
+        }
+        .onChange(of: model.settings.baseURL) { newValue in
+            let inferred = ModelProviderID.infer(from: newValue)
+            if inferred != selectedProvider, inferred.isAvailable {
+                selectedProvider = inferred
+            }
+        }
     }
 
     private func reloadRoutes() async {
         savedRoutes = await model.listModelRoutes()
     }
+
+    // MARK: - Current
+
+    private var currentCard: some View {
+        HStack(alignment: .top, spacing: 12) {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("当前使用")
+                    .font(.system(size: SettingsMetrics.labelSize, weight: .medium))
+                    .foregroundStyle(Theme.textSecondary)
+                HStack(spacing: 8) {
+                    Image(systemName: "cpu")
+                        .font(.system(size: SettingsMetrics.cardTitleSize))
+                        .foregroundStyle(Theme.accent)
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(model.hasStoredConnection && !model.settings.model.isEmpty ? model.settings.model : "未配置")
+                            .font(.system(size: SettingsMetrics.cardTitleSize, weight: .semibold))
+                        Text(model.hasStoredConnection ? providerLabel : "尚未选择服务商")
+                            .font(.system(size: SettingsMetrics.cardSubtitleSize))
+                            .foregroundStyle(Theme.textSecondary)
+                    }
+                }
+                Text("保存后用于后续对话；连接是否可用以「检查」结果为准。")
+                    .font(.system(size: SettingsMetrics.cardSubtitleSize))
+                    .foregroundStyle(Theme.textSecondary.opacity(0.8))
+            }
+            Spacer()
+            Button {
+                Task { await model.testModel() }
+            } label: {
+                Text(model.isTestingModel ? "检查中…" : "检查当前配置")
+                    .font(.system(size: SettingsMetrics.cardSubtitleSize))
+                    .foregroundStyle(Theme.accent)
+            }
+            .buttonStyle(.pressable)
+            .disabled(model.isTestingModel || !model.hasStoredConnection)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .panel(padding: SettingsMetrics.cardPadding)
+    }
+
+    // MARK: - Provider gallery
+
+    private var providerGalleryCard: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("选择厂商")
+                .font(.system(size: SettingsMetrics.cardTitleSize, weight: .semibold))
+                .foregroundStyle(Theme.textPrimary)
+            Text("点选下方按钮；本版 DeepSeek 可完整配置，其它厂商先占位。")
+                .font(.system(size: SettingsMetrics.cardSubtitleSize))
+                .foregroundStyle(Theme.textSecondary)
+
+            LazyVGrid(
+                columns: [GridItem(.adaptive(minimum: 140), spacing: 10)],
+                spacing: 10
+            ) {
+                ForEach(ModelProviderID.allCases) { provider in
+                    ProviderChip(
+                        provider: provider,
+                        selected: selectedProvider == provider
+                    ) {
+                        selectProvider(provider)
+                    }
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .panel(padding: SettingsMetrics.cardPadding)
+    }
+
+    private func selectProvider(_ provider: ModelProviderID) {
+        selectedProvider = provider
+        if provider == .deepseek {
+            applyDeepSeekDefaults(preserveModel: false)
+            savedNote = "已选 DeepSeek，填写 API Key 后保存"
+        } else {
+            savedNote = "\(provider.title) 即将支持，本版请先用 DeepSeek"
+        }
+    }
+
+    private func applyDeepSeekDefaults(preserveModel: Bool) {
+        model.settings.baseURL = ModelProviderID.deepseek.defaultBaseURL
+        if model.settings.displayName.trimmingCharacters(in: .whitespaces).isEmpty
+            || model.settings.displayName == "自定义"
+            || !model.settings.displayName.lowercased().contains("deepseek") {
+            model.settings.displayName = "DeepSeek"
+        }
+        let known = Set(DeepSeekModelOption.catalog.map(\.id))
+        if !preserveModel || model.settings.model.isEmpty || !known.contains(model.settings.model) {
+            if !known.contains(model.settings.model) {
+                model.settings.model = DeepSeekModelOption.catalog[0].id
+            } else if model.settings.model.isEmpty {
+                model.settings.model = DeepSeekModelOption.catalog[0].id
+            }
+        }
+    }
+
+    // MARK: - DeepSeek form
+
+    private var deepseekFormCard: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(spacing: 8) {
+                Text("DeepSeek 连接")
+                    .font(.system(size: SettingsMetrics.cardTitleSize, weight: .semibold))
+                Text("Chat Completions")
+                    .font(.system(size: SettingsMetrics.microSize))
+                    .foregroundStyle(Theme.textSecondary)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(Color.white.opacity(0.06), in: Capsule())
+                Spacer()
+            }
+
+            // Base URL: fixed, not user-facing required field.
+            HStack(spacing: 8) {
+                Image(systemName: "link")
+                    .font(.system(size: SettingsMetrics.captionSize))
+                    .foregroundStyle(Theme.textSecondary)
+                Text(ModelProviderID.deepseek.defaultBaseURL)
+                    .font(.system(size: SettingsMetrics.cardSubtitleSize, design: .monospaced))
+                    .foregroundStyle(Theme.textSecondary)
+                Text("已预填")
+                    .font(.system(size: SettingsMetrics.microSize))
+                    .foregroundStyle(Theme.textSecondary.opacity(0.7))
+            }
+            .padding(10)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(Color.white.opacity(0.03), in: RoundedRectangle(cornerRadius: 8))
+            .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Theme.panelBorder, lineWidth: 0.7))
+
+            VStack(alignment: .leading, spacing: 6) {
+                HStack {
+                    Text("API Key")
+                        .font(.system(size: SettingsMetrics.labelSize))
+                        .foregroundStyle(Theme.textSecondary)
+                    Spacer()
+                    HStack(spacing: 4) {
+                        Image(systemName: model.storedAPIKey.isEmpty ? "circle" : "checkmark.circle")
+                            .font(.system(size: SettingsMetrics.captionSize))
+                        Text(model.storedAPIKey.isEmpty ? "未保存" : "已保存")
+                    }
+                    .font(.system(size: SettingsMetrics.captionSize))
+                    .foregroundStyle(Theme.textSecondary)
+                }
+                SecureField("输入新 Key 可替换，留空保持不变", text: $model.settings.apiKey)
+                    .textFieldStyle(.plain)
+                    .font(.system(size: SettingsMetrics.labelSize))
+                    .padding(9)
+                    .background(Color.white.opacity(0.04), in: RoundedRectangle(cornerRadius: 6))
+                    .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(Theme.panelBorder, lineWidth: 0.7))
+                Text("已保存的密钥不会回填。可在 platform.deepseek.com 创建 Key。")
+                    .font(.system(size: SettingsMetrics.captionSize))
+                    .foregroundStyle(Theme.textSecondary.opacity(0.7))
+            }
+
+            VStack(alignment: .leading, spacing: 8) {
+                Text("对话模型")
+                    .font(.system(size: SettingsMetrics.labelSize))
+                    .foregroundStyle(Theme.textSecondary)
+                HStack(spacing: 8) {
+                    ForEach(DeepSeekModelOption.catalog) { option in
+                        ModelPickChip(
+                            title: option.title,
+                            blurb: option.blurb,
+                            selected: model.settings.model == option.id
+                        ) {
+                            model.settings.model = option.id
+                        }
+                    }
+                }
+            }
+
+            VStack(alignment: .leading, spacing: 8) {
+                Text("思考强度")
+                    .font(.system(size: SettingsMetrics.labelSize))
+                    .foregroundStyle(Theme.textSecondary)
+                HStack(spacing: 8) {
+                    ForEach(ThinkingIntensity.allCases) { level in
+                        IntensityChip(
+                            label: level.label,
+                            selected: ThinkingIntensity.from(temperature: model.settings.temperature) == level
+                        ) {
+                            model.settings.temperature = level.temperature
+                        }
+                    }
+                }
+                Text("低更稳、高更发散；对应原先的采样温度，无需再调数字。")
+                    .font(.system(size: SettingsMetrics.captionSize))
+                    .foregroundStyle(Theme.textSecondary.opacity(0.7))
+            }
+
+            if let result = model.testResult {
+                Text(result)
+                    .font(.system(size: SettingsMetrics.captionSize))
+                    .foregroundStyle(result.hasPrefix("连接成功") ? Theme.success : Color.red.opacity(0.85))
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .panel(padding: SettingsMetrics.cardPadding)
+    }
+
+    private var comingSoonCard: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("\(selectedProvider.title) 即将支持")
+                .font(.system(size: SettingsMetrics.cardTitleSize, weight: .semibold))
+            Text("本版先把 DeepSeek 接完整。点上方 DeepSeek 即可配置 API Key 与模型。")
+                .font(.system(size: SettingsMetrics.cardSubtitleSize))
+                .foregroundStyle(Theme.textSecondary)
+            Button("改用 DeepSeek") {
+                selectProvider(.deepseek)
+            }
+            .buttonStyle(.pressable)
+            .font(.system(size: SettingsMetrics.cardSubtitleSize))
+            .foregroundStyle(Theme.accent)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .panel(padding: SettingsMetrics.cardPadding)
+    }
+
+    // MARK: - Routes
 
     private var routesCard: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -57,17 +388,23 @@ struct ModelSettingsPane: View {
             }
 
             if savedRoutes.isEmpty {
-                Text("保存连接后会出现在这里（写入 custom_model_routes）。")
+                Text("保存连接后会出现在这里。")
                     .font(.system(size: SettingsMetrics.cardSubtitleSize))
                     .foregroundStyle(Theme.textSecondary)
             } else {
                 ForEach(Array(savedRoutes.enumerated()), id: \.offset) { _, route in
                     ModelRouteRow(route: route) { title in
                         let record = route["record"]
-                        if let base = record?["baseURL"]?.stringValue { model.settings.baseURL = base }
+                        if let base = record?["baseURL"]?.stringValue {
+                            model.settings.baseURL = base
+                            selectedProvider = ModelProviderID.infer(from: base)
+                        }
                         if let m = record?["model"]?.stringValue { model.settings.model = m }
                         if let temp = record?["temperature"]?.doubleValue { model.settings.temperature = temp }
                         if let name = record?["displayName"]?.stringValue { model.settings.displayName = name }
+                        if selectedProvider == .deepseek {
+                            applyDeepSeekDefaults(preserveModel: true)
+                        }
                         savedNote = "已填入 \(title)，确认 Key 后点保存"
                     }
                 }
@@ -77,269 +414,7 @@ struct ModelSettingsPane: View {
         .panel(padding: SettingsMetrics.cardPadding)
     }
 
-    private var currentCard: some View {
-        HStack(alignment: .top, spacing: 12) {
-            VStack(alignment: .leading, spacing: 8) {
-                Text("当前使用")
-                    .font(.system(size: SettingsMetrics.labelSize, weight: .medium))
-                    .foregroundStyle(Theme.textSecondary)
-                HStack(spacing: 8) {
-                    Image(systemName: "cpu")
-                        .font(.system(size: SettingsMetrics.cardTitleSize))
-                        .foregroundStyle(Theme.accent)
-                    VStack(alignment: .leading, spacing: 1) {
-                        Text(model.hasStoredConnection && !model.settings.model.isEmpty ? model.settings.model : "未配置")
-                            .font(.system(size: SettingsMetrics.cardTitleSize, weight: .semibold))
-                        Text(model.hasStoredConnection ? providerLabel : "尚未选择服务商")
-                            .font(.system(size: SettingsMetrics.cardSubtitleSize))
-                            .foregroundStyle(Theme.textSecondary)
-                    }
-                }
-                Text("保存配置后用于后续模型调用；连接可用性以实际调用结果为准。")
-                    .font(.system(size: SettingsMetrics.cardSubtitleSize))
-                    .foregroundStyle(Theme.textSecondary.opacity(0.8))
-            }
-            Spacer()
-            Button {
-                Task { await model.testModel() }
-            } label: {
-                Text(model.isTestingModel ? "检查中…" : "检查当前配置")
-                    .font(.system(size: SettingsMetrics.cardSubtitleSize))
-                    .foregroundStyle(Theme.accent)
-            }
-            .buttonStyle(.pressable)
-            .disabled(model.isTestingModel || !model.hasStoredConnection)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .panel(padding: SettingsMetrics.cardPadding)
-    }
-
-    private var configuredCard: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 8) {
-                Text("已配置服务")
-                    .font(.system(size: SettingsMetrics.cardTitleSize, weight: .medium))
-                    .foregroundStyle(Theme.textPrimary)
-                Text(model.hasStoredConnection ? "1" : "0")
-                    .font(.system(size: SettingsMetrics.cardSubtitleSize))
-                    .foregroundStyle(Theme.textSecondary)
-                Spacer()
-                Button("新增连接") {
-                    model.settings = ModelConnection(
-                        baseURL: "https://api.deepseek.com/v1",
-                        model: "",
-                        apiKey: "",
-                        temperature: 0.3,
-                        displayName: ""
-                    )
-                    model.hasStoredConnection = false
-                    savedNote = "已清空表单，填写后点保存并使用"
-                }
-                    .buttonStyle(.pressable)
-                    .font(.system(size: SettingsMetrics.cardSubtitleSize))
-                    .foregroundStyle(Theme.accent)
-                Button {
-                    Task { await model.loadTools() }
-                } label: {
-                    Label("刷新", systemImage: "arrow.clockwise")
-                        .font(.system(size: SettingsMetrics.cardSubtitleSize))
-                }
-                .buttonStyle(.pressable)
-                .foregroundStyle(Theme.textSecondary)
-            }
-
-            if model.hasStoredConnection {
-                HStack(alignment: .top, spacing: 10) {
-                    VStack(alignment: .leading, spacing: 5) {
-                        HStack(spacing: 7) {
-                            Text(providerLabel)
-                                .font(.system(size: SettingsMetrics.bodySize, weight: .medium))
-                            Text("当前使用")
-                                .font(.system(size: SettingsMetrics.microSize))
-                                .foregroundStyle(Theme.accent)
-                                .padding(.horizontal, 5)
-                                .padding(.vertical, 1)
-                                .background(Theme.accent.opacity(0.12), in: Capsule())
-                        }
-                        Text(model.settings.baseURL)
-                            .font(.system(size: SettingsMetrics.cardSubtitleSize, design: .monospaced))
-                            .foregroundStyle(Theme.textSecondary)
-                        HStack(spacing: 5) {
-                            Image(systemName: "checkmark.shield")
-                                .font(.system(size: SettingsMetrics.captionSize))
-                            Text(model.storedAPIKey.isEmpty ? "凭据未配置" : "凭据已保存")
-                        }
-                        .font(.system(size: SettingsMetrics.captionSize))
-                        .foregroundStyle(Theme.textSecondary.opacity(0.85))
-                    }
-                    Spacer()
-                    Button("选择并使用模型") {
-                        Task {
-                            await model.refreshModels()
-                            if model.availableModels.isEmpty {
-                                savedNote = "未能拉取模型列表，请检查 Base URL / Key"
-                            } else if model.settings.model.isEmpty,
-                                      let first = model.availableModels.first {
-                                await model.switchModel(first)
-                                savedNote = "已选用 \(first)"
-                            } else if !model.settings.model.isEmpty {
-                                let ok = await model.saveSettings()
-                                savedNote = ok ? "已保存并使用 \(model.settings.model)" : "保存失败"
-                            }
-                        }
-                    }
-                        .buttonStyle(.pressable)
-                        .font(.system(size: SettingsMetrics.cardSubtitleSize))
-                        .foregroundStyle(Theme.textPrimary)
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 5)
-                        .background(Color.white.opacity(0.06), in: RoundedRectangle(cornerRadius: 6))
-                }
-                .padding(10)
-                .background(Color.white.opacity(0.025), in: RoundedRectangle(cornerRadius: 8))
-                .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Theme.panelBorder, lineWidth: 0.7))
-            } else {
-                RoundedRectangle(cornerRadius: 8)
-                    .strokeBorder(Theme.panelBorder, style: StrokeStyle(lineWidth: 0.8, dash: [3, 3]))
-                    .frame(height: 92)
-                    .overlay {
-                        VStack(spacing: 4) {
-                            Text("还没有配置模型连接")
-                                .font(.system(size: SettingsMetrics.cardSubtitleSize))
-                                .foregroundStyle(Theme.textPrimary)
-                            Text("填写下方 Base URL、API Key 和模型，然后保存并使用")
-                                .font(.system(size: SettingsMetrics.captionSize))
-                                .foregroundStyle(Theme.textSecondary)
-                        }
-                    }
-            }
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .panel(padding: SettingsMetrics.cardPadding)
-    }
-
-    private var connectionCard: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            Text("连接配置")
-                .font(.system(size: SettingsMetrics.cardTitleSize, weight: .semibold))
-                .foregroundStyle(Theme.textPrimary)
-
-            field("服务商") {
-                darkMenu(selection: providerSelection, options: ["DeepSeek", "MiMo", "OpenAI", "OpenAI 兼容", "Pollinations 测试", "自定义"], width: 200)
-            }
-
-            field("Base URL") {
-                TextField("https://api.deepseek.com/v1", text: $model.settings.baseURL)
-                    .textFieldStyle(.plain)
-                    .font(.system(size: SettingsMetrics.labelSize, design: .monospaced))
-                    .padding(9)
-                    .background(Color.white.opacity(0.04), in: RoundedRectangle(cornerRadius: 6))
-                    .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(Theme.panelBorder, lineWidth: 0.7))
-            }
-
-            HStack(alignment: .firstTextBaseline) {
-                Text("API Key")
-                    .font(.system(size: SettingsMetrics.labelSize))
-                    .foregroundStyle(Theme.textSecondary)
-                Spacer()
-                HStack(spacing: 4) {
-                    Image(systemName: "checkmark.circle")
-                        .font(.system(size: SettingsMetrics.captionSize))
-                    Text(model.storedAPIKey.isEmpty ? "未保存" : "已保存")
-                }
-                .font(.system(size: SettingsMetrics.captionSize))
-                .foregroundStyle(Theme.textSecondary)
-            }
-            SecureField("输入新 Key 可替换，留空保持不变", text: $model.settings.apiKey)
-                .textFieldStyle(.plain)
-                .font(.system(size: SettingsMetrics.labelSize))
-                .padding(9)
-                .background(Color.white.opacity(0.04), in: RoundedRectangle(cornerRadius: 6))
-                .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(Theme.panelBorder, lineWidth: 0.7))
-            Text("已保存的密钥不会回填到输入框。")
-                .font(.system(size: SettingsMetrics.captionSize))
-                .foregroundStyle(Theme.textSecondary.opacity(0.7))
-
-            HStack(alignment: .firstTextBaseline) {
-                Text("对话模型")
-                    .font(.system(size: SettingsMetrics.labelSize))
-                    .foregroundStyle(Theme.textSecondary)
-                Spacer()
-                HStack(spacing: 10) {
-                    Menu {
-                        if model.availableModels.isEmpty {
-                            Text("先点“刷新列表”")
-                        } else {
-                            ForEach(model.availableModels, id: \.self) { id in
-                                Button(id) { model.settings.model = id }
-                            }
-                        }
-                    } label: {
-                        Text("选择模型…")
-                            .font(.system(size: SettingsMetrics.captionSize))
-                            .foregroundStyle(Theme.accent)
-                    }
-                    .menuStyle(.borderlessButton)
-                    .fixedSize()
-
-                    Button("刷新列表") {
-                        Task { await model.refreshModels() }
-                    }
-                    .buttonStyle(.pressable)
-                    .font(.system(size: SettingsMetrics.captionSize))
-                    .foregroundStyle(Theme.textSecondary)
-                }
-            }
-            TextField("例如 deepseek-chat", text: $model.settings.model)
-                .textFieldStyle(.plain)
-                .font(.system(size: SettingsMetrics.bodySize, design: .monospaced))
-                .padding(8)
-                .background(Color.white.opacity(0.04), in: RoundedRectangle(cornerRadius: 6))
-                .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(Theme.panelBorder, lineWidth: 0.7))
-            Text("填写供应商 API 使用的完整模型 ID，保存后会保留在列表中。")
-                .font(.system(size: SettingsMetrics.captionSize))
-                .foregroundStyle(Theme.textSecondary.opacity(0.7))
-
-            field("连接名称（可选）") {
-                TextField("例如 DeepSeek 主连接", text: $model.settings.displayName)
-                    .textFieldStyle(.plain)
-                    .font(.system(size: SettingsMetrics.labelSize))
-                    .padding(9)
-                    .background(Color.white.opacity(0.04), in: RoundedRectangle(cornerRadius: 6))
-                    .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(Theme.panelBorder, lineWidth: 0.7))
-            }
-
-            field("温度") {
-                HStack(spacing: 12) {
-                    Slider(value: $model.settings.temperature, in: 0...1.5, step: 0.05)
-                        .tint(Theme.accent)
-                    Text(String(format: "%.2f", model.settings.temperature))
-                        .font(.system(size: SettingsMetrics.cardSubtitleSize, design: .monospaced))
-                        .foregroundStyle(Theme.textSecondary)
-                        .frame(width: 44, alignment: .trailing)
-                }
-            }
-
-            HStack(alignment: .firstTextBaseline) {
-                Text("API 协议")
-                    .font(.system(size: SettingsMetrics.labelSize))
-                    .foregroundStyle(Theme.textSecondary)
-                Spacer()
-            }
-            darkMenu(selection: $protocolName, options: protocols, width: 160)
-            Text(protocolName == "Responses" ? "Responses 协议尚未接入，当前请求仍走 Chat Completions。" : "当前请求走 OpenAI 兼容 Chat Completions。")
-                .font(.system(size: SettingsMetrics.captionSize))
-                .foregroundStyle(Theme.textSecondary.opacity(0.7))
-
-            if let result = model.testResult {
-                Text(result)
-                    .font(.system(size: SettingsMetrics.captionSize))
-                    .foregroundStyle(result.hasPrefix("连接成功") ? Theme.success : Color.red.opacity(0.85))
-            }
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .panel(padding: SettingsMetrics.cardPadding)
-    }
+    // MARK: - Bottom
 
     private var bottomBar: some View {
         HStack {
@@ -348,6 +423,11 @@ struct ModelSettingsPane: View {
                 .foregroundStyle(Theme.textSecondary)
             Spacer()
             Button {
+                guard selectedProvider.isAvailable else {
+                    savedNote = "请先选择已接入的厂商（DeepSeek）"
+                    return
+                }
+                applyDeepSeekDefaults(preserveModel: true)
                 savedNote = "保存中…"
                 Task {
                     let ok = await model.saveSettings()
@@ -360,9 +440,13 @@ struct ModelSettingsPane: View {
                     .foregroundStyle(Color.black.opacity(0.85))
                     .padding(.horizontal, 18)
                     .padding(.vertical, 8)
-                    .background(Theme.accent, in: RoundedRectangle(cornerRadius: 7))
+                    .background(
+                        selectedProvider.isAvailable ? Theme.accent : Theme.accent.opacity(0.35),
+                        in: RoundedRectangle(cornerRadius: 7)
+                    )
             }
             .buttonStyle(.pressable)
+            .disabled(!selectedProvider.isAvailable)
         }
         .padding(.horizontal, SettingsMetrics.pagePadding)
         .padding(.vertical, 12)
@@ -372,100 +456,114 @@ struct ModelSettingsPane: View {
         }
     }
 
-    private var providerSelection: Binding<String> {
-        Binding(
-            get: {
-                let url = model.settings.baseURL.lowercased()
-                if url.contains("deepseek") { return "DeepSeek" }
-                if url.contains("xiaomimimo") { return "MiMo" }
-                if url.contains("api.openai.com") { return "OpenAI" }
-                if url.contains("pollinations") { return "Pollinations 测试" }
-                if url.contains("your-api.example") { return "OpenAI 兼容" }
-                return "自定义"
-            },
-            set: { value in
-                switch value {
-                case "DeepSeek":
-                    model.settings.baseURL = "https://api.deepseek.com/v1"
-                    if model.settings.model.isEmpty { model.settings.model = "deepseek-chat" }
-                    if model.settings.displayName.isEmpty { model.settings.displayName = "DeepSeek" }
-                case "MiMo":
-                    model.settings.baseURL = "https://api.xiaomimimo.com/v1"
-                    if model.settings.model.isEmpty { model.settings.model = "mimo-v2.5" }
-                    if model.settings.displayName.isEmpty { model.settings.displayName = "MiMo" }
-                case "OpenAI":
-                    model.settings.baseURL = "https://api.openai.com/v1"
-                    if model.settings.model.isEmpty { model.settings.model = "gpt-4o-mini" }
-                    if model.settings.displayName.isEmpty { model.settings.displayName = "OpenAI" }
-                case "OpenAI 兼容":
-                    model.settings.baseURL = "https://your-api.example/v1"
-                    if model.settings.displayName.isEmpty { model.settings.displayName = "OpenAI 兼容" }
-                case "Pollinations 测试":
-                    model.settings.baseURL = "https://text.pollinations.ai/openai"
-                    model.settings.model = "openai"
-                    if model.settings.displayName.isEmpty { model.settings.displayName = "Pollinations" }
-                    if model.settings.apiKey.isEmpty && model.storedAPIKey.isEmpty {
-                        model.settings.apiKey = "anonymous"
-                    }
-                default:
-                    break
-                }
-            }
-        )
-    }
-
     private var providerLabel: String {
         if !model.settings.displayName.trimmingCharacters(in: .whitespaces).isEmpty {
             return model.settings.displayName
         }
-        let url = model.settings.baseURL.lowercased()
-        if url.contains("deepseek") { return "DeepSeek" }
-        if url.contains("xiaomimimo") { return "MiMo" }
-        if url.contains("openai.com") { return "OpenAI" }
-        if url.contains("pollinations") { return "Pollinations" }
-        if let host = URL(string: model.settings.baseURL)?.host, !host.isEmpty { return host }
-        return "自定义"
-    }
-
-    private func darkMenu(selection: Binding<String>, options: [String], width: CGFloat) -> some View {
-        Menu {
-            ForEach(options, id: \.self) { option in
-                Button(option) { selection.wrappedValue = option }
-            }
-        } label: {
-            HStack(spacing: 8) {
-                Text(selection.wrappedValue)
-                    .font(.system(size: SettingsMetrics.cardSubtitleSize))
-                    .foregroundStyle(Theme.textPrimary)
-                Spacer(minLength: 4)
-                Image(systemName: "chevron.up.chevron.down")
-                    .font(.system(size: SettingsMetrics.microSize))
-                    .foregroundStyle(Theme.textSecondary)
-            }
-            .padding(.horizontal, 9)
-            .padding(.vertical, 7)
-            .frame(width: width)
-            .background(Color.white.opacity(0.05), in: RoundedRectangle(cornerRadius: 6))
-            .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(Theme.panelBorder, lineWidth: 0.7))
-        }
-        .menuStyle(.borderlessButton)
-        .menuIndicator(.hidden)
-        .fixedSize()
-    }
-
-    private func field<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text(title)
-                .font(.system(size: SettingsMetrics.labelSize))
-                .foregroundStyle(Theme.textSecondary)
-            content()
-        }
+        return ModelProviderID.infer(from: model.settings.baseURL).title
     }
 }
 
-// MARK: - Tools settings
+// MARK: - Chips
 
+private struct ProviderChip: View {
+    let provider: ModelProviderID
+    let selected: Bool
+    let action: () -> Void
 
+    var body: some View {
+        Button(action: action) {
+            VStack(alignment: .leading, spacing: 6) {
+                HStack {
+                    Image(systemName: provider.systemImage)
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundStyle(selected ? Theme.accent : Theme.textSecondary)
+                    Spacer()
+                    if selected {
+                        Image(systemName: "checkmark.circle.fill")
+                            .font(.system(size: 12))
+                            .foregroundStyle(Theme.accent)
+                    }
+                }
+                Text(provider.title)
+                    .font(.system(size: SettingsMetrics.bodySize, weight: .semibold))
+                    .foregroundStyle(Theme.textPrimary)
+                Text(provider.subtitle)
+                    .font(.system(size: SettingsMetrics.captionSize))
+                    .foregroundStyle(provider.isAvailable ? Theme.accent.opacity(0.9) : Theme.textSecondary.opacity(0.75))
+            }
+            .padding(12)
+            .frame(maxWidth: .infinity, minHeight: 78, alignment: .leading)
+            .background(
+                selected ? Theme.accent.opacity(0.10) : Color.white.opacity(0.03),
+                in: RoundedRectangle(cornerRadius: 10, style: .continuous)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .strokeBorder(selected ? Theme.accent.opacity(0.55) : Theme.panelBorder, lineWidth: selected ? 1.2 : 0.7)
+            )
+            .opacity(provider.isAvailable || selected ? 1 : 0.72)
+        }
+        .buttonStyle(.pressable)
+    }
+}
+
+private struct ModelPickChip: View {
+    let title: String
+    let blurb: String
+    let selected: Bool
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            VStack(alignment: .leading, spacing: 3) {
+                Text(title)
+                    .font(.system(size: SettingsMetrics.bodySize, weight: .medium))
+                    .foregroundStyle(Theme.textPrimary)
+                Text(blurb)
+                    .font(.system(size: SettingsMetrics.captionSize))
+                    .foregroundStyle(Theme.textSecondary)
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 10)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                selected ? Theme.accent.opacity(0.12) : Color.white.opacity(0.04),
+                in: RoundedRectangle(cornerRadius: 8)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 8)
+                    .strokeBorder(selected ? Theme.accent.opacity(0.5) : Theme.panelBorder, lineWidth: 0.8)
+            )
+        }
+        .buttonStyle(.pressable)
+    }
+}
+
+private struct IntensityChip: View {
+    let label: String
+    let selected: Bool
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Text(label)
+                .font(.system(size: SettingsMetrics.bodySize, weight: .medium))
+                .foregroundStyle(selected ? Color.black.opacity(0.85) : Theme.textPrimary)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 8)
+                .background(
+                    selected ? Theme.accent : Color.white.opacity(0.04),
+                    in: RoundedRectangle(cornerRadius: 8)
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8)
+                        .strokeBorder(selected ? Color.clear : Theme.panelBorder, lineWidth: 0.7)
+                )
+        }
+        .buttonStyle(.pressable)
+    }
+}
 
 private struct ModelRouteRow: View {
     let route: JSONValue
