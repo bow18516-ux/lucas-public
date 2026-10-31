@@ -139,6 +139,16 @@ cat > "$CONTENTS/Info.plist" <<PLIST
     <string>${BUILD_NUMBER}</string>
     <key>LSMinimumSystemVersion</key>
     <string>13.0</string>
+    <key>CFBundleDevelopmentRegion</key>
+    <string>zh-Hans</string>
+    <key>CFBundleAllowMixedLocalizations</key>
+    <true/>
+    <key>CFBundleLocalizations</key>
+    <array>
+        <string>zh-Hans</string>
+        <string>zh_CN</string>
+        <string>en</string>
+    </array>
     <key>NSHighResolutionCapable</key>
     <true/>
     <key>NSPrincipalClass</key>
@@ -172,6 +182,25 @@ cat > "$CONTENTS/Info.plist" <<PLIST
 </dict>
 </plist>
 PLIST
+
+# Host app must declare Chinese localizations, otherwise Bundle.main
+# prefers "en" and Sparkle.framework (framework preferredLocalizations
+# follow the main bundle) stays English even when zh_CN.lproj exists.
+mkdir -p "$CONTENTS/Resources/zh-Hans.lproj" "$CONTENTS/Resources/zh_CN.lproj" "$CONTENTS/Resources/en.lproj"
+cat > "$CONTENTS/Resources/zh-Hans.lproj/InfoPlist.strings" <<'STRINGS'
+CFBundleDisplayName = "Lucas Agent";
+CFBundleName = "Lucas Agent";
+STRINGS
+cp "$CONTENTS/Resources/zh-Hans.lproj/InfoPlist.strings" "$CONTENTS/Resources/zh_CN.lproj/InfoPlist.strings"
+# Modern language id zh-Hans → Sparkle still ships zh_CN; alias so both match.
+SPARKLE_RES="$CONTENTS/Frameworks/Sparkle.framework/Versions/B/Resources"
+if [ -d "$SPARKLE_RES/zh_CN.lproj" ] && [ ! -e "$SPARKLE_RES/zh-Hans.lproj" ]; then
+    ln -s zh_CN.lproj "$SPARKLE_RES/zh-Hans.lproj"
+fi
+UPDATER_RES="$CONTENTS/Frameworks/Sparkle.framework/Versions/B/Updater.app/Contents/Resources"
+if [ -d "$UPDATER_RES/zh_CN.lproj" ] && [ ! -e "$UPDATER_RES/zh-Hans.lproj" ]; then
+    ln -s zh_CN.lproj "$UPDATER_RES/zh-Hans.lproj"
+fi
 
 # Local HTTP feeds are only for development; production uses HTTPS.
 if [[ "$FEED_URL" == http://* ]]; then
