@@ -21,7 +21,9 @@ struct UpdatesSettingsPane: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: SettingsMetrics.cardSpacing) {
                     currentCard
-                    if let latest = updates.latestVersion {
+                    // Only show when a newer build exists. Hiding the card when
+                    // already up to date avoids a fake "最新版本 0.5.3" row.
+                    if updates.updateAvailable, let latest = updates.latestVersion {
                         latestCard(latest)
                     }
                     automaticCard

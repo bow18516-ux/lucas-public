@@ -86,10 +86,23 @@ final class UpdateService: ObservableObject {
         lastCheck = controller.updater.lastUpdateCheckDate
     }
 
+    /// Prefer Sparkle's runtime override (UserDefaults `SUFeedURL`) so the
+    /// settings page parses the same feed the updater checks — e.g. after a
+    /// drill left defaults on 127.0.0.1 while Info.plist still points elsewhere.
+    private var resolvedFeedURL: String {
+        if let override = UserDefaults.standard.string(forKey: "SUFeedURL")?
+            .trimmingCharacters(in: .whitespacesAndNewlines),
+           !override.isEmpty {
+            return override
+        }
+        return feedURL
+    }
+
     /// Reads the appcast directly so the settings page can show the latest
     /// version and a badge without opening Sparkle's update dialog.
     func refreshFeed() async {
-        guard isAvailable, !isPlaceholderFeed, let url = URL(string: feedURL) else { return }
+        let urlString = resolvedFeedURL
+        guard isAvailable, !isPlaceholderFeed, let url = URL(string: urlString), !urlString.isEmpty else { return }
         isCheckingFeed = true
         defer { isCheckingFeed = false }
         do {
@@ -98,20 +111,11 @@ final class UpdateService: ObservableObject {
             let (data, _) = try await URLSession.shared.data(for: request)
             let xml = String(decoding: data, as: UTF8.self)
 
-            let builds = Self.matches(#"<sparkle:version>(\d+)</sparkle:version>"#, in: xml).compactMap(Int.init)
-            let shorts = Self.matches(#"<sparkle:shortVersionString>([^<]+)</sparkle:shortVersionString>"#, in: xml)
-            guard let newest = builds.max() else { return }
+            guard let newest = Self.newestFeedItem(in: xml) else { return }
 
-            latestVersion = shorts.last ?? String(newest)
-            updateAvailable = newest > (Int(build) ?? 0)
-
-            if let notesRange = xml.range(of: #"<description>[^<]*<!\[CDATA\[(.*?)\]\]>[^<]*</description>"#, options: .regularExpression) {
-                let raw = String(xml[notesRange])
-                if let start = raw.range(of: "<![CDATA[")?.upperBound,
-                   let end = raw.range(of: "]]>", range: start..<raw.endIndex)?.lowerBound {
-                    releaseNotes = Self.plainText(from: String(raw[start..<end]))
-                }
-            }
+            latestVersion = newest.shortVersion ?? String(newest.build)
+            updateAvailable = newest.build > (Int(build) ?? 0)
+            releaseNotes = newest.notes
         } catch {
             // Feed may not exist yet; keep the last known values.
         }
@@ -135,6 +139,45 @@ final class UpdateService: ObservableObject {
     private static func isPlaceholder(_ url: String) -> Bool {
         let lowered = url.lowercased()
         return lowered.contains("example.com") || lowered.contains("localhost") && lowered.contains("example")
+    }
+
+    private struct FeedItem {
+        let build: Int
+        let shortVersion: String?
+        let notes: String?
+    }
+
+    /// Pick the `<item>` with the highest `sparkle:version` (build). Appcasts
+    /// usually list newest first, so taking `shorts.last` wrongly yields the
+    /// oldest marketing version (e.g. 0.5.3 while newest build is 0.5.5).
+    private static func newestFeedItem(in xml: String) -> FeedItem? {
+        let bodies = matches(#"<item>(.*?)</item>"#, in: xml)
+        var best: FeedItem?
+        for body in bodies {
+            guard let build = matches(#"<sparkle:version>(\d+)</sparkle:version>"#, in: body)
+                .compactMap(Int.init)
+                .first else { continue }
+            let short = matches(
+                #"<sparkle:shortVersionString>([^<]+)</sparkle:shortVersionString>"#,
+                in: body
+            ).first
+            var notes: String?
+            if let notesRange = body.range(
+                of: #"<description>[^<]*<!\[CDATA\[(.*?)\]\]>[^<]*</description>"#,
+                options: .regularExpression
+            ) {
+                let raw = String(body[notesRange])
+                if let start = raw.range(of: "<![CDATA[")?.upperBound,
+                   let end = raw.range(of: "]]>", range: start..<raw.endIndex)?.lowerBound {
+                    let plain = plainText(from: String(raw[start..<end]))
+                    notes = plain.isEmpty ? nil : plain
+                }
+            }
+            if best == nil || build > best!.build {
+                best = FeedItem(build: build, shortVersion: short, notes: notes)
+            }
+        }
+        return best
     }
 
     private static func plainText(from html: String) -> String {
