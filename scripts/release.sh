@@ -154,11 +154,12 @@ fi
 
 if [ -n "${LUCAS_DEPLOY_TARGET:-}" ]; then
     echo "uploading to $LUCAS_DEPLOY_TARGET"
-    KNOWN_HOSTS="${LUCAS_KNOWN_HOSTS:-$HOME/Library/Application Support/Lucas/known_hosts}"
+    KNOWN_HOSTS="${LUCAS_KNOWN_HOSTS:-$HOME/.config/lucas-release/known_hosts}"
     mkdir -p "$(dirname "$KNOWN_HOSTS")"
-    RSYNC_SSH="ssh -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=$KNOWN_HOSTS"
+    # Quote paths so spaces in UserKnownHostsFile cannot split ssh argv.
+    RSYNC_SSH="ssh -4 -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=$(printf %q "$KNOWN_HOSTS")"
     if [ -n "${LUCAS_SSH_KEY:-}" ]; then
-        RSYNC_SSH="$RSYNC_SSH -i $LUCAS_SSH_KEY"
+        RSYNC_SSH="$RSYNC_SSH -i $(printf %q "$LUCAS_SSH_KEY")"
     fi
     rsync -av -e "$RSYNC_SSH" "$UPDATES/" "$LUCAS_DEPLOY_TARGET/"
     echo "deployed"
