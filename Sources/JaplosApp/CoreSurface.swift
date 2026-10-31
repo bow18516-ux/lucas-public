@@ -509,6 +509,7 @@ struct CenterColumn: View {
     @Binding var showTools: Bool
     @ObservedObject var voice: SpeechOutput
     @StateObject private var speech = SpeechInput()
+    @State private var ptt = PushToTalkMonitor()
 
     /// ImageRenderer cannot rasterise ScrollView content, so snapshots render
     /// the same content without the scroll container.
@@ -544,6 +545,8 @@ struct CenterColumn: View {
                 .padding(.bottom, 4)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .onAppear(perform: installPushToTalk)
+        .onDisappear { ptt.uninstall() }
         .onChange(of: speech.errorText) { value in
             if let value {
                 model.errorText = value
@@ -697,7 +700,7 @@ struct CenterColumn: View {
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
             } else {
-                TextField("输入指令，或点麦克风说话", text: $draft)
+                TextField("输入指令，或按住空格说话", text: $draft)
                     .textFieldStyle(.plain)
                     .font(.system(size: 13))
                     .foregroundStyle(Theme.textPrimary)
@@ -713,7 +716,7 @@ struct CenterColumn: View {
                     .foregroundStyle(speech.isRecording ? Color.red : Theme.textSecondary.opacity(0.8))
             }
             .buttonStyle(.pressable)
-            .help(speech.isRecording ? "停止并发送" : "语音输入")
+            .help(speech.isRecording ? "停止并发送" : "语音输入（也可按住空格说话，松开发送）")
 
             Button {
                 voice.enabled.toggle()
@@ -780,14 +783,35 @@ struct CenterColumn: View {
 
     private func toggleVoice() {
         if speech.isRecording {
-            speech.stop()
-            let text = speech.transcript.trimmingCharacters(in: .whitespacesAndNewlines)
-            speech.transcript = ""
-            if !text.isEmpty {
+            finishVoiceAndSend()
+        } else {
+            startVoice()
+        }
+    }
+
+    private func startVoice() {
+        voice.stop() // barge-in: stop reading the last reply
+        speech.start(language: voice.languageCode, deviceUID: voice.inputDeviceUID)
+    }
+
+    private func finishVoiceAndSend() {
+        Task { @MainActor in
+            let text = await speech.finish()
+            if !text.isEmpty, !model.isSending {
                 model.send(text)
             }
-        } else {
-            speech.start(language: voice.languageCode, deviceUID: voice.inputDeviceUID)
         }
+    }
+
+    private func installPushToTalk() {
+        guard !isSnapshot else { return }
+        ptt.composerText = { draft }
+        ptt.overlayPresented = { [model] in
+            model.settingsPresented || model.onboardingPresented || showTools || model.pendingApproval != nil
+        }
+        ptt.onPress = { startVoice() }
+        ptt.onRelease = { finishVoiceAndSend() }
+        ptt.onCancel = { speech.cancel() }
+        ptt.install()
     }
 }

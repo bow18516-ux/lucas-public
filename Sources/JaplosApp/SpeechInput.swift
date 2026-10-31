@@ -14,6 +14,10 @@ final class SpeechInput: ObservableObject {
     private var request: SFSpeechAudioBufferRecognitionRequest?
     private var task: SFSpeechRecognitionTask?
     private let engine = AVAudioEngine()
+    /// False once the user released before the recognizer was ready.
+    private var wantsRecording = false
+    private var finalWaiter: CheckedContinuation<Void, Never>?
+    private var gotFinal = false
 
     func toggle() {
         if isRecording {
@@ -26,6 +30,8 @@ final class SpeechInput: ObservableObject {
     func start(language: String = "zh-CN", deviceUID: String = "") {
         guard !isRecording else { return }
         transcript = ""
+        wantsRecording = true
+        gotFinal = false
         SFSpeechRecognizer.requestAuthorization { [weak self] status in
             Task { @MainActor in
                 guard let self else { return }
@@ -52,6 +58,7 @@ final class SpeechInput: ObservableObject {
     }
 
     private func begin(language: String, deviceUID: String) {
+        guard wantsRecording else { return }
         let recognizer = SFSpeechRecognizer(locale: Locale(identifier: language))
         self.recognizer = recognizer
         guard let recognizer, recognizer.isAvailable else {
@@ -103,7 +110,9 @@ final class SpeechInput: ObservableObject {
                 guard let self else { return }
                 if let result {
                     self.transcript = result.bestTranscription.formattedString
+                    if result.isFinal { self.resolveFinal() }
                 }
+                if error != nil { self.resolveFinal() }
                 if error != nil, !self.transcript.isEmpty {
                     self.stop()
                 }
@@ -111,7 +120,51 @@ final class SpeechInput: ObservableObject {
         }
     }
 
+    private func resolveFinal() {
+        gotFinal = true
+        finalWaiter?.resume()
+        finalWaiter = nil
+    }
+
+    /// Push-to-talk release: stop the mic, let the recognizer deliver its
+    /// final result (up to `timeout`), then return the transcript.
+    func finish(timeout: TimeInterval = 1.0) async -> String {
+        wantsRecording = false
+        guard isRecording else {
+            let text = transcript
+            transcript = ""
+            return text.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        engine.stop()
+        engine.inputNode.removeTap(onBus: 0)
+        request?.endAudio()
+        if !gotFinal {
+            await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+                finalWaiter = continuation
+                DispatchQueue.main.asyncAfter(deadline: .now() + timeout) { [weak self] in
+                    self?.resolveFinal()
+                }
+            }
+        }
+        task?.cancel()
+        task = nil
+        request = nil
+        isRecording = false
+        let text = transcript.trimmingCharacters(in: .whitespacesAndNewlines)
+        transcript = ""
+        return text
+    }
+
+    /// Abandon a recording without sending (window lost focus, etc).
+    func cancel() {
+        wantsRecording = false
+        stop()
+        transcript = ""
+        resolveFinal()
+    }
+
     func stop() {
+        wantsRecording = false
         guard isRecording else { return }
         engine.stop()
         engine.inputNode.removeTap(onBus: 0)

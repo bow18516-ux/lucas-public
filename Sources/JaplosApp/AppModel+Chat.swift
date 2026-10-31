@@ -21,6 +21,7 @@ extension AppModel {
     func stop() {
         sendTask?.cancel()
         sendTask = nil
+        voice.stop()
         currentStream = nil
         pendingApproval = nil
         isSending = false
@@ -41,7 +42,7 @@ extension AppModel {
 
         isSending = true
         errorText = nil
-        voice.stop()
+        voice.beginReply()
         messages.append(Message(role: "user", text: trimmed))
         messages.append(Message(role: "assistant", text: ""))
         let index = messages.count - 1
@@ -53,7 +54,9 @@ extension AppModel {
             for try await event in stream.events {
                 switch event["event"]?.stringValue {
                 case "delta":
-                    messages[index].text += event["text"]?.stringValue ?? ""
+                    let delta = event["text"]?.stringValue ?? ""
+                    messages[index].text += delta
+                    voice.feedReply(delta)
                 case "tool":
                     messages[index].steps.append(ToolStep(
                         name: event["name"]?.stringValue ?? "tool",
@@ -78,9 +81,7 @@ extension AppModel {
                     if let finalText = event["text"]?.stringValue, !finalText.isEmpty {
                         messages[index].text = finalText
                     }
-                    if let finalText = event["text"]?.stringValue, !finalText.isEmpty {
-                        voice.speak(finalText)
-                    }
+                    voice.finishReply(event["text"]?.stringValue ?? "")
                     if let stepArray = event["steps"]?.arrayValue, !stepArray.isEmpty {
                         messages[index].steps = stepArray.map { step in
                             let error = step["error"]?.stringValue ?? ""
@@ -112,6 +113,7 @@ extension AppModel {
             }
 
             if Task.isCancelled {
+                voice.stop()
                 if messages[index].text.isEmpty {
                     messages[index].text = "（已停止）"
                 } else {
@@ -120,8 +122,10 @@ extension AppModel {
             } else if !finished && messages[index].text.isEmpty {
                 messages[index].text = "（内核提前结束了响应）"
             }
+            if !finished { voice.finishReply("") }
             await loadSessions()
         } catch is CancellationError {
+            voice.stop()
             if messages[index].text.isEmpty {
                 messages[index].text = "（已停止）"
             } else {

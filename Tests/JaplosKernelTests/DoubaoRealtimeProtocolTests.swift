@@ -164,4 +164,15 @@ final class DoubaoRealtimeProtocolTests: XCTestCase {
         XCTAssertTrue(DoubaoRealtimeProtocol.speakerLabel(for: "zh_male_yunzhou_jupiter_bigtts").contains("男"))
         XCTAssertTrue(DoubaoRealtimeProtocol.speakerLabel(for: DoubaoRealtimeProtocol.defaultSpeaker).contains("女"))
     }
+
+    func testSpeechProviderPolicyMigratesLegacy() {
+        XCTAssertEqual(SpeechProviderPolicy.resolve("volcengine", hasDoubaoKey: false), "system")
+        XCTAssertEqual(SpeechProviderPolicy.resolve("volcengine", hasDoubaoKey: true), "doubao-realtime")
+        XCTAssertEqual(SpeechProviderPolicy.resolve("openai-compatible", hasDoubaoKey: false), "system")
+        XCTAssertEqual(SpeechProviderPolicy.resolve(nil, hasDoubaoKey: true), "doubao-realtime")
+        XCTAssertEqual(SpeechProviderPolicy.resolve(nil, hasDoubaoKey: false), "system")
+        XCTAssertEqual(SpeechProviderPolicy.resolve("system", hasDoubaoKey: true), "system")
+        XCTAssertEqual(SpeechProviderPolicy.resolve("doubao-realtime", hasDoubaoKey: false), "doubao-realtime")
+        XCTAssertTrue(SpeechProviderPolicy.doubaoApplyURL.hasPrefix("https://console.volcengine.com/"))
+    }
 }

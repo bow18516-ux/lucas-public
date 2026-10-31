@@ -112,45 +112,172 @@ final class SpeechOutput: NSObject, ObservableObject {
         lastCloudError = message
     }
 
-    func speak(_ text: String) {
-        guard enabled else { return }
-        let clean = Self.speakable(text)
-        guard !clean.isEmpty else { return }
-        stop()
+    // MARK: Streaming reply playback
+    //
+    // Root cause of the ~5 s lag (≤0.5.10): speech only started on `done`,
+    // and the Doubao path opened a fresh WebSocket and buffered the WHOLE
+    // clip before returning it. Now replies are cut into sentences while the
+    // model streams; sentence N+1 synthesises while sentence N plays.
 
-        switch provider {
-        case .system:
-            speakSystem(clean)
-        case .doubaoRealtime:
-            speakTask = Task { [weak self] in
-                guard let self else { return }
-                let label = "doubao-realtime"
-                if let cloud = self.cloudSynthesize, let (data, _) = await cloud(clean) {
-                    await MainActor.run {
-                        if Task.isCancelled { return }
-                        if self.playCloudAudio(data) { return }
-                        AppLog.write("speech: cloud audio play failed → system fallback")
-                        self.noteCloudError("cloud_audio_play_failed")
-                        self.speakSystem(clean)
-                    }
-                } else {
-                    await MainActor.run {
-                        if Task.isCancelled { return }
-                        let reason = self.lastCloudError ?? "unavailable"
-                        AppLog.write("speech: \(label) unavailable (\(reason)) → system fallback")
-                        self.speakSystem(clean)
-                    }
+    private struct PendingClip {
+        let text: String
+        var job: Task<Data?, Never>?
+    }
+
+    private var segmenter = SpeechSegmenter()
+    private var replyActive = false
+    private var replySawDelta = false
+    private var clips: [PendingClip] = []
+    private var clipPlaying = false
+    private var playbackTask: Task<Void, Never>?
+    private var generation = 0
+    private var playContinuation: CheckedContinuation<Bool, Never>?
+    private var systemContinuation: CheckedContinuation<Void, Never>?
+    private var replyStartedAt: Date?
+    private var replyDoneAt: Date?
+    private var firstAudioLogged = false
+    private static let prefetchWindow = 2
+
+    /// Call when a new assistant reply starts streaming.
+    func beginReply() {
+        stop()
+        guard enabled else { return }
+        segmenter = SpeechSegmenter()
+        replyActive = true
+        replySawDelta = false
+        replyStartedAt = Date()
+        replyDoneAt = nil
+        firstAudioLogged = false
+    }
+
+    func feedReply(_ delta: String) {
+        guard replyActive, enabled, !delta.isEmpty else { return }
+        replySawDelta = true
+        enqueue(segmenter.append(delta))
+    }
+
+    /// `finalText` is spoken only if no deltas arrived (non-streaming turn).
+    func finishReply(_ finalText: String) {
+        guard replyActive else { return }
+        replyDoneAt = Date()
+        if !replySawDelta, enabled { enqueue(segmenter.append(finalText)) }
+        if enabled { enqueue(segmenter.finish()) }
+        replyActive = false
+        settleIfIdle()
+    }
+
+    func speak(_ text: String) {
+        beginReply()
+        guard replyActive else { return }
+        finishReply(text)
+    }
+
+    private func enqueue(_ segments: [String]) {
+        guard !segments.isEmpty else { return }
+        for segment in segments where !segment.isEmpty {
+            clips.append(PendingClip(text: segment, job: nil))
+        }
+        pump()
+    }
+
+    private func pump() {
+        if provider == .doubaoRealtime {
+            for index in clips.indices.prefix(Self.prefetchWindow) where clips[index].job == nil {
+                let text = clips[index].text
+                clips[index].job = Task { [weak self] in
+                    guard let self, let cloud = self.cloudSynthesize else { return nil }
+                    return await cloud(text)?.0
                 }
             }
+        }
+        guard !clipPlaying, !clips.isEmpty else { return }
+        clipPlaying = true
+        let clip = clips.removeFirst()
+        let gen = generation
+        pump()
+        playbackTask = Task { [weak self] in
+            guard let self else { return }
+            var played = false
+            if let job = clip.job, let data = await job.value, gen == self.generation, !Task.isCancelled {
+                played = await self.playAndWait(data)
+                if !played, gen == self.generation, self.provider == .doubaoRealtime, self.lastCloudError == nil {
+                    self.noteCloudError("cloud_audio_play_failed")
+                }
+            }
+            guard gen == self.generation, !Task.isCancelled else { return }
+            if !played {
+                if self.provider == .doubaoRealtime {
+                    AppLog.write("speech: doubao-realtime unavailable (\(self.lastCloudError ?? "unavailable")) → system fallback")
+                }
+                await self.speakSystemAndWait(clip.text)
+            }
+            guard gen == self.generation else { return }
+            self.clipPlaying = false
+            self.pump()
+            self.settleIfIdle()
+        }
+    }
+
+    private func settleIfIdle() {
+        guard !replyActive, !clipPlaying, clips.isEmpty, isSpeaking else { return }
+        isSpeaking = false
+        onSpeakingChanged?(false)
+    }
+
+    private func noteAudioStarted() {
+        if !isSpeaking {
+            isSpeaking = true
+            onSpeakingChanged?(true)
+        }
+        guard !firstAudioLogged, let start = replyStartedAt else { return }
+        firstAudioLogged = true
+        let now = Date()
+        let sinceStart = Int(now.timeIntervalSince(start) * 1000)
+        let sinceDone = replyDoneAt.map { "\(Int(now.timeIntervalSince($0) * 1000))ms after done" } ?? "before done"
+        AppLog.write("speech: first audio \(provider.rawValue) +\(sinceStart)ms from reply start (\(sinceDone))")
+    }
+
+    private func playAndWait(_ data: Data) async -> Bool {
+        let player: AVAudioPlayer
+        do {
+            player = try AVAudioPlayer(data: data)
+        } catch {
+            lastCloudError = String(describing: error)
+            return false
+        }
+        player.delegate = self
+        player.prepareToPlay()
+        audioPlayer = player
+        guard player.play() else { return false }
+        noteAudioStarted()
+        return await withCheckedContinuation { continuation in
+            playContinuation = continuation
+        }
+    }
+
+    private func speakSystemAndWait(_ text: String) async {
+        speakSystem(text)
+        noteAudioStarted()
+        await withCheckedContinuation { continuation in
+            systemContinuation = continuation
         }
     }
 
     func stop() {
-        speakTask?.cancel()
-        speakTask = nil
+        generation += 1
+        replyActive = false
+        for clip in clips { clip.job?.cancel() }
+        clips.removeAll()
+        clipPlaying = false
+        playbackTask?.cancel()
+        playbackTask = nil
         synthesizer.stopSpeaking(at: .immediate)
         audioPlayer?.stop()
         audioPlayer = nil
+        playContinuation?.resume(returning: false)
+        playContinuation = nil
+        systemContinuation?.resume()
+        systemContinuation = nil
         if isSpeaking {
             isSpeaking = false
             onSpeakingChanged?(false)
@@ -167,23 +294,6 @@ final class SpeechOutput: NSObject, ObservableObject {
         utterance.rate = Float(min(max(rate, 0.35), 0.65))
         utterance.pitchMultiplier = Float(min(max(pitch, 0.5), 2.0))
         synthesizer.speak(utterance)
-    }
-
-    @discardableResult
-    private func playCloudAudio(_ data: Data) -> Bool {
-        do {
-            let player = try AVAudioPlayer(data: data)
-            player.delegate = self
-            player.prepareToPlay()
-            audioPlayer = player
-            guard player.play() else { return false }
-            isSpeaking = true
-            onSpeakingChanged?(true)
-            return true
-        } catch {
-            lastCloudError = String(describing: error)
-            return false
-        }
     }
 
     /// Speech should not read code fences, markdown markers or long URLs.
@@ -215,24 +325,19 @@ final class SpeechOutput: NSObject, ObservableObject {
 }
 
 extension SpeechOutput: AVSpeechSynthesizerDelegate {
-    nonisolated func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didStart utterance: AVSpeechUtterance) {
-        Task { @MainActor in
-            self.isSpeaking = true
-            self.onSpeakingChanged?(true)
-        }
-    }
+    nonisolated func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didStart utterance: AVSpeechUtterance) {}
 
     nonisolated func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didFinish utterance: AVSpeechUtterance) {
         Task { @MainActor in
-            self.isSpeaking = false
-            self.onSpeakingChanged?(false)
+            self.systemContinuation?.resume()
+            self.systemContinuation = nil
         }
     }
 
     nonisolated func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didCancel utterance: AVSpeechUtterance) {
         Task { @MainActor in
-            self.isSpeaking = false
-            self.onSpeakingChanged?(false)
+            self.systemContinuation?.resume()
+            self.systemContinuation = nil
         }
     }
 }
@@ -240,9 +345,10 @@ extension SpeechOutput: AVSpeechSynthesizerDelegate {
 extension SpeechOutput: AVAudioPlayerDelegate {
     nonisolated func audioPlayerDidFinishPlaying(_ player: AVAudioPlayer, successfully flag: Bool) {
         Task { @MainActor in
-            self.isSpeaking = false
-            self.onSpeakingChanged?(false)
+            guard self.audioPlayer === player else { return }
             self.audioPlayer = nil
+            self.playContinuation?.resume(returning: true)
+            self.playContinuation = nil
         }
     }
 }
