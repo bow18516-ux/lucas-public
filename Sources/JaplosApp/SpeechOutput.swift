@@ -5,24 +5,20 @@ import JaplosProtocol
 /// Text-to-speech for assistant replies.
 /// Default provider is system `AVSpeechSynthesizer`. Preferred cloud path is
 /// `doubao-realtime` (OpenSpeech realtime dialogue, user-supplied Key only).
-/// Legacy `volcengine` HTTP TTS (AppID+Token) remains available but is not
-/// the primary product path. Any cloud failure falls back to system.
+/// Only two providers exist (0.5.10+); legacy ids migrate via
+/// `SpeechProviderPolicy`. Any cloud failure falls back to system.
 @MainActor
 final class SpeechOutput: NSObject, ObservableObject {
     enum Provider: String, CaseIterable, Identifiable {
         case system
         case doubaoRealtime = "doubao-realtime"
-        case volcengine
-        case openaiCompatible = "openai-compatible"
 
         var id: String { rawValue }
 
         var label: String {
             switch self {
-            case .system: return "系统语音 · Apple"
-            case .doubaoRealtime: return "豆包 realtime（推荐）"
-            case .volcengine: return "火山 HTTP TTS（旧）"
-            case .openaiCompatible: return "OpenAI 兼容（占位）"
+            case .system: return "系统语音（苹果）"
+            case .doubaoRealtime: return "豆包实时语音（推荐）"
             }
         }
     }
@@ -49,16 +45,6 @@ final class SpeechOutput: NSObject, ObservableObject {
     @Published var inputDeviceUID: String {
         didSet { defaults.set(inputDeviceUID, forKey: Keys.input) }
     }
-    /// Draft fields for Volcengine settings UI (token not persisted to UserDefaults).
-    @Published var volcengineAppID: String = ""
-    @Published var volcengineToken: String = ""
-    @Published var volcengineVoiceType: String {
-        didSet { defaults.set(volcengineVoiceType, forKey: Keys.volcVoice) }
-    }
-    @Published var volcengineCluster: String {
-        didSet { defaults.set(volcengineCluster, forKey: Keys.volcCluster) }
-    }
-    @Published private(set) var volcengineConfigured = false
     /// Draft Doubao realtime API Key (never written to UserDefaults; SecretStore via kernel).
     @Published var doubaoAPIKey: String = ""
     @Published var doubaoSpeaker: String {
@@ -80,8 +66,6 @@ final class SpeechOutput: NSObject, ObservableObject {
         static let pitch = "japlos.voice.output.pitch"
         static let language = "japlos.voice.language"
         static let input = "japlos.voice.input"
-        static let volcVoice = "japlos.voice.volc.voiceType"
-        static let volcCluster = "japlos.voice.volc.cluster"
         static let doubaoSpeaker = "japlos.voice.doubao.speaker"
     }
 
@@ -93,17 +77,18 @@ final class SpeechOutput: NSObject, ObservableObject {
     override init() {
         let defaults = UserDefaults.standard
         enabled = defaults.object(forKey: Keys.enabled) as? Bool ?? true
-        let rawProvider = defaults.string(forKey: Keys.provider) ?? Provider.system.rawValue
-        provider = Provider(rawValue: rawProvider) ?? .system
+        // Key presence is unknown until the kernel profile loads; AppModel
+        // re-resolves with `hasDoubaoKey` then. Legacy ids → system here.
+        let resolved = SpeechProviderPolicy.resolve(defaults.string(forKey: Keys.provider), hasDoubaoKey: false)
+        provider = Provider(rawValue: resolved) ?? .system
         voiceIdentifier = defaults.string(forKey: Keys.voice) ?? ""
         rate = defaults.object(forKey: Keys.rate) as? Double ?? 0.50
         pitch = defaults.object(forKey: Keys.pitch) as? Double ?? 1.0
         languageCode = defaults.string(forKey: Keys.language) ?? "zh-CN"
         inputDeviceUID = defaults.string(forKey: Keys.input) ?? ""
-        volcengineVoiceType = defaults.string(forKey: Keys.volcVoice) ?? "BV001_streaming"
-        volcengineCluster = defaults.string(forKey: Keys.volcCluster) ?? "volcano_tts"
         doubaoSpeaker = defaults.string(forKey: Keys.doubaoSpeaker) ?? DoubaoVoicePresets.defaultSpeaker
         super.init()
+        defaults.set(provider.rawValue, forKey: Keys.provider)
         synthesizer.delegate = self
     }
 
@@ -117,10 +102,6 @@ final class SpeechOutput: NSObject, ObservableObject {
         AVSpeechSynthesisVoice.speechVoices()
             .filter { $0.language.hasPrefix("en") }
             .sorted { $0.name < $1.name }
-    }
-
-    func markVolcengineConfigured(_ configured: Bool) {
-        volcengineConfigured = configured
     }
 
     func markDoubaoConfigured(_ configured: Bool) {
@@ -138,13 +119,12 @@ final class SpeechOutput: NSObject, ObservableObject {
         stop()
 
         switch provider {
-        case .system, .openaiCompatible:
-            // openai-compatible is a stub — always system until wired.
+        case .system:
             speakSystem(clean)
-        case .doubaoRealtime, .volcengine:
+        case .doubaoRealtime:
             speakTask = Task { [weak self] in
                 guard let self else { return }
-                let label = self.provider == .doubaoRealtime ? "doubao-realtime" : "volcengine"
+                let label = "doubao-realtime"
                 if let cloud = self.cloudSynthesize, let (data, _) = await cloud(clean) {
                     await MainActor.run {
                         if Task.isCancelled { return }

@@ -38,8 +38,6 @@ struct VoiceSettingsPane: View {
         .onChange(of: voice.pitch) { _ in Task { await model.syncSpeechProfile(from: voice) } }
         .onChange(of: voice.inputDeviceUID) { _ in Task { await model.syncSpeechProfile(from: voice) } }
         .onChange(of: voice.provider) { _ in Task { await model.syncSpeechProfile(from: voice) } }
-        .onChange(of: voice.volcengineVoiceType) { _ in Task { await model.syncSpeechProfile(from: voice) } }
-        .onChange(of: voice.volcengineCluster) { _ in Task { await model.syncSpeechProfile(from: voice) } }
         .onChange(of: voice.doubaoSpeaker) { _ in Task { await model.syncSpeechProfile(from: voice) } }
     }
 
@@ -133,6 +131,27 @@ struct VoiceSettingsPane: View {
                     .menuIndicator(.hidden)
                     .frame(maxWidth: .infinity)
                 }
+                row("开通") {
+                    HStack(spacing: 8) {
+                        Button {
+                            if let url = URL(string: SpeechProviderPolicy.doubaoApplyURL) {
+                                NSWorkspace.shared.open(url)
+                            }
+                        } label: {
+                            Text("去官方申请")
+                                .font(.system(size: SettingsMetrics.cardSubtitleSize))
+                                .foregroundStyle(Color.black.opacity(0.85))
+                                .padding(.horizontal, 12)
+                                .padding(.vertical, 5)
+                                .background(Theme.accent, in: RoundedRectangle(cornerRadius: 6))
+                        }
+                        .buttonStyle(.pressable)
+                        .help("打开火山引擎豆包语音控制台：开通「端到端实时语音大模型」并创建 API Key")
+                        Text("开通豆包端到端实时语音 → API Key 管理 → 复制填入上方")
+                            .font(.system(size: SettingsMetrics.captionSize))
+                            .foregroundStyle(Theme.textSecondary.opacity(0.85))
+                    }
+                }
                 row("凭证") {
                     HStack(spacing: 10) {
                         Button {
@@ -147,7 +166,7 @@ struct VoiceSettingsPane: View {
                         }
                         .buttonStyle(.pressable)
                         Button {
-                            voice.speak("你好，我是 Lucas。豆包 realtime 试听。")
+                            voice.speak("你好，我是 Lucas。豆包实时语音试听。")
                         } label: {
                             Text("测试连接")
                                 .font(.system(size: SettingsMetrics.cardSubtitleSize))
@@ -157,8 +176,8 @@ struct VoiceSettingsPane: View {
                     }
                 }
                 Text(voice.doubaoConfigured
-                     ? "已保存豆包 Key；选用「豆包 realtime」后朗读走 openspeech realtime dialogue。失败时回落系统语音并显示原因。"
-                     : "请自行在火山引擎控制台开通豆包端到端实时语音并填入 API Key。软件不会预填或写入任何 Key。")
+                     ? "已保存豆包 Key；选用「豆包实时语音」后朗读走 openspeech realtime dialogue。失败时回落系统语音并显示原因。"
+                     : "点「去官方申请」在火山引擎开通豆包端到端实时语音并创建 API Key，再填入上方。软件不会预填或写入任何 Key；没有 Key 请用「系统语音（苹果）」。")
                     .font(.system(size: SettingsMetrics.captionSize))
                     .foregroundStyle(Theme.textSecondary.opacity(0.85))
                 if let err = voice.lastCloudError, !err.isEmpty {
@@ -166,59 +185,6 @@ struct VoiceSettingsPane: View {
                         .font(.system(size: SettingsMetrics.captionSize))
                         .foregroundStyle(Color.orange.opacity(0.9))
                 }
-            } else if voice.provider == .volcengine {
-                row("App ID") {
-                    TextField("火山 App ID", text: $voice.volcengineAppID)
-                        .textFieldStyle(.plain)
-                        .font(.system(size: SettingsMetrics.bodySize))
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 7)
-                        .background(Color.white.opacity(0.05), in: RoundedRectangle(cornerRadius: 6))
-                        .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(Theme.panelBorder, lineWidth: 0.7))
-                }
-                row("Token") {
-                    SecureField(voice.volcengineConfigured ? "已保存，输入新 Token 可覆盖" : "火山 Access Token", text: $voice.volcengineToken)
-                        .textFieldStyle(.plain)
-                        .font(.system(size: SettingsMetrics.bodySize))
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 7)
-                        .background(Color.white.opacity(0.05), in: RoundedRectangle(cornerRadius: 6))
-                        .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(Theme.panelBorder, lineWidth: 0.7))
-                }
-                row("音色 ID") {
-                    TextField("如 BV001_streaming", text: $voice.volcengineVoiceType)
-                        .textFieldStyle(.plain)
-                        .font(.system(size: SettingsMetrics.bodySize))
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 7)
-                        .background(Color.white.opacity(0.05), in: RoundedRectangle(cornerRadius: 6))
-                        .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(Theme.panelBorder, lineWidth: 0.7))
-                }
-                row("凭证") {
-                    Button {
-                        Task { await model.syncSpeechProfile(from: voice) }
-                    } label: {
-                        Text("保存 App ID / Token")
-                            .font(.system(size: SettingsMetrics.cardSubtitleSize))
-                            .foregroundStyle(Color.black.opacity(0.85))
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 5)
-                            .background(Theme.accent, in: RoundedRectangle(cornerRadius: 6))
-                    }
-                    .buttonStyle(.pressable)
-                }
-                Text("旧路径：需 AppID+Token 的火山 HTTP TTS。新产品请改用上方「豆包 realtime」（只填 Key）。未配置或失败时回落系统语音。")
-                    .font(.system(size: SettingsMetrics.captionSize))
-                    .foregroundStyle(Theme.textSecondary.opacity(0.85))
-                if let err = voice.lastCloudError, !err.isEmpty {
-                    Text("最近云端错误：\(err)")
-                        .font(.system(size: SettingsMetrics.captionSize))
-                        .foregroundStyle(Color.orange.opacity(0.9))
-                }
-            } else if voice.provider == .openaiCompatible {
-                Text("OpenAI 兼容 TTS 仅为占位，当前仍走系统语音。")
-                    .font(.system(size: SettingsMetrics.captionSize))
-                    .foregroundStyle(Theme.textSecondary.opacity(0.85))
             }
             if voice.provider == .system {
                 row("音色") { voiceMenu }

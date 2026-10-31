@@ -41,3 +41,25 @@ public enum DoubaoVoicePresets {
         return trimmed.isEmpty ? defaultSpeaker : trimmed
     }
 }
+
+/// Speech output provider policy (0.5.10+): only `system` and `doubao-realtime`.
+/// Legacy `volcengine` HTTP TTS / `openai-compatible` were removed; stored
+/// values migrate here so old installs never crash.
+public enum SpeechProviderPolicy {
+    public static let system = "system"
+    public static let doubaoRealtime = "doubao-realtime"
+
+    /// 豆包端到端实时语音大模型 — 火山引擎豆包语音控制台（开通服务 / API Key）。
+    public static let doubaoApplyURL = "https://console.volcengine.com/speech/new/"
+
+    /// Resolve a stored/raw provider id to a supported one.
+    /// - explicit `system` / `doubao-realtime` are kept;
+    /// - missing or legacy ids → doubao when the user saved a Key, else system.
+    public static func resolve(_ raw: String?, hasDoubaoKey: Bool) -> String {
+        switch raw?.lowercased() {
+        case "system": return system
+        case "doubao-realtime", "doubao_realtime", "doubao": return doubaoRealtime
+        default: return hasDoubaoKey ? doubaoRealtime : system
+        }
+    }
+}

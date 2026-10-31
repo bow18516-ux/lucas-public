@@ -101,7 +101,7 @@ extension AppModel {
         }
     }
 
-    /// Persist TTS prefs into `speech_profiles` (kernel store). Doubao / Volcengine
+    /// Persist TTS prefs into `speech_profiles` (kernel store). Doubao
     /// credentials ride in the record and are redacted into SecretStore by the kernel.
     func syncSpeechProfile(from voice: SpeechOutput) async {
         let providerID = voice.provider.rawValue
@@ -113,16 +113,8 @@ extension AppModel {
             "pitch": .number(voice.pitch),
             "inputDeviceUID": .string(voice.inputDeviceUID),
             "tone": .string(OnboardingPrefs.tone),
-            "volcengineVoiceType": .string(voice.volcengineVoiceType),
-            "volcengineCluster": .string(voice.volcengineCluster),
             "doubaoSpeaker": .string(voice.doubaoSpeaker),
         ]
-        if !voice.volcengineAppID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            record["volcengineAppID"] = .string(voice.volcengineAppID)
-        }
-        if !voice.volcengineToken.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            record["volcengineToken"] = .string(voice.volcengineToken)
-        }
         if !voice.doubaoAPIKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             record["doubaoAPIKey"] = .string(voice.doubaoAPIKey)
         }
@@ -132,10 +124,6 @@ extension AppModel {
             "isDefault": .bool(true),
             "record": .object(record),
         ]))
-        if !voice.volcengineToken.isEmpty {
-            voice.volcengineToken = ""
-            voice.markVolcengineConfigured(true)
-        }
         if !voice.doubaoAPIKey.isEmpty {
             voice.doubaoAPIKey = ""
             voice.markDoubaoConfigured(true)
@@ -149,8 +137,10 @@ extension AppModel {
             guard let profile = (result.arrayValue ?? []).first(where: { $0["isDefault"]?.boolValue == true })
                     ?? result.arrayValue?.first else { return }
             let record = profile["record"] ?? .object([:])
-            if let providerRaw = profile["providerID"]?.stringValue ?? record["provider"]?.stringValue,
-               let provider = SpeechOutput.Provider(rawValue: providerRaw) {
+            let hasDoubaoKey = record["doubaoAPIKeyConfigured"]?.boolValue == true
+            let storedRaw = profile["providerID"]?.stringValue ?? record["provider"]?.stringValue
+            let resolved = SpeechProviderPolicy.resolve(storedRaw, hasDoubaoKey: hasDoubaoKey)
+            if let provider = SpeechOutput.Provider(rawValue: resolved), voice.provider != provider {
                 voice.provider = provider
             }
             if let voiceID = record["voiceIdentifier"]?.stringValue {
@@ -164,19 +154,10 @@ extension AppModel {
             if let input = record["inputDeviceUID"]?.stringValue {
                 voice.inputDeviceUID = input
             }
-            if let vt = record["volcengineVoiceType"]?.stringValue, !vt.isEmpty {
-                voice.volcengineVoiceType = vt
-            }
-            if let cluster = record["volcengineCluster"]?.stringValue, !cluster.isEmpty {
-                voice.volcengineCluster = cluster
-            }
             if let speaker = record["doubaoSpeaker"]?.stringValue, !speaker.isEmpty {
                 voice.doubaoSpeaker = speaker
             }
-            let configured = record["volcengineTokenConfigured"]?.boolValue == true
-                && record["volcengineAppIDConfigured"]?.boolValue == true
-            voice.markVolcengineConfigured(configured)
-            voice.markDoubaoConfigured(record["doubaoAPIKeyConfigured"]?.boolValue == true)
+            voice.markDoubaoConfigured(hasDoubaoKey)
         } catch {
             // Offline: keep local UserDefaults prefs.
         }
@@ -189,8 +170,6 @@ extension AppModel {
                 var args: [String: JSONValue] = [
                     "text": .string(text),
                     "providerID": .string(self.voice.provider.rawValue),
-                    "voiceType": .string(self.voice.volcengineVoiceType),
-                    "cluster": .string(self.voice.volcengineCluster),
                     "speaker": .string(self.voice.doubaoSpeaker),
                 ]
                 let result = try await self.client.callAsync(

@@ -4,8 +4,6 @@ import JaplosProtocol
 public final class KernelStore: @unchecked Sendable {
     public static let modelConnectionPath = "agents.default.model.connection"
     public static let modelSecretAccount = "agents.default.model.connection"
-    public static let speechVolcengineAppIDAccount = "speech.volcengine.appId"
-    public static let speechVolcengineTokenAccount = "speech.volcengine.token"
     /// Doubao realtime dialogue API Key (user-supplied; never baked into defaults).
     public static let speechDoubaoAPIKeyAccount = "speech.doubao.apiKey"
     public static let feishuAppIDAccount = "feishu.app_id"
@@ -617,10 +615,6 @@ public final class KernelStore: @unchecked Sendable {
             else { return nil }
             var sanitized = record
             if var object = sanitized.objectValue {
-                object["volcengineToken"] = .string("")
-                object["volcengineAppID"] = .string("")
-                object["volcengineTokenConfigured"] = .bool(secrets.secret(for: Self.speechVolcengineTokenAccount) != nil)
-                object["volcengineAppIDConfigured"] = .bool(secrets.secret(for: Self.speechVolcengineAppIDAccount) != nil)
                 object["doubaoAPIKey"] = .string("")
                 object["doubaoAPIKeyConfigured"] = .bool(secrets.secret(for: Self.speechDoubaoAPIKeyAccount) != nil)
                 sanitized = .object(object)
@@ -644,23 +638,16 @@ public final class KernelStore: @unchecked Sendable {
     ) throws {
         var sanitized = record
         if var object = sanitized.objectValue {
-            if let appID = object["volcengineAppID"]?.stringValue?.trimmingCharacters(in: .whitespacesAndNewlines),
-               !appID.isEmpty {
-                try secrets.setSecret(appID, for: Self.speechVolcengineAppIDAccount)
-            }
-            if let token = object["volcengineToken"]?.stringValue?.trimmingCharacters(in: .whitespacesAndNewlines),
-               !token.isEmpty {
-                try secrets.setSecret(token, for: Self.speechVolcengineTokenAccount)
-            }
             if let doubaoKey = object["doubaoAPIKey"]?.stringValue?.trimmingCharacters(in: .whitespacesAndNewlines),
                !doubaoKey.isEmpty {
                 try secrets.setSecret(doubaoKey, for: Self.speechDoubaoAPIKeyAccount)
             }
             // Never persist raw credentials in SQLite.
-            object["volcengineToken"] = .string("")
-            object["volcengineAppID"] = .string("")
-            object["volcengineTokenConfigured"] = .bool(secrets.secret(for: Self.speechVolcengineTokenAccount) != nil)
-            object["volcengineAppIDConfigured"] = .bool(secrets.secret(for: Self.speechVolcengineAppIDAccount) != nil)
+            // Legacy Volcengine HTTP TTS fields (removed in 0.5.10) are dropped.
+            for legacy in ["volcengineToken", "volcengineAppID", "volcengineTokenConfigured",
+                           "volcengineAppIDConfigured", "volcengineVoiceType", "volcengineCluster"] {
+                object.removeValue(forKey: legacy)
+            }
             object["doubaoAPIKey"] = .string("")
             object["doubaoAPIKeyConfigured"] = .bool(secrets.secret(for: Self.speechDoubaoAPIKeyAccount) != nil)
             sanitized = .object(object)
@@ -684,15 +671,6 @@ public final class KernelStore: @unchecked Sendable {
                 record_json = excluded.record_json;
             """, [profileID, providerID, isDefault ? 1 : 0, now, encoded])
         }
-    }
-
-    public func resolvedVolcengineCredentials() -> (appID: String, token: String)? {
-        let appID = secrets.secret(for: Self.speechVolcengineAppIDAccount)?
-            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        let token = secrets.secret(for: Self.speechVolcengineTokenAccount)?
-            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        guard !appID.isEmpty, !token.isEmpty else { return nil }
-        return (appID, token)
     }
 
     /// User-supplied Doubao realtime API Key from SecretStore (never logged).
