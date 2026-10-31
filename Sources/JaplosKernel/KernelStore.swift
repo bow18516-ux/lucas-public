@@ -6,6 +6,8 @@ public final class KernelStore: @unchecked Sendable {
     public static let modelSecretAccount = "agents.default.model.connection"
     public static let speechVolcengineAppIDAccount = "speech.volcengine.appId"
     public static let speechVolcengineTokenAccount = "speech.volcengine.token"
+    /// Doubao realtime dialogue API Key (user-supplied; never baked into defaults).
+    public static let speechDoubaoAPIKeyAccount = "speech.doubao.apiKey"
     public static let feishuAppIDAccount = "feishu.app_id"
     public static let feishuAppSecretAccount = "feishu.app_secret"
     public static let feishuVerificationTokenAccount = "feishu.verification_token"
@@ -619,6 +621,8 @@ public final class KernelStore: @unchecked Sendable {
                 object["volcengineAppID"] = .string("")
                 object["volcengineTokenConfigured"] = .bool(secrets.secret(for: Self.speechVolcengineTokenAccount) != nil)
                 object["volcengineAppIDConfigured"] = .bool(secrets.secret(for: Self.speechVolcengineAppIDAccount) != nil)
+                object["doubaoAPIKey"] = .string("")
+                object["doubaoAPIKeyConfigured"] = .bool(secrets.secret(for: Self.speechDoubaoAPIKeyAccount) != nil)
                 sanitized = .object(object)
             }
             return .object([
@@ -648,11 +652,17 @@ public final class KernelStore: @unchecked Sendable {
                !token.isEmpty {
                 try secrets.setSecret(token, for: Self.speechVolcengineTokenAccount)
             }
+            if let doubaoKey = object["doubaoAPIKey"]?.stringValue?.trimmingCharacters(in: .whitespacesAndNewlines),
+               !doubaoKey.isEmpty {
+                try secrets.setSecret(doubaoKey, for: Self.speechDoubaoAPIKeyAccount)
+            }
             // Never persist raw credentials in SQLite.
             object["volcengineToken"] = .string("")
             object["volcengineAppID"] = .string("")
             object["volcengineTokenConfigured"] = .bool(secrets.secret(for: Self.speechVolcengineTokenAccount) != nil)
             object["volcengineAppIDConfigured"] = .bool(secrets.secret(for: Self.speechVolcengineAppIDAccount) != nil)
+            object["doubaoAPIKey"] = .string("")
+            object["doubaoAPIKeyConfigured"] = .bool(secrets.secret(for: Self.speechDoubaoAPIKeyAccount) != nil)
             sanitized = .object(object)
         }
         let encoded = String(data: try ProtocolCoding.encode(sanitized), encoding: .utf8) ?? "{}"
@@ -683,6 +693,13 @@ public final class KernelStore: @unchecked Sendable {
             .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         guard !appID.isEmpty, !token.isEmpty else { return nil }
         return (appID, token)
+    }
+
+    /// User-supplied Doubao realtime API Key from SecretStore (never logged).
+    public func resolvedDoubaoAPIKey() -> String? {
+        let key = secrets.secret(for: Self.speechDoubaoAPIKeyAccount)?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return key.isEmpty ? nil : key
     }
 
     public func defaultSpeechProfile() throws -> JSONValue? {

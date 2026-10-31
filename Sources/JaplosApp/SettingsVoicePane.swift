@@ -40,6 +40,7 @@ struct VoiceSettingsPane: View {
         .onChange(of: voice.provider) { _ in Task { await model.syncSpeechProfile(from: voice) } }
         .onChange(of: voice.volcengineVoiceType) { _ in Task { await model.syncSpeechProfile(from: voice) } }
         .onChange(of: voice.volcengineCluster) { _ in Task { await model.syncSpeechProfile(from: voice) } }
+        .onChange(of: voice.doubaoSpeaker) { _ in Task { await model.syncSpeechProfile(from: voice) } }
     }
 
     // MARK: Cards
@@ -104,7 +105,59 @@ struct VoiceSettingsPane: View {
                 .menuIndicator(.hidden)
                 .frame(maxWidth: .infinity)
             }
-            if voice.provider == .volcengine {
+            if voice.provider == .doubaoRealtime {
+                row("API Key") {
+                    SecureField(voice.doubaoConfigured ? "已保存，输入新 Key 可覆盖" : "火山/豆包 realtime API Key", text: $voice.doubaoAPIKey)
+                        .textFieldStyle(.plain)
+                        .font(.system(size: SettingsMetrics.bodySize))
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 7)
+                        .background(Color.white.opacity(0.05), in: RoundedRectangle(cornerRadius: 6))
+                        .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(Theme.panelBorder, lineWidth: 0.7))
+                }
+                row("音色") {
+                    TextField("如 zh_female_vv_jupiter_bigtts", text: $voice.doubaoSpeaker)
+                        .textFieldStyle(.plain)
+                        .font(.system(size: SettingsMetrics.bodySize))
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 7)
+                        .background(Color.white.opacity(0.05), in: RoundedRectangle(cornerRadius: 6))
+                        .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(Theme.panelBorder, lineWidth: 0.7))
+                }
+                row("凭证") {
+                    HStack(spacing: 10) {
+                        Button {
+                            Task { await model.syncSpeechProfile(from: voice) }
+                        } label: {
+                            Text("保存 Key")
+                                .font(.system(size: SettingsMetrics.cardSubtitleSize))
+                                .foregroundStyle(Color.black.opacity(0.85))
+                                .padding(.horizontal, 12)
+                                .padding(.vertical, 5)
+                                .background(Theme.accent, in: RoundedRectangle(cornerRadius: 6))
+                        }
+                        .buttonStyle(.pressable)
+                        Button {
+                            voice.speak("你好，我是 Lucas。豆包 realtime 试听。")
+                        } label: {
+                            Text("测试连接")
+                                .font(.system(size: SettingsMetrics.cardSubtitleSize))
+                                .foregroundStyle(Theme.accent)
+                        }
+                        .buttonStyle(.pressable)
+                    }
+                }
+                Text(voice.doubaoConfigured
+                     ? "已保存豆包 Key；选用「豆包 realtime」后朗读走 openspeech realtime dialogue。失败时回落系统语音并显示原因。"
+                     : "请自行在火山引擎控制台开通豆包端到端实时语音并填入 API Key。软件不会预填或写入任何 Key。")
+                    .font(.system(size: SettingsMetrics.captionSize))
+                    .foregroundStyle(Theme.textSecondary.opacity(0.85))
+                if let err = voice.lastCloudError, !err.isEmpty {
+                    Text("最近云端错误：\(err)")
+                        .font(.system(size: SettingsMetrics.captionSize))
+                        .foregroundStyle(Color.orange.opacity(0.9))
+                }
+            } else if voice.provider == .volcengine {
                 row("App ID") {
                     TextField("火山 App ID", text: $voice.volcengineAppID)
                         .textFieldStyle(.plain)
@@ -145,9 +198,7 @@ struct VoiceSettingsPane: View {
                     }
                     .buttonStyle(.pressable)
                 }
-                Text(voice.volcengineConfigured
-                     ? "已配置火山凭证；未填完整或合成失败时仍用系统语音。"
-                     : "未配置时仍用系统语音。凭证经 SecretStore 保存，不会写入 SQLite。")
+                Text("旧路径：需 AppID+Token 的火山 HTTP TTS。新产品请改用上方「豆包 realtime」（只填 Key）。未配置或失败时回落系统语音。")
                     .font(.system(size: SettingsMetrics.captionSize))
                     .foregroundStyle(Theme.textSecondary.opacity(0.85))
                 if let err = voice.lastCloudError, !err.isEmpty {
@@ -235,7 +286,7 @@ struct VoiceSettingsPane: View {
                     }
                 }
             }
-            Text("改动会同步到 speech_profiles；火山凭证走 SecretStore。未配置或失败时自动回退系统语音。")
+            Text("改动会同步到 speech_profiles；豆包 Key / 火山凭证走 SecretStore，不会写入仓库。未配置或失败时自动回退系统语音并显示原因。")
                 .font(.system(size: SettingsMetrics.captionSize))
                 .foregroundStyle(Theme.textSecondary.opacity(0.75))
         }

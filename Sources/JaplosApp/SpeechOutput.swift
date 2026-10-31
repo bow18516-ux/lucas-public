@@ -3,13 +3,15 @@ import Foundation
 import JaplosProtocol
 
 /// Text-to-speech for assistant replies.
-/// Default provider is system `AVSpeechSynthesizer`. When provider is
-/// `volcengine` and credentials are configured, speech goes through the kernel
-/// `speech.synthesize` op (OpenSpeech HTTP); any failure falls back to system.
+/// Default provider is system `AVSpeechSynthesizer`. Preferred cloud path is
+/// `doubao-realtime` (OpenSpeech realtime dialogue, user-supplied Key only).
+/// Legacy `volcengine` HTTP TTS (AppID+Token) remains available but is not
+/// the primary product path. Any cloud failure falls back to system.
 @MainActor
 final class SpeechOutput: NSObject, ObservableObject {
     enum Provider: String, CaseIterable, Identifiable {
         case system
+        case doubaoRealtime = "doubao-realtime"
         case volcengine
         case openaiCompatible = "openai-compatible"
 
@@ -18,7 +20,8 @@ final class SpeechOutput: NSObject, ObservableObject {
         var label: String {
             switch self {
             case .system: return "系统语音 · Apple"
-            case .volcengine: return "火山引擎 / Volcengine"
+            case .doubaoRealtime: return "豆包 realtime（推荐）"
+            case .volcengine: return "火山 HTTP TTS（旧）"
             case .openaiCompatible: return "OpenAI 兼容（占位）"
             }
         }
@@ -56,6 +59,12 @@ final class SpeechOutput: NSObject, ObservableObject {
         didSet { defaults.set(volcengineCluster, forKey: Keys.volcCluster) }
     }
     @Published private(set) var volcengineConfigured = false
+    /// Draft Doubao realtime API Key (never written to UserDefaults; SecretStore via kernel).
+    @Published var doubaoAPIKey: String = ""
+    @Published var doubaoSpeaker: String {
+        didSet { defaults.set(doubaoSpeaker, forKey: Keys.doubaoSpeaker) }
+    }
+    @Published private(set) var doubaoConfigured = false
     @Published private(set) var lastCloudError: String?
 
     /// Injected by AppModel so cloud TTS can call the kernel without coupling.
@@ -73,6 +82,7 @@ final class SpeechOutput: NSObject, ObservableObject {
         static let input = "japlos.voice.input"
         static let volcVoice = "japlos.voice.volc.voiceType"
         static let volcCluster = "japlos.voice.volc.cluster"
+        static let doubaoSpeaker = "japlos.voice.doubao.speaker"
     }
 
     private let synthesizer = AVSpeechSynthesizer()
@@ -92,6 +102,7 @@ final class SpeechOutput: NSObject, ObservableObject {
         inputDeviceUID = defaults.string(forKey: Keys.input) ?? ""
         volcengineVoiceType = defaults.string(forKey: Keys.volcVoice) ?? "BV001_streaming"
         volcengineCluster = defaults.string(forKey: Keys.volcCluster) ?? "volcano_tts"
+        doubaoSpeaker = defaults.string(forKey: Keys.doubaoSpeaker) ?? "zh_female_vv_jupiter_bigtts"
         super.init()
         synthesizer.delegate = self
     }
@@ -112,6 +123,10 @@ final class SpeechOutput: NSObject, ObservableObject {
         volcengineConfigured = configured
     }
 
+    func markDoubaoConfigured(_ configured: Bool) {
+        doubaoConfigured = configured
+    }
+
     func noteCloudError(_ message: String?) {
         lastCloudError = message
     }
@@ -126,20 +141,23 @@ final class SpeechOutput: NSObject, ObservableObject {
         case .system, .openaiCompatible:
             // openai-compatible is a stub — always system until wired.
             speakSystem(clean)
-        case .volcengine:
+        case .doubaoRealtime, .volcengine:
             speakTask = Task { [weak self] in
                 guard let self else { return }
+                let label = self.provider == .doubaoRealtime ? "doubao-realtime" : "volcengine"
                 if let cloud = self.cloudSynthesize, let (data, _) = await cloud(clean) {
                     await MainActor.run {
                         if Task.isCancelled { return }
                         if self.playCloudAudio(data) { return }
                         AppLog.write("speech: cloud audio play failed → system fallback")
+                        self.noteCloudError("cloud_audio_play_failed")
                         self.speakSystem(clean)
                     }
                 } else {
                     await MainActor.run {
                         if Task.isCancelled { return }
-                        AppLog.write("speech: volcengine unavailable → system fallback")
+                        let reason = self.lastCloudError ?? "unavailable"
+                        AppLog.write("speech: \(label) unavailable (\(reason)) → system fallback")
                         self.speakSystem(clean)
                     }
                 }
