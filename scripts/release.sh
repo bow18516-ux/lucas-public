@@ -51,6 +51,19 @@ if [ -n "${LUCAS_NOTARY_KEYCHAIN:-}" ]; then
 fi
 
 BUILD_NUMBER="${LUCAS_BUILD:-$(date +%Y%m%d%H%M)}"
+
+# Publish gate: marketing must not regress vs live appcast; build must rise.
+# Skip only for explicit local drills (LUCAS_SKIP_VERSION_GUARD=1).
+if [ -z "${LUCAS_SKIP_VERSION_GUARD:-}" ]; then
+    echo "version guard: proposed $VERSION ($BUILD_NUMBER) vs live feed…"
+    python3 "$ROOT/scripts/version_bump_guard.py" \
+        --marketing "$VERSION" \
+        --build "$BUILD_NUMBER" \
+        --feed "$FEED_URL"
+else
+    echo "warning: LUCAS_SKIP_VERSION_GUARD=1 — skipping live appcast version gate" >&2
+fi
+
 DOWNLOAD_PREFIX="${LUCAS_DOWNLOAD_PREFIX:-${FEED_URL%appcast.xml}}"
 UPDATES="$ROOT/updates"
 SECRETS_DIR="${LUCAS_RELEASE_SECRETS:-$HOME/.config/lucas-release}"

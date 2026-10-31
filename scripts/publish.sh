@@ -4,6 +4,8 @@
 #   cp Config/release.env.example Config/release.env
 #   $EDITOR Config/release.env
 #   ./scripts/publish.sh 0.5.1
+# release.sh refuses if marketing < live appcast or build <= live build
+# (override only with LUCAS_SKIP_VERSION_GUARD=1 for local drills).
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 ENV_FILE="$ROOT/Config/release.env"
