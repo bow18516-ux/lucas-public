@@ -1,4 +1,5 @@
 import Foundation
+import JaplosProtocol
 import zlib
 
 /// Binary frame codec for Doubao realtime dialogue 2.0
@@ -8,8 +9,18 @@ public enum DoubaoRealtimeProtocol {
     public static let defaultURL = URL(string: "wss://openspeech.bytedance.com/api/v3/realtime/dialogue")!
     public static let defaultResourceID = "volc.speech.dialog"
     public static let defaultModel = "1.2.1.1"
-    public static let defaultSpeaker = "zh_female_vv_jupiter_bigtts"
+    public static let defaultSpeaker = DoubaoVoicePresets.defaultSpeaker
     public static let defaultSampleRate = 24_000
+    public static let speakerPresets = DoubaoVoicePresets.all
+
+    public static func speakerLabel(for id: String) -> String {
+        DoubaoVoicePresets.label(for: id)
+    }
+
+    public static func normalizeSpeaker(_ id: String?) -> String {
+        DoubaoVoicePresets.normalize(id)
+    }
+
 
     public static let fullClient = 0b0001
     public static let audioClient = 0b0010

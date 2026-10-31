@@ -102,7 +102,7 @@ final class SpeechOutput: NSObject, ObservableObject {
         inputDeviceUID = defaults.string(forKey: Keys.input) ?? ""
         volcengineVoiceType = defaults.string(forKey: Keys.volcVoice) ?? "BV001_streaming"
         volcengineCluster = defaults.string(forKey: Keys.volcCluster) ?? "volcano_tts"
-        doubaoSpeaker = defaults.string(forKey: Keys.doubaoSpeaker) ?? "zh_female_vv_jupiter_bigtts"
+        doubaoSpeaker = defaults.string(forKey: Keys.doubaoSpeaker) ?? DoubaoVoicePresets.defaultSpeaker
         super.init()
         synthesizer.delegate = self
     }

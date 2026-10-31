@@ -1,5 +1,6 @@
 import XCTest
 @testable import JaplosKernel
+import JaplosProtocol
 import Foundation
 
 /// Byte-level fixtures aligned with Xiaoling `tests/test_protocol.py`.
@@ -148,5 +149,19 @@ final class DoubaoRealtimeProtocolTests: XCTestCase {
         XCTAssertEqual(audio?["sample_rate"] as? Int, 24_000)
         XCTAssertEqual(audio?["format"] as? String, "pcm_s16le")
         XCTAssertEqual(tts?["speaker"] as? String, DoubaoRealtimeProtocol.defaultSpeaker)
+    }
+
+    func testSpeakerPresetsCoverMaleAndFemale() {
+        XCTAssertGreaterThanOrEqual(DoubaoVoicePresets.females.count, 1)
+        XCTAssertGreaterThanOrEqual(DoubaoVoicePresets.males.count, 1)
+        XCTAssertEqual(DoubaoRealtimeProtocol.speakerPresets.count, DoubaoVoicePresets.all.count)
+        XCTAssertEqual(DoubaoRealtimeProtocol.normalizeSpeaker(""), DoubaoRealtimeProtocol.defaultSpeaker)
+        XCTAssertEqual(DoubaoRealtimeProtocol.normalizeSpeaker("  "), DoubaoRealtimeProtocol.defaultSpeaker)
+        XCTAssertEqual(
+            DoubaoRealtimeProtocol.normalizeSpeaker("zh_male_yunzhou_jupiter_bigtts"),
+            "zh_male_yunzhou_jupiter_bigtts"
+        )
+        XCTAssertTrue(DoubaoRealtimeProtocol.speakerLabel(for: "zh_male_yunzhou_jupiter_bigtts").contains("男"))
+        XCTAssertTrue(DoubaoRealtimeProtocol.speakerLabel(for: DoubaoRealtimeProtocol.defaultSpeaker).contains("女"))
     }
 }

@@ -49,10 +49,11 @@ extension KernelCore {
             ]), requestID: requestID)
         }
 
-        let speaker = request.arguments["speaker"]?.stringValue
-            ?? request.arguments["voiceType"]?.stringValue
-            ?? record["doubaoSpeaker"]?.stringValue
-            ?? DoubaoRealtimeProtocol.defaultSpeaker
+        let speaker = DoubaoRealtimeProtocol.normalizeSpeaker(
+            request.arguments["speaker"]?.stringValue
+                ?? request.arguments["voiceType"]?.stringValue
+                ?? record["doubaoSpeaker"]?.stringValue
+        )
 
         do {
             let result = try await DoubaoRealtimeTTS.synthesize(

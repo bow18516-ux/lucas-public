@@ -116,13 +116,22 @@ struct VoiceSettingsPane: View {
                         .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(Theme.panelBorder, lineWidth: 0.7))
                 }
                 row("音色") {
-                    TextField("如 zh_female_vv_jupiter_bigtts", text: $voice.doubaoSpeaker)
-                        .textFieldStyle(.plain)
-                        .font(.system(size: SettingsMetrics.bodySize))
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 7)
-                        .background(Color.white.opacity(0.05), in: RoundedRectangle(cornerRadius: 6))
-                        .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(Theme.panelBorder, lineWidth: 0.7))
+                    Menu {
+                        Text("女声")
+                        ForEach(DoubaoVoicePresets.females) { preset in
+                            Button(preset.label) { voice.doubaoSpeaker = preset.id }
+                        }
+                        Divider()
+                        Text("男声")
+                        ForEach(DoubaoVoicePresets.males) { preset in
+                            Button(preset.label) { voice.doubaoSpeaker = preset.id }
+                        }
+                    } label: {
+                        fieldLabel(doubaoSpeakerLabel)
+                    }
+                    .menuStyle(.borderlessButton)
+                    .menuIndicator(.hidden)
+                    .frame(maxWidth: .infinity)
                 }
                 row("凭证") {
                     HStack(spacing: 10) {
@@ -384,6 +393,10 @@ struct VoiceSettingsPane: View {
         .menuStyle(.borderlessButton)
         .menuIndicator(.hidden)
         .frame(maxWidth: .infinity)
+    }
+
+    private var doubaoSpeakerLabel: String {
+        DoubaoVoicePresets.label(for: voice.doubaoSpeaker)
     }
 
     private var currentVoiceName: String {
